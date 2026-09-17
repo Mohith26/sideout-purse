@@ -50,9 +50,11 @@ git clone <this repo> && cd sideout-purse
 pnpm install
 
 # Postgres, one of:
-docker compose up -d        # provisions the roles and databases on first start
+docker compose up -d        # provisions the roles and databases on first start; the
+                            # .env.example defaults match it, so copy them into place:
+cp apps/purse/.env.example apps/purse/.env && cp apps/sideout/.env.example apps/sideout/.env
 pnpm db:setup               # or: provision an existing Postgres (defaults to localhost:5432 as you)
-                            #     writes apps/purse/.env and apps/sideout/.env with local defaults
+                            #     and write apps/purse/.env and apps/sideout/.env with local defaults
 
 pnpm db:migrate             # applies both apps' migrations, each in its own process
 pnpm db:seed                # upserts the Sideout tenant row in Purse; safe to re-run

@@ -31,7 +31,7 @@ describe('home snapshot', () => {
   it('rejects a mis-prefixed id at the database level', async () => {
     const failure = await database.db
       .insert(charities)
-      .values({ id: newId('sou'), slug: 'bad', name: 'Bad' })
+      .values({ id: newId('tnt'), slug: 'bad', name: 'Bad' })
       .then(() => undefined, (error: unknown) => error);
     expect(failure).toBeInstanceOf(Error);
     expect(String((failure as Error).cause)).toMatch(/charities_id_prefix/);

@@ -26,10 +26,7 @@ export const ID_PREFIXES = {
   transaction: 'txn',
   auditEvent: 'aud',
   // Sideout (system spec 5.1)
-  sideoutUser: 'sou',
   charity: 'chr',
-  /** The opaque value Sideout hands Purse as `external_id`; never Sideout's own row id. */
-  externalId: 'ext',
 } as const;
 
 export type IdEntity = keyof typeof ID_PREFIXES;

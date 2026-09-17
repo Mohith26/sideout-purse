@@ -115,7 +115,7 @@ try {
       }
     }
   }
-  console.log('\ndone. next: pnpm db:migrate');
+  console.log('\ndone. next: pnpm db:migrate && pnpm db:seed');
 } finally {
   await sql.end({ timeout: 5 });
 }

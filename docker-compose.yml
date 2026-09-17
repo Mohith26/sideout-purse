@@ -3,7 +3,8 @@
 # `sideout_app` roles, each able to connect only to its own database.
 #
 #   docker compose up -d
-#   pnpm db:migrate
+#   cp apps/purse/.env.example apps/purse/.env && cp apps/sideout/.env.example apps/sideout/.env
+#   pnpm db:migrate && pnpm db:seed
 #
 # Without Docker, `pnpm db:setup` performs the same provisioning against any Postgres you
 # can reach as an admin (for example a Homebrew install on localhost:5432).

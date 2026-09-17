@@ -11,7 +11,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - Gates: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`. `.no-mistakes.yaml` and
   `.github/workflows/ci.yml` run the same four; keep them in step.
 - Local Postgres: `pnpm db:setup` (any reachable Postgres; writes `apps/*/.env`) or
-  `docker compose up -d`, then `pnpm db:migrate` and `pnpm db:seed`. Tests use the `*_test`
+  `docker compose up -d` plus `cp apps/<app>/.env.example apps/<app>/.env` for both apps (the
+  examples match compose), then `pnpm db:migrate` and `pnpm db:seed`. Tests use the `*_test`
   databases and wipe them in each app's `test/global-setup.ts`.
 - `pnpm dev` starts Purse on :4000 and Sideout on :3000; both expose `/health`.
 
