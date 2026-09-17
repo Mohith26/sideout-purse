@@ -135,10 +135,11 @@ export function defineConfig({ repoRoot }) {
     },
 
     {
-      name: 'repo/scripts',
-      files: ['scripts/**/*.ts', 'apps/*/scripts/**/*.ts'],
+      name: 'repo/operator-cli',
+      files: ['scripts/**/*.ts'],
       rules: {
-        // Operator scripts talk to a terminal; structured logging is not the goal there.
+        // The one non-logger exemption: root operator CLIs (db:setup) talk to a terminal,
+        // not a log pipeline. App code, including the apps' own scripts, uses the logger.
         'no-console': 'off',
       },
     },
