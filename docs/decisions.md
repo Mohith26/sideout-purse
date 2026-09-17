@@ -30,10 +30,10 @@ value needed that.
 Section 6.4 and acceptance criterion 24 require WCAG AA contrast across all text tiers.
 The spec's `--text-tertiary: #646C79` measures **3.3:1** on `--bg-overlay` and **3.8:1**
 on `--bg-base`, below the 4.5:1 AA threshold for normal text on every background tier.
-`#7D8591` keeps the same cool neutral hue and lands at 4.6:1 on `--bg-overlay`, the
-lightest surface, so every tier passes on every surface. The contrast unit test in
-`@sideout/ui` asserts this for every text tier on every background tier and would fail
-against the original value.
+`#7D8591` keeps the same cool neutral hue and lands at 4.7:1 on `--bg-overlay`, the
+lightest surface, and 5.4:1 on `--bg-base`, so every tier passes on every surface. The
+contrast unit test in `@sideout/ui` asserts this for every text tier on every background
+tier and would fail against the original value.
 
 ## Phase 0 implementation choices worth knowing
 
@@ -41,10 +41,12 @@ These are not spec decisions; they are the answers phase 0 gave to questions the
 leaves to the builder, recorded so later phases do not relitigate them.
 
 - **Tailwind 4, CSS-first.** The `@sideout/ui` "Tailwind preset" is a CSS `@theme` block
-  mapping every token to a Tailwind utility (`bg-base`, `text-secondary`, `rounded-card`,
-  `duration-base`, `ease-out-expo`, ...). Tailwind 4 has no JavaScript preset; the CSS
-  theme is the equivalent and the same file works in any consumer, including the Purse
-  embed app and operator console in phases 4 and 5.
+  mapping every token to a Tailwind utility with the token's own name (`bg-bg-raised`,
+  `text-text-secondary`, `border-border-subtle`, `rounded-card`, `text-body`,
+  `ease-out-expo`; durations have no theme namespace and are used as `duration-(--d-base)`).
+  Tailwind 4 has no JavaScript preset; the CSS theme is the equivalent and the same file
+  works in any consumer, including the Purse embed app and operator console in phases 4
+  and 5.
 - **Primitives are plain CSS, not Tailwind classes.** `Button` and `StatusPill` are styled
   from the token custom properties in `@sideout/ui/styles.css`, so a consumer never has to
   configure Tailwind content scanning of the package for the primitives to render.
