@@ -1,0 +1,37 @@
+{
+  "name": "@purse/api",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Purse: the competition-infrastructure platform. API, contest engine, ledger, settlement, eligibility.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false --env-file-if-exists=.env src/index.ts",
+    "build": "tsup",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:generate:custom": "drizzle-kit generate --custom",
+    "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@purse/sdk": "workspace:*",
+    "@purse/types": "workspace:*",
+    "@repo/db": "workspace:*",
+    "@repo/ids": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.8",
+    "postgres": "^3.4.9",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*",
+    "@types/node": "^22.20.3",
+    "drizzle-kit": "^0.31.10",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.13",
+    "vitest": "^5.0.1"
+  }
+}

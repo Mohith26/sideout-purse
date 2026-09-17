@@ -1,0 +1,10 @@
+{
+  "extends": "../../packages/config/tsconfig/node-service.json",
+  "include": ["src", "test", "scripts", "*.config.ts"],
+  "references": [
+    { "path": "../../packages/ids" },
+    { "path": "../../packages/db" },
+    { "path": "../../packages/purse-types" },
+    { "path": "../../packages/purse-sdk" }
+  ]
+}

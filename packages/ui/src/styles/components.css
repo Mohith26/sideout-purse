@@ -1,0 +1,294 @@
+/*
+ * Base styles and the first primitives, written against the tokens so that any consumer
+ * (Sideout now, the Purse embed and console later) renders them identically without
+ * configuring Tailwind to scan this package.
+ */
+
+/* ---- Base ------------------------------------------------------------------------ */
+
+html {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: var(--leading-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: var(--text-body);
+}
+
+/* Any changing number gets tabular digits so it never jitters (spec 6.2). */
+.tabular,
+[data-tabular] {
+  font-variant-numeric: tabular-nums;
+}
+
+.display {
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--leading-display);
+  text-transform: uppercase;
+}
+
+.label {
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  line-height: 1.2;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* 6.4: one focus treatment everywhere, 2px volt ring at 2px offset. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--focus-ring-width) solid var(--volt);
+  outline-offset: var(--focus-ring-offset);
+}
+
+::selection {
+  background: var(--volt);
+  color: var(--on-volt);
+}
+
+/* ---- AppShell -------------------------------------------------------------------- */
+
+.so-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.so-shell__header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--bg-base) 88%, transparent);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.so-shell__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 56px;
+  padding: 0 var(--gutter);
+  margin: 0 auto;
+  max-width: var(--content-max);
+}
+
+.so-shell__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 1.125rem;
+}
+
+.so-shell__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.so-shell__main {
+  flex: 1;
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-5) var(--gutter) var(--space-8);
+  box-sizing: border-box;
+}
+
+.so-shell__footer {
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: var(--text-label);
+}
+
+.so-shell__footer > div {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-4) var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+@media (min-width: 768px) {
+  .so-shell__main {
+    padding-top: var(--space-6);
+  }
+}
+
+/* ---- Button ---------------------------------------------------------------------- */
+
+.so-btn {
+  --btn-bg: transparent;
+  --btn-fg: var(--text-primary);
+  --btn-border: transparent;
+  --btn-bg-hover: var(--btn-bg);
+
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--target-min);
+  min-width: var(--target-min);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--btn-border);
+  border-radius: var(--radius-input);
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  letter-spacing: 0;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color var(--d-micro) var(--ease-out-expo),
+    border-color var(--d-micro) var(--ease-out-expo),
+    color var(--d-micro) var(--ease-out-expo),
+    opacity var(--d-micro) var(--ease-out-expo);
+}
+
+.so-btn:hover:not(:disabled) {
+  background: var(--btn-bg-hover);
+}
+
+.so-btn:active:not(:disabled) {
+  opacity: 0.85;
+}
+
+.so-btn:disabled,
+.so-btn[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.so-btn[data-size='lg'] {
+  min-height: 52px;
+  padding: 0 var(--space-5);
+  font-size: 1rem;
+}
+
+.so-btn[data-size='sm'] {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-label);
+}
+
+.so-btn[data-variant='primary'] {
+  --btn-bg: var(--volt);
+  --btn-fg: var(--on-volt);
+  --btn-border: var(--volt);
+  --btn-bg-hover: var(--volt-dim);
+}
+
+.so-btn[data-variant='secondary'] {
+  --btn-bg: var(--bg-raised);
+  --btn-fg: var(--text-primary);
+  --btn-border: var(--border-strong);
+  --btn-bg-hover: var(--bg-overlay);
+}
+
+.so-btn[data-variant='ghost'] {
+  --btn-bg: transparent;
+  --btn-fg: var(--text-secondary);
+  --btn-border: transparent;
+  --btn-bg-hover: var(--bg-raised);
+}
+
+.so-btn[data-variant='ghost']:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.so-btn[data-variant='danger'] {
+  --btn-bg: transparent;
+  --btn-fg: var(--fault);
+  --btn-border: color-mix(in srgb, var(--fault) 45%, transparent);
+  --btn-bg-hover: color-mix(in srgb, var(--fault) 12%, transparent);
+}
+
+.so-btn__spinner {
+  width: 1em;
+  height: 1em;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: so-spin var(--d-draw) linear infinite;
+}
+
+@keyframes so-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- StatusPill ------------------------------------------------------------------ */
+
+.so-pill {
+  --pill-fg: var(--text-secondary);
+
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--pill-fg) 35%, transparent);
+  background: color-mix(in srgb, var(--pill-fg) 10%, transparent);
+  color: var(--pill-fg);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.so-pill[data-tone='neutral'] {
+  --pill-fg: var(--text-secondary);
+}
+
+.so-pill[data-tone='live'],
+.so-pill[data-tone='positive'] {
+  --pill-fg: var(--surf);
+}
+
+.so-pill[data-tone='negative'] {
+  --pill-fg: var(--fault);
+}
+
+.so-pill[data-tone='impact'] {
+  --pill-fg: var(--ember);
+}
+
+.so-pill[data-tone='brand'] {
+  --pill-fg: var(--volt);
+}
+
+.so-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  /* The 2s breathing animation for live indicators is one of the six phase 8 transitions. */
+}

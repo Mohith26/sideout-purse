@@ -1,0 +1,114 @@
+/*
+ * Design tokens, system spec section 6. This file is the single definition of every
+ * token; the Tailwind theme (theme.css) and the primitives (components.css) only refer to
+ * these custom properties, and the contrast test parses this file rather than a copy.
+ *
+ * Dark only, by decision. There is no light theme to half-finish.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* 6.1 Color. Elevation is background lightness plus a hairline border, never shadow. */
+  --bg-base: #08090b;
+  --bg-raised: #101216;
+  --bg-overlay: #171a1f;
+  --bg-inset: #050607;
+  --border-subtle: #22262d;
+  --border-strong: #323843;
+  --text-primary: #f4f5f7;
+  --text-secondary: #9ba3af;
+  /*
+   * Spec value #646C79 measures 3.3:1 on --bg-overlay, under the 4.5:1 AA floor for normal
+   * text that section 6.4 requires. Lightened to the nearest value that passes on every
+   * surface; see docs/decisions.md.
+   */
+  --text-tertiary: #7d8591;
+  --volt: #d7ff3e; /* primary action, brand. One per screen. */
+  --volt-dim: #a8c82f;
+  --on-volt: #08090b; /* dark text on volt, never white */
+  --ember: #ff6b3d; /* charity and impact only, never a button */
+  --surf: #35d6c3; /* live, agreed, positive delta */
+  --fault: #ff4d4d; /* error, dispute, failed invariant */
+
+  /* 6.2 Type. Families are supplied by the app through next/font as --font-ui / --font-display. */
+  --font-ui: var(--font-instrument-sans, 'Instrument Sans'), ui-sans-serif, system-ui, sans-serif;
+  /*
+   * "Archivo Expanded" is not a separate Google Fonts family. Archivo ships as a variable
+   * font with a `wdth` axis (62 to 125); Expanded is the width-125 end of it, applied with
+   * `font-stretch: 125%` via --display-stretch.
+   */
+  --font-display: var(--font-archivo, 'Archivo'), var(--font-ui);
+  --display-stretch: 125%;
+
+  --text-display-xl: clamp(2.75rem, 6vw, 4.5rem);
+  --text-display-l: clamp(2rem, 4vw, 3rem);
+  --text-heading: 1.5rem;
+  --text-subheading: 1.125rem;
+  --text-body: 0.9375rem; /* 15px; nothing below this in primary content */
+  --text-label: 0.8125rem;
+
+  --leading-display: 1;
+  --leading-heading: 1.2;
+  --leading-body: 1.55;
+  --tracking-display: -0.015em;
+  --tracking-label: 0.06em;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-display: 700;
+
+  /* 6.3 Space and radius. 8px grid with a 4px half step. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius-chip: 4px;
+  --radius-input: 6px;
+  --radius-card: 10px;
+  --radius-sheet: 14px;
+  --radius-pill: 999px;
+
+  /* 6.4 Accessibility. 2px volt ring at 2px offset; 44px minimum target. */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --target-min: 44px;
+
+  /* 6.3 Motion. Durations and the one easing; the six named transitions are phase 8. */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --d-micro: 120ms;
+  --d-base: 220ms;
+  --d-enter: 420ms;
+  --d-draw: 700ms;
+
+  /* Layout */
+  --gutter: 16px;
+  --content-max: 1280px;
+}
+
+/*
+ * Reduced motion. Spec 6.3: every transition is wrapped in this query and reduced to
+ * opacity. The token layer does the reducing so a component author cannot forget:
+ * movement and drawing durations collapse, and any transition is limited to opacity.
+ * Phase 8's transitions keep their opacity part and lose their movement automatically.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --d-enter: var(--d-base);
+    --d-draw: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-property: opacity;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

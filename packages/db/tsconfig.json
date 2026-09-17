@@ -1,0 +1,4 @@
+{
+  "extends": "../config/tsconfig/library.json",
+  "references": [{ "path": "../ids" }]
+}

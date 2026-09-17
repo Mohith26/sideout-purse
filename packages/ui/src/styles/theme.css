@@ -1,0 +1,82 @@
+/*
+ * Tailwind 4 theme: maps every token in tokens.css to a utility. Tailwind 4 is CSS-first,
+ * so this file is the "preset"; an app imports it after `@import "tailwindcss"` and gets
+ * `bg-bg-raised`, `text-text-secondary`, `border-border-subtle`, `text-volt`,
+ * `rounded-card`, `font-display`, `text-body`, `ease-out-expo`, and so on.
+ *
+ * Utility names mirror the token names one to one (`bg-` + `bg-base` = `bg-bg-base`), so a
+ * token found in a design review can be typed into a class without translation.
+ *
+ * `inline` makes utilities reference the raw token directly, which keeps the cascade to
+ * one level and lets a runtime theme (the embed's postMessage theming in phase 4) override
+ * the raw token and have every utility follow.
+ */
+
+@theme inline {
+  /* Reset Tailwind's default palette; one accent, no stray colours. */
+  --color-*: initial;
+
+  --color-bg-base: var(--bg-base);
+  --color-bg-raised: var(--bg-raised);
+  --color-bg-overlay: var(--bg-overlay);
+  --color-bg-inset: var(--bg-inset);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-volt: var(--volt);
+  --color-volt-dim: var(--volt-dim);
+  --color-on-volt: var(--on-volt);
+  --color-ember: var(--ember);
+  --color-surf: var(--surf);
+  --color-fault: var(--fault);
+
+  --font-*: initial;
+  --font-ui: var(--font-ui);
+  --font-display: var(--font-display);
+
+  --text-*: initial;
+  --text-display-xl: var(--text-display-xl);
+  --text-display-xl--line-height: var(--leading-display);
+  --text-display-xl--letter-spacing: var(--tracking-display);
+  --text-display-l: var(--text-display-l);
+  --text-display-l--line-height: var(--leading-display);
+  --text-display-l--letter-spacing: var(--tracking-display);
+  --text-heading: var(--text-heading);
+  --text-heading--line-height: var(--leading-heading);
+  --text-heading--font-weight: var(--weight-semibold);
+  --text-subheading: var(--text-subheading);
+  --text-subheading--line-height: var(--leading-heading);
+  --text-subheading--font-weight: var(--weight-semibold);
+  --text-body: var(--text-body);
+  --text-body--line-height: var(--leading-body);
+  --text-label: var(--text-label);
+  --text-label--line-height: 1.2;
+  --text-label--letter-spacing: var(--tracking-label);
+  --text-label--font-weight: var(--weight-medium);
+
+  --tracking-display: var(--tracking-display);
+  --tracking-label: var(--tracking-label);
+
+  --radius-*: initial;
+  --radius-chip: var(--radius-chip);
+  --radius-input: var(--radius-input);
+  --radius-card: var(--radius-card);
+  --radius-sheet: var(--radius-sheet);
+  --radius-pill: var(--radius-pill);
+
+  /* Elevation is lightness plus a hairline; shadows only on genuinely floating overlays. */
+  --shadow-*: initial;
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / 0.55);
+
+  --ease-*: initial;
+  --ease-out-expo: var(--ease-out-expo);
+
+  --breakpoint-*: initial;
+  --breakpoint-sm: 390px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1280px;
+
+  --container-content: var(--content-max);
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@repo/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Connection and migration helpers shared by both apps. Holds no schema and no connection string; each app owns its own.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@repo/ids": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*"
+  }
+}
