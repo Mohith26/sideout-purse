@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+
 import { describe, expect, it } from 'vitest';
 
 import { createLogger, errorFields, resolveBuildSha } from '../src/index';
@@ -27,9 +29,10 @@ describe('build sha', () => {
     expect(resolveBuildSha('deadbeef')).toBe('deadbeef');
   });
 
-  it('falls back to a full git sha or "unknown", never anything else', () => {
-    for (const explicit of [undefined, '']) {
-      expect(resolveBuildSha(explicit)).toMatch(/^(?:[0-9a-f]{40}|unknown)$/);
-    }
+  it('falls back to the git HEAD of the checkout it runs in', () => {
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+    expect(resolveBuildSha(undefined)).toBe(head);
+    expect(resolveBuildSha('')).toBe(head);
   });
 });

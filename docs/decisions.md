@@ -47,9 +47,9 @@ leaves to the builder, recorded so later phases do not relitigate them.
   Tailwind 4 has no JavaScript preset; the CSS theme is the equivalent and the same file
   works in any consumer, including the Purse embed app and operator console in phases 4
   and 5.
-- **Primitives are plain CSS, not Tailwind classes.** `AppShell` and `StatusPill` are
-  styled from the token custom properties in `@sideout/ui/styles.css`, so a consumer never
-  has to configure Tailwind content scanning of the package for the primitives to render.
+- **Primitives are plain CSS, not Tailwind classes.** `AppShell` is styled from the token
+  custom properties in `@sideout/ui/styles.css`, so a consumer never has to configure
+  Tailwind content scanning of the package for the primitives to render.
 - **"Archivo Expanded" is the Archivo variable font at width 125.** Google Fonts ships
   Archivo with a `wdth` axis (62–125); there is no separate Expanded family. Display text
   sets `font-stretch: 125%`.

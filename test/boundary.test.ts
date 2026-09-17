@@ -71,7 +71,7 @@ describe('Purse → Sideout', () => {
   const file = 'apps/purse/src/boundary-fixture.ts';
 
   it('rejects @sideout/ui and any @sideout/* package', async () => {
-    const violations = await lint(file, "import { StatusPill } from '@sideout/ui';\nStatusPill;\n");
+    const violations = await lint(file, "import { AppShell } from '@sideout/ui';\nAppShell;\n");
     expect(ruleIds(violations)).toContain('no-restricted-imports');
     expect(ruleIds(violations)).toContain('import-x/no-restricted-paths');
   });

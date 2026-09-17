@@ -24,7 +24,7 @@ apps/
   purse-embed/      (phase 4) the iframe-hosted identity and wallet flows
   purse-console/    (phase 5) the operator console
 packages/
-  ui/               @sideout/ui   design tokens, Tailwind theme, primitives (AppShell, StatusPill)
+  ui/               @sideout/ui   design tokens, Tailwind theme, the AppShell primitive
   purse-types/      @purse/types  API error taxonomy and header names
   purse-sdk/        @purse/sdk    the partner-facing client (phase 4 implements; phase 0 ships its version)
   ids/              @repo/ids     typed-prefix UUID v7 ids shared by both apps
