@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 
+import { PROTOCOL_VERSION } from '@purse/types';
 import { describe, expect, it } from 'vitest';
 
-import { NotImplementedError, Purse, SDK_VERSION } from '../src/index';
+import { PROTOCOL_VERSION as SDK_PROTOCOL_VERSION, SDK_VERSION } from '../src/index';
 
 describe('@purse/sdk skeleton', () => {
   it('reports the same version as package.json', async () => {
@@ -12,12 +13,7 @@ describe('@purse/sdk skeleton', () => {
     expect(SDK_VERSION).toBe(pkg.version);
   });
 
-  it('Purse.init is typed but not implemented', () => {
-    expect(() => Purse.init({ publishableKey: 'pk_test', tenantId: 'tnt_test' })).toThrow(
-      NotImplementedError,
-    );
-    expect(() => Purse.init({ publishableKey: 'pk_test', tenantId: 'tnt_test' })).toThrow(
-      /not implemented/,
-    );
+  it('speaks the protocol version @purse/types defines', () => {
+    expect(SDK_PROTOCOL_VERSION).toBe(PROTOCOL_VERSION);
   });
 });

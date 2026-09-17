@@ -24,9 +24,9 @@ apps/
   purse-embed/      (phase 4) the iframe-hosted identity and wallet flows
   purse-console/    (phase 5) the operator console
 packages/
-  ui/               @sideout/ui   design tokens, Tailwind theme, primitives (Button, StatusPill, AppShell)
+  ui/               @sideout/ui   design tokens, Tailwind theme, primitives (AppShell, StatusPill)
   purse-types/      @purse/types  API error taxonomy, header names, iframe protocol envelope
-  purse-sdk/        @purse/sdk    the partner-facing client (signature fixed; phase 4 implements)
+  purse-sdk/        @purse/sdk    the partner-facing client (phase 4 implements; phase 0 ships its version)
   ids/              @repo/ids     typed-prefix UUID v7 ids shared by both apps
   db/               @repo/db      connection and migration helpers; holds no schema, no URL
   config/           @repo/config  ESLint flat config (with the boundary rule) and tsconfig presets
@@ -38,7 +38,8 @@ test/               repository-level tests: the boundary lint rule, env isolatio
 
 Each app owns its Drizzle config and migration folder (`apps/*/drizzle`). Migrations are
 forward-only and applied by `pnpm db:migrate`, which runs each app's migrator in its own
-process.
+process. Reference rows never live in migration history: `pnpm db:seed` upserts them
+(today, the Sideout tenant in Purse) and can be re-run against any environment.
 
 ## Quickstart
 
@@ -54,6 +55,7 @@ pnpm db:setup               # or: provision an existing Postgres (defaults to lo
                             #     writes apps/purse/.env and apps/sideout/.env with local defaults
 
 pnpm db:migrate             # applies both apps' migrations, each in its own process
+pnpm db:seed                # upserts the Sideout tenant row in Purse; safe to re-run
 pnpm dev                    # Purse on :4000, Sideout on :3000
 ```
 

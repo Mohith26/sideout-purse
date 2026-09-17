@@ -2,7 +2,7 @@
   "name": "@purse/sdk",
   "version": "0.0.1",
   "private": true,
-  "description": "Thin, framework-agnostic client for embedding Purse flows in a partner page (system spec section 4.8). Phase 4 implements it; phase 0 fixes its public signature.",
+  "description": "Thin, framework-agnostic client for embedding Purse flows in a partner page (system spec section 4.8). Phase 4 implements it; phase 0 ships only the version both /health endpoints report.",
   "type": "module",
   "sideEffects": false,
   "exports": {

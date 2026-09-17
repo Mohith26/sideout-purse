@@ -6,7 +6,7 @@ import { z } from 'zod';
  * This module is the only place the connection string is named. It knows
  * `PURSE_DATABASE_URL` and nothing about Sideout's; decision D2 says the two strings are
  * never loaded into one process, and `test/env-isolation.test.ts` at the repository root
- * greps both apps to keep it that way.
+ * proves `loadEnv` ignores Sideout's even when both are present.
  */
 
 const postgresUrl = z

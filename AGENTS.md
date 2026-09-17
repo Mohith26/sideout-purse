@@ -11,8 +11,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - Gates: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`. `.no-mistakes.yaml` and
   `.github/workflows/ci.yml` run the same four; keep them in step.
 - Local Postgres: `pnpm db:setup` (any reachable Postgres; writes `apps/*/.env`) or
-  `docker compose up -d`, then `pnpm db:migrate`. Tests use the `*_test` databases and wipe
-  them in each app's `test/global-setup.ts`.
+  `docker compose up -d`, then `pnpm db:migrate` and `pnpm db:seed`. Tests use the `*_test`
+  databases and wipe them in each app's `test/global-setup.ts`.
 - `pnpm dev` starts Purse on :4000 and Sideout on :3000; both expose `/health`.
 
 ## The boundary, and where things go
@@ -21,11 +21,12 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   nothing from Sideout. `packages/config/eslint/boundary.js` enforces it and
   `test/boundary.test.ts` proves it. Neutral shared code lives in `@repo/*`.
 - Each app names only its own connection string (`apps/*/src/env.ts`);
-  `test/env-isolation.test.ts` greps for leaks. Never add a root `.env`.
+  `test/env-isolation.test.ts` proves each `loadEnv` ignores the other's. Never add a root `.env`.
 - Schema changes: edit `apps/<app>/src/db/schema.ts`, then `pnpm --filter <pkg> db:generate`
   (`db:generate:custom` for data migrations). Migrations are forward-only; never edit an
-  applied one. Follow the conventions in each schema file's header (typed-prefix ids with a
-  CHECK via `idCheck`, `timestamptz`, `bigint` minor units with an explicit `asset`).
+  applied one, and never put rows in one: reference data goes through the idempotent
+  `db:seed` script. Follow the conventions in each schema file's header (typed-prefix ids
+  with a CHECK via `idCheck`, `timestamptz`, `bigint` minor units with an explicit `asset`).
 - New id prefixes go in `packages/ids/src/index.ts`, nowhere else.
 - Tokens live only in `packages/ui/src/styles/tokens.css`; the Tailwind mapping is
   `theme.css`, primitives are plain CSS in `components.css`. The contrast test parses

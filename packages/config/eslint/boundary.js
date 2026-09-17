@@ -14,7 +14,7 @@
  *   catches relative escapes such as `../../../purse/src/app` that never mention the
  *   package name.
  *
- * `packages/config/test/boundary.test.ts` runs ESLint against fixtures that violate each
+ * `test/boundary.test.ts` at the repository root runs ESLint against fixtures that violate each
  * direction and asserts these exact rule ids fire.
  */
 

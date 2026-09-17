@@ -1,12 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
 import { migrationState, readMigrationJournal, runMigrations } from '@repo/db';
 
 import { connect, type Database } from '../src/db/client';
-import { auditLog, tenants } from '../src/db/schema';
+import { tenants } from '../src/db/schema';
 import { env } from '../src/env';
 import { MIGRATIONS_FOLDER } from '../src/paths';
-import { SIDEOUT_TENANT_ID, SIDEOUT_TENANT_NAME } from '../src/tenants';
 import { resetDatabase } from './global-setup';
 
 describe('migration state reporting', () => {
@@ -36,22 +34,6 @@ describe('migration state reporting', () => {
 
     // Idempotent: a second run applies nothing.
     expect(await runMigrations(database.sql, MIGRATIONS_FOLDER)).toEqual(after);
-  });
-
-  it('seeds the Sideout tenant with its stable id and audits it', async () => {
-    const [tenant] = await database.db.select().from(tenants).where(eq(tenants.id, SIDEOUT_TENANT_ID));
-    expect(tenant).toMatchObject({ id: SIDEOUT_TENANT_ID, name: SIDEOUT_TENANT_NAME, status: 'active' });
-
-    const events = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, SIDEOUT_TENANT_ID));
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      actorKind: 'system',
-      action: 'tenant.created',
-      subjectKind: 'tenant',
-      tenantId: SIDEOUT_TENANT_ID,
-      before: null,
-    });
-    expect(events[0]?.after).toMatchObject({ name: SIDEOUT_TENANT_NAME, status: 'active' });
   });
 
   it('rejects an id with the wrong prefix at the database level', async () => {

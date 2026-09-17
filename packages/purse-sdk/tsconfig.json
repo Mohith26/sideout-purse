@@ -1,7 +1,4 @@
 {
   "extends": "../config/tsconfig/library.json",
-  "compilerOptions": {
-    "lib": ["ES2023", "DOM"]
-  },
   "references": [{ "path": "../purse-types" }]
 }

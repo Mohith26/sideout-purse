@@ -47,9 +47,9 @@ leaves to the builder, recorded so later phases do not relitigate them.
   Tailwind 4 has no JavaScript preset; the CSS theme is the equivalent and the same file
   works in any consumer, including the Purse embed app and operator console in phases 4
   and 5.
-- **Primitives are plain CSS, not Tailwind classes.** `Button` and `StatusPill` are styled
-  from the token custom properties in `@sideout/ui/styles.css`, so a consumer never has to
-  configure Tailwind content scanning of the package for the primitives to render.
+- **Primitives are plain CSS, not Tailwind classes.** `AppShell` and `StatusPill` are
+  styled from the token custom properties in `@sideout/ui/styles.css`, so a consumer never
+  has to configure Tailwind content scanning of the package for the primitives to render.
 - **"Archivo Expanded" is the Archivo variable font at width 125.** Google Fonts ships
   Archivo with a `wdth` axis (62–125); there is no separate Expanded family. Display text
   sets `font-stretch: 125%`.
@@ -60,7 +60,8 @@ leaves to the builder, recorded so later phases do not relitigate them.
 - **Ids are UUID v7 with a typed prefix and a CHECK constraint.** `tnt_`, `usr_`, `aud_`,
   `chr_` and the rest live in one registry in `@repo/ids`; each table checks its own prefix
   at the database level.
-- **The Sideout tenant row is seeded by a migration, not a seed script.** It is reference
-  data the platform cannot function without and its id must be stable across environments,
-  so it belongs to the schema's history. Its id is `SIDEOUT_TENANT_ID` in
-  `apps/purse/src/tenants.ts`.
+- **Seed data never lives in migration history.** Migrations are forward-only and describe
+  the schema; rows the platform cannot run without are upserted by `pnpm db:seed`
+  (`apps/purse/scripts/seed.ts`), which is idempotent and safe on every deploy. The Sideout
+  tenant is keyed on its unique name and created with the stable id `SIDEOUT_TENANT_ID`
+  from `apps/purse/src/db/seed.ts`, so every environment agrees on it.

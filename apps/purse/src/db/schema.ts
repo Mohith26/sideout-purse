@@ -15,14 +15,17 @@
  * - Column names are snake_case; drizzle's `casing: 'snake_case'` maps camelCase fields.
  * - Enumerations are Postgres enums, not free text, so the database rejects a typo.
  */
-import { index, jsonb, pgEnum, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { index, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idCheck, timestamps } from '@repo/db';
 
 // ---- Tenancy -------------------------------------------------------------------------
 
 export const tenantStatus = pgEnum('tenant_status', ['active', 'suspended']);
 
-/** One row per partner application. Sideout is the first; see `SIDEOUT_TENANT_ID`. */
+/**
+ * One row per partner application. Sideout is the first, upserted by `pnpm db:seed`
+ * (`src/db/seed.ts`) rather than by a migration; names are unique so that upsert has a key.
+ */
 export const tenants = pgTable(
   'tenants',
   {
@@ -31,7 +34,7 @@ export const tenants = pgTable(
     status: tenantStatus('status').notNull().default('active'),
     ...timestamps,
   },
-  (table) => [idCheck('tenants_id_prefix', table.id, 'tnt')],
+  (table) => [idCheck('tenants_id_prefix', table.id, 'tnt'), uniqueIndex('tenants_name_key').on(table.name)],
 );
 
 // ---- Audit ---------------------------------------------------------------------------

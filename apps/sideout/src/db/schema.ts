@@ -1,11 +1,12 @@
 /**
  * Sideout schema, system spec section 5.1: only what Purse does not own. Phase 0 ships
- * local accounts and charities; tournaments, teams, pools, matches, score consensus,
- * donations and the `purse_calls` audit arrive in phases 6 and 7.
+ * charities; local accounts and the Purse link (decision D8) arrive with identity in
+ * phase 3, and tournaments, teams, pools, matches, score consensus, donations and the
+ * `purse_calls` audit in phases 6 and 7.
  *
  * Conventions (shared with Purse through `@repo/db`):
- * - Ids are typed-prefix UUID v7 strings checked at the database (`sou_` users,
- *   `chr_` charities, `ext_` for the opaque id handed to Purse).
+ * - Ids are typed-prefix UUID v7 strings checked at the database (`chr_` charities; every
+ *   later table registers its own prefix in `@repo/ids`).
  * - Timestamps are `timestamptz`.
  * - Money that ever appears here (donations, phase 7) is real dollars via Stripe, stored
  *   as `bigint` cents with an explicit `currency`, and never crosses into Purse
@@ -15,29 +16,6 @@
  */
 import { pgEnum, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idCheck, timestamps } from '@repo/db';
-
-// ---- Accounts ------------------------------------------------------------------------
-
-/**
- * A local Sideout account (decision D8: Sideout owns the app session). `purseExternalId`
- * is the opaque value Sideout sends Purse as `external_id`; it is minted here, is never
- * Sideout's own row id, and is the only link between the two identities.
- */
-export const users = pgTable(
-  'users',
-  {
-    id: text('id').primaryKey(),
-    purseExternalId: text('purse_external_id').notNull(),
-    displayName: text('display_name').notNull(),
-    avatarUrl: text('avatar_url'),
-    ...timestamps,
-  },
-  (table) => [
-    idCheck('users_id_prefix', table.id, 'sou'),
-    idCheck('users_purse_external_id_prefix', table.purseExternalId, 'ext'),
-    uniqueIndex('users_purse_external_id_key').on(table.purseExternalId),
-  ],
-);
 
 // ---- Charities -----------------------------------------------------------------------
 
@@ -60,7 +38,5 @@ export const charities = pgTable(
   (table) => [idCheck('charities_id_prefix', table.id, 'chr'), uniqueIndex('charities_slug_key').on(table.slug)],
 );
 
-export type User = typeof users.$inferSelect;
-export type NewUser = typeof users.$inferInsert;
 export type Charity = typeof charities.$inferSelect;
 export type NewCharity = typeof charities.$inferInsert;

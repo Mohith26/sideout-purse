@@ -5,8 +5,8 @@ import { z } from 'zod';
  *
  * This module is the only place Sideout's connection string is named. It knows
  * `SIDEOUT_DATABASE_URL` and nothing about Purse's (decision D2); the env-isolation test
- * at the repository root greps both apps to keep it that way. Purse is reached over HTTPS
- * with a secret key (phase 4), never through its database.
+ * at the repository root proves `loadEnv` ignores Purse's even when both are present.
+ * Purse is reached over HTTPS with a secret key (phase 4), never through its database.
  */
 
 const postgresUrl = z

@@ -26,4 +26,5 @@ CREATE TABLE "tenants" (
 --> statement-breakpoint
 ALTER TABLE "audit_log" ADD CONSTRAINT "audit_log_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "audit_log_subject_idx" ON "audit_log" USING btree ("subject_kind","subject_id","created_at");--> statement-breakpoint
-CREATE INDEX "audit_log_tenant_created_idx" ON "audit_log" USING btree ("tenant_id","created_at");
+CREATE INDEX "audit_log_tenant_created_idx" ON "audit_log" USING btree ("tenant_id","created_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "tenants_name_key" ON "tenants" USING btree ("name");

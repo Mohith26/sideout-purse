@@ -1,5 +1,5 @@
 {
-  "id": "abd510d4-f5b3-4966-9ec0-f4ef0aa89f23",
+  "id": "a18551c1-bf68-4e39-8bbc-1426429b02c0",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -192,7 +192,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "tenants_name_key": {
+          "name": "tenants_name_key",
+          "columns": [
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

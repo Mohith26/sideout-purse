@@ -61,7 +61,7 @@ describe('Sideout → Purse', () => {
   it('allows the public entries of @purse/sdk and @purse/types', async () => {
     const violations = await lint(
       file,
-      "import { Purse } from '@purse/sdk';\nimport { REQUEST_ID_HEADER } from '@purse/types';\nPurse;\nREQUEST_ID_HEADER;\n",
+      "import { SDK_VERSION } from '@purse/sdk';\nimport { REQUEST_ID_HEADER } from '@purse/types';\nSDK_VERSION;\nREQUEST_ID_HEADER;\n",
     );
     expect(ruleIds(violations).filter((id) => id === 'no-restricted-imports' || id === 'import-x/no-restricted-paths')).toEqual([]);
   });
@@ -71,7 +71,7 @@ describe('Purse → Sideout', () => {
   const file = 'apps/purse/src/boundary-fixture.ts';
 
   it('rejects @sideout/ui and any @sideout/* package', async () => {
-    const violations = await lint(file, "import { Button } from '@sideout/ui';\nButton;\n");
+    const violations = await lint(file, "import { StatusPill } from '@sideout/ui';\nStatusPill;\n");
     expect(ruleIds(violations)).toContain('no-restricted-imports');
     expect(ruleIds(violations)).toContain('import-x/no-restricted-paths');
   });
