@@ -37,20 +37,6 @@ export type Id<P extends IdPrefix = IdPrefix> = `${P}_${string}`;
 
 const UUID_V7 = '[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 
-export class InvalidIdError extends Error {
-  override readonly name = 'InvalidIdError';
-  constructor(
-    readonly value: unknown,
-    readonly expectedPrefix: IdPrefix,
-  ) {
-    super(`Expected an id with prefix "${expectedPrefix}_", got ${describe(value)}`);
-  }
-}
-
-function describe(value: unknown): string {
-  return typeof value === 'string' ? JSON.stringify(value) : typeof value;
-}
-
 /** Mint a new id for the given prefix. */
 export function newId<P extends IdPrefix>(prefix: P): Id<P> {
   return `${prefix}_${uuidv7()}`;
@@ -65,37 +51,10 @@ export function isId<P extends IdPrefix>(value: unknown, prefix: P): value is Id
   return isUuid(uuid) && uuidVersion(uuid) === 7;
 }
 
-/** Narrow an untrusted string to an id, or throw `InvalidIdError`. */
-export function parseId<P extends IdPrefix>(value: unknown, prefix: P): Id<P> {
-  if (isId(value, prefix)) return value;
-  throw new InvalidIdError(value, prefix);
-}
-
-/** The creation instant encoded in a v7 id (millisecond precision). */
-export function idTimestamp(id: Id): Date {
-  const uuid = id.slice(id.indexOf('_') + 1);
-  if (!isUuid(uuid) || uuidVersion(uuid) !== 7) {
-    throw new InvalidIdError(id, prefixOf(id));
-  }
-  // The first 48 bits of a v7 UUID are unix milliseconds, big-endian.
-  const millis = Number.parseInt(uuid.slice(0, 8) + uuid.slice(9, 13), 16);
-  return new Date(millis);
-}
-
-/** The prefix portion of an id string, typed loosely because the input is untrusted. */
-export function prefixOf(id: string): IdPrefix {
-  return id.slice(0, id.indexOf('_')) as IdPrefix;
-}
-
 /**
  * A POSIX regular expression suitable for a Postgres `CHECK (id ~ '...')` constraint,
  * so a mis-prefixed id can never be inserted even by hand.
  */
 export function idCheckPattern(prefix: IdPrefix): string {
   return `^${prefix}_${UUID_V7}$`;
-}
-
-/** The JavaScript counterpart of `idCheckPattern`, for validating at the edge. */
-export function idRegExp(prefix: IdPrefix): RegExp {
-  return new RegExp(idCheckPattern(prefix));
 }

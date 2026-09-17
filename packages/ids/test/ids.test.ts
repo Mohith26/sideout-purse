@@ -1,17 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
-import {
-  ID_PREFIXES,
-  InvalidIdError,
-  idCheckPattern,
-  idRegExp,
-  idTimestamp,
-  isId,
-  newId,
-  parseId,
-  prefixOf,
-} from '../src/index';
+import { ID_PREFIXES, idCheckPattern, isId, newId } from '../src/index';
 
 const prefixes = Object.values(ID_PREFIXES);
 
@@ -20,7 +10,7 @@ describe('id format', () => {
     for (const prefix of prefixes) {
       const id = newId(prefix);
       expect(id.startsWith(`${prefix}_`)).toBe(true);
-      expect(id).toMatch(idRegExp(prefix));
+      expect(id).toMatch(new RegExp(idCheckPattern(prefix)));
       // version nibble 7, RFC 4122 variant
       const uuid = id.slice(prefix.length + 1);
       expect(uuid[14]).toBe('7');
@@ -43,25 +33,18 @@ describe('id format', () => {
     expect(isId(null, 'tnt')).toBe(false);
   });
 
-  it('parseId throws a typed error that names the expected prefix', () => {
-    expect(() => parseId('nope', 'usr')).toThrow(InvalidIdError);
-    expect(() => parseId(newId('tnt'), 'usr')).toThrow(/usr_/);
-    const id = newId('usr');
-    expect(parseId(id, 'usr')).toBe(id);
-  });
-
-  it('prefixOf reads the prefix back', () => {
-    expect(prefixOf(newId('acct'))).toBe('acct');
-  });
-
   it('the SQL CHECK pattern agrees with the JavaScript validator', () => {
     fc.assert(
       fc.property(fc.constantFrom(...prefixes), (prefix) => {
         const id = newId(prefix);
         const sqlPattern = new RegExp(idCheckPattern(prefix));
         expect(sqlPattern.test(id)).toBe(true);
+        expect(isId(id, prefix)).toBe(true);
         for (const other of prefixes) {
-          if (other !== prefix) expect(sqlPattern.test(newId(other))).toBe(false);
+          if (other !== prefix) {
+            expect(sqlPattern.test(newId(other))).toBe(false);
+            expect(isId(newId(other), prefix)).toBe(false);
+          }
         }
       }),
     );
@@ -74,27 +57,5 @@ describe('time ordering', () => {
     const sorted = [...ids].sort();
     expect(sorted).toEqual(ids);
     expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  it('encodes the mint instant at millisecond precision', () => {
-    const before = Date.now();
-    const id = newId('ent');
-    const after = Date.now();
-    const at = idTimestamp(id).getTime();
-    expect(at).toBeGreaterThanOrEqual(before);
-    expect(at).toBeLessThanOrEqual(after);
-  });
-
-  it('later ids never carry an earlier timestamp', () => {
-    const ids = Array.from({ length: 1_000 }, () => newId('cnt'));
-    for (let i = 1; i < ids.length; i += 1) {
-      expect(idTimestamp(ids[i]!).getTime()).toBeGreaterThanOrEqual(
-        idTimestamp(ids[i - 1]!).getTime(),
-      );
-    }
-  });
-
-  it('idTimestamp rejects non-v7 payloads', () => {
-    expect(() => idTimestamp(`usr_${crypto.randomUUID()}`)).toThrow(InvalidIdError);
   });
 });

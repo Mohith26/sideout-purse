@@ -1,6 +1,6 @@
 /**
- * WCAG 2.x contrast arithmetic, used by the token test and available to any consumer that
- * needs to prove a colour pairing at runtime (the embed's partner theming in phase 4).
+ * WCAG 2.x contrast arithmetic for the token test. Not part of the package's public entry;
+ * a runtime consumer (the embed's partner theming, phase 4) can export it when it exists.
  */
 
 export type Rgb = { r: number; g: number; b: number };
@@ -53,7 +53,3 @@ export const WCAG = {
   AA_LARGE: 3,
   AAA: 7,
 } as const;
-
-export function meetsAA(foreground: Rgb | string, background: Rgb | string, large = false): boolean {
-  return contrastRatio(foreground, background) >= (large ? WCAG.AA_LARGE : WCAG.AA);
-}
