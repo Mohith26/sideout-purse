@@ -1,7 +1,8 @@
+import { createLogger, type Logger } from '@repo/logger';
+
 import { createApp } from '../src/app';
 import { connect, type Database } from '../src/db/client';
 import { env } from '../src/env';
-import { createLogger, type Logger } from '../src/logger';
 import { MIGRATIONS_FOLDER } from '../src/paths';
 
 export type TestHarness = {

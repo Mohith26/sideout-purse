@@ -1,8 +1,8 @@
 import { runMigrations } from '@repo/db';
+import { createLogger, errorFields } from '@repo/logger';
 
 import { connect } from '../src/db/client';
 import { env } from '../src/env';
-import { createLogger, errorFields } from '../src/lib/logger';
 import { migrationsFolder } from '../src/paths';
 
 /**

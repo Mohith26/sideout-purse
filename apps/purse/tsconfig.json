@@ -4,6 +4,7 @@
   "references": [
     { "path": "../../packages/ids" },
     { "path": "../../packages/db" },
+    { "path": "../../packages/logger" },
     { "path": "../../packages/purse-types" },
     { "path": "../../packages/purse-sdk" }
   ]

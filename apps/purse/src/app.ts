@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import type { Sql } from '@repo/db';
+import { errorFields, type Logger } from '@repo/logger';
 
 import { ApiFailure, fail } from './http/envelope';
 import { requestId, type RequestScope } from './http/request-id';
-import { errorFields, type Logger } from './logger';
 import { healthRoutes } from './routes/health';
 
 export type AppDeps = {

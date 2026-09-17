@@ -24,10 +24,10 @@ export const IGNORES = [
 
 /**
  * The one place structured logs are allowed to reach stdout. Everything else must go
- * through the app's logger, which is what makes request ids traceable across the
- * service boundary (system spec section 10).
+ * through `@repo/logger`, which is what makes request ids traceable across the service
+ * boundary (system spec section 10).
  */
-export const LOGGER_FILES = ['apps/*/src/logger.ts', 'apps/*/src/lib/logger.ts'];
+export const LOGGER_FILES = ['packages/logger/src/**/*.ts'];
 
 /**
  * Root flat config for the monorepo.

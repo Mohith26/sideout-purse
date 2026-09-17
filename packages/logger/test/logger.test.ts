@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createLogger, errorFields } from '../src/logger';
+import { createLogger, errorFields, resolveBuildSha } from '../src/index';
 
 describe('logger', () => {
   it('emits one JSON object per line with service, level, time and bound fields', () => {
@@ -19,5 +19,17 @@ describe('logger', () => {
   it('serialises errors without throwing on non-Error values', () => {
     expect(errorFields(new Error('boom'))).toMatchObject({ err: { name: 'Error', message: 'boom' } });
     expect(errorFields('string failure')).toEqual({ err: { message: 'string failure' } });
+  });
+});
+
+describe('build sha', () => {
+  it('prefers the sha the deploy set', () => {
+    expect(resolveBuildSha('deadbeef')).toBe('deadbeef');
+  });
+
+  it('falls back to a full git sha or "unknown", never anything else', () => {
+    for (const explicit of [undefined, '']) {
+      expect(resolveBuildSha(explicit)).toMatch(/^(?:[0-9a-f]{40}|unknown)$/);
+    }
   });
 });

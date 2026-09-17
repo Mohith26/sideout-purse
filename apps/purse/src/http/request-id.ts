@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { MiddlewareHandler } from 'hono';
 import { REQUEST_ID_HEADER } from '@purse/types';
-
-import type { Logger } from '../logger';
+import type { Logger } from '@repo/logger';
 
 /**
  * Accepts a caller's `X-Request-Id` when it looks like one (so Sideout's id survives the

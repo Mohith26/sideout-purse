@@ -12,7 +12,7 @@
  * the raw token and have every utility follow.
  */
 
-@theme inline {
+@theme inline reference {
   /* Reset Tailwind's default palette; one accent, no stray colours. */
   --color-*: initial;
 

@@ -15,9 +15,6 @@
     "test": "vitest run",
     "clean": "rm -rf dist"
   },
-  "dependencies": {
-    "@purse/types": "workspace:*"
-  },
   "devDependencies": {
     "@repo/config": "workspace:*",
     "vitest": "^5.0.1"

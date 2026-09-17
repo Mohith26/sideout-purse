@@ -25,10 +25,11 @@ apps/
   purse-console/    (phase 5) the operator console
 packages/
   ui/               @sideout/ui   design tokens, Tailwind theme, primitives (AppShell, StatusPill)
-  purse-types/      @purse/types  API error taxonomy, header names, iframe protocol envelope
+  purse-types/      @purse/types  API error taxonomy and header names
   purse-sdk/        @purse/sdk    the partner-facing client (phase 4 implements; phase 0 ships its version)
   ids/              @repo/ids     typed-prefix UUID v7 ids shared by both apps
   db/               @repo/db      connection and migration helpers; holds no schema, no URL
+  logger/           @repo/logger  structured JSON log lines and build-sha resolution, shared by both apps
   config/           @repo/config  ESLint flat config (with the boundary rule) and tsconfig presets
 docker/postgres/    init script for the compose Postgres: two databases, two roles
 scripts/            db-setup: the same provisioning against any Postgres you can reach
@@ -43,7 +44,7 @@ process. Reference rows never live in migration history: `pnpm db:seed` upserts 
 
 ## Quickstart
 
-Requires Node 22 (`.nvmrc`), pnpm 11, and a Postgres 16 to talk to.
+Requires Node 22.9 or later (`.nvmrc`), pnpm 11, and a Postgres 16 to talk to.
 
 ```sh
 git clone <this repo> && cd sideout-purse

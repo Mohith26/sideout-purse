@@ -20,6 +20,7 @@
     "@purse/types": "workspace:*",
     "@repo/db": "workspace:*",
     "@repo/ids": "workspace:*",
+    "@repo/logger": "workspace:*",
     "@sideout/ui": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "next": "~15.5.25",

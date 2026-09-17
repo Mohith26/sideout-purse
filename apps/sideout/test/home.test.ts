@@ -16,8 +16,8 @@ describe('home snapshot', () => {
     await database.close();
   });
 
-  it('reads an empty database as "no events yet"', async () => {
-    expect(await homeSnapshot(database.db)).toEqual({ liveEvents: 0, upcomingEvents: 0, activeCharities: 0 });
+  it('reads an empty database as zero beneficiaries', async () => {
+    expect(await homeSnapshot(database.db)).toEqual({ activeCharities: 0 });
   });
 
   it('counts only active beneficiaries through a real query', async () => {

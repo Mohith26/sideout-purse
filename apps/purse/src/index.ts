@@ -1,10 +1,10 @@
 import { serve } from '@hono/node-server';
 
+import { createLogger, resolveBuildSha } from '@repo/logger';
+
 import { createApp } from './app';
-import { resolveBuildSha } from './build-info';
 import { connect } from './db/client';
 import { env } from './env';
-import { createLogger } from './logger';
 import { MIGRATIONS_FOLDER } from './paths';
 
 const config = env();

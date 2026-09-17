@@ -57,9 +57,9 @@ leaves to the builder, recorded so later phases do not relitigate them.
   never loaded into one process. `apps/purse/.env` holds `PURSE_DATABASE_URL`;
   `apps/sideout/.env` holds `SIDEOUT_DATABASE_URL`. `pnpm db:migrate` at the root runs each
   app's migrator as a separate process for the same reason.
-- **Ids are UUID v7 with a typed prefix and a CHECK constraint.** `tnt_`, `usr_`, `aud_`,
-  `chr_` and the rest live in one registry in `@repo/ids`; each table checks its own prefix
-  at the database level.
+- **Ids are UUID v7 with a typed prefix and a CHECK constraint.** `tnt_`, `usr_`, `chr_`
+  and the rest live in one registry in `@repo/ids`; each table checks its own prefix at
+  the database level.
 - **Seed data never lives in migration history.** Migrations are forward-only and describe
   the schema; rows the platform cannot run without are upserted by `pnpm db:seed`
   (`apps/purse/scripts/seed.ts`), which is idempotent and safe on every deploy. The Sideout

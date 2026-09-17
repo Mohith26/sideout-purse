@@ -34,72 +34,7 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorType, number>> = {
   internal_error: 500,
 };
 
-/** Why an eligibility evaluation said no (system spec section 4.5). Sealed. */
-export const ELIGIBILITY_REASONS = [
-  'under_minimum_age',
-  'region_not_permitted',
-  'identity_unverified',
-  'identity_rejected',
-  'self_excluded',
-  'cooling_off',
-  'platform_blocked',
-  'insufficient_balance',
-  'stake_limit_exceeded',
-  'velocity_limit_exceeded',
-  'region_unknown',
-  'contest_not_open',
-  'contest_full',
-] as const;
-
-export type EligibilityReason = (typeof ELIGIBILITY_REASONS)[number];
-
-/** What a user can do about a `not_eligible` decision, when anything. Sealed. */
-export const REQUIRED_ACTIONS = [
-  'complete_identity',
-  'provide_demographics',
-  'add_funds',
-  'confirm_location',
-] as const;
-
-export type RequiredAction = (typeof REQUIRED_ACTIONS)[number];
-
-type ErrorShape<T extends ApiErrorType, Detail = undefined> = Detail extends undefined
-  ? { type: T; code: string; message: string; detail?: unknown }
-  : { type: T; code: string; message: string; detail: Detail };
-
-/** Carried by `not_eligible`, and the only detail shape a partner is expected to branch on. */
-export type NotEligibleDetail = {
-  reasons: EligibilityReason[];
-  requiredAction?: RequiredAction;
-  /** The ruleset in force when the decision was made (decision D9). */
-  rulesetVersion: string;
-};
-
-export type InsufficientFundsDetail = {
-  asset: string;
-  /** Minor units, serialised as a decimal string because JSON has no bigint. */
-  required: string;
-  available: string;
-};
-
-export type ApiError =
-  | ErrorShape<'invalid_request'>
-  | ErrorShape<'authentication_error'>
-  | ErrorShape<'permission_error'>
-  | ErrorShape<'not_eligible', NotEligibleDetail>
-  | ErrorShape<'insufficient_funds', InsufficientFundsDetail>
-  | ErrorShape<'invalid_state'>
-  | ErrorShape<'conflict'>
-  | ErrorShape<'rate_limited'>
-  | ErrorShape<'internal_error'>;
+export type ApiError = { type: ApiErrorType; code: string; message: string };
 
 export type ApiErrorEnvelope = { error: ApiError };
 export type ApiDataEnvelope<T> = { data: T };
-export type ApiEnvelope<T> = ApiDataEnvelope<T> | ApiErrorEnvelope;
-
-export function isApiErrorEnvelope(value: unknown): value is ApiErrorEnvelope {
-  if (typeof value !== 'object' || value === null || !('error' in value)) return false;
-  const { error } = value;
-  if (typeof error !== 'object' || error === null || !('type' in error)) return false;
-  return typeof error.type === 'string' && (API_ERROR_TYPES as readonly string[]).includes(error.type);
-}

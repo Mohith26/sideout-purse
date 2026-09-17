@@ -1,10 +1,9 @@
 /**
- * Structured JSON logging, one line per event, to stdout. This is the only file in Purse
- * allowed to write to the console (the ESLint `no-console` exemption is scoped to it).
- *
- * Every line carries `service`, `level`, `time`, `msg`, and whatever fields the caller
- * adds. Request-scoped loggers add `requestId`, which Sideout forwards on every call it
- * makes to Purse, so one request can be followed across the boundary (spec section 10).
+ * Structured JSON logging, one line per event, to stdout. Both apps log through this
+ * module, so the line shape is defined once: every line carries `service`, `level`,
+ * `time`, `msg`, and whatever fields the caller adds. Request-scoped loggers add
+ * `requestId`, which Sideout forwards to Purse as `X-Request-Id`, so one request can be
+ * followed across the boundary (system spec section 10).
  */
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

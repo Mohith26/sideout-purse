@@ -1,7 +1,8 @@
+import { createLogger, errorFields } from '@repo/logger';
+
 import { connect } from '../src/db/client';
 import { seedSideoutTenant } from '../src/db/seed';
 import { env } from '../src/env';
-import { createLogger, errorFields } from '../src/logger';
 
 /**
  * Apply Purse's seed data, idempotently. Runs after `db:migrate`; exits non-zero on any

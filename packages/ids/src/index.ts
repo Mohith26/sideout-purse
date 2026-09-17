@@ -24,7 +24,6 @@ export const ID_PREFIXES = {
   account: 'acct',
   entry: 'ent',
   transaction: 'txn',
-  auditEvent: 'aud',
   // Sideout (system spec 5.1)
   charity: 'chr',
 } as const;

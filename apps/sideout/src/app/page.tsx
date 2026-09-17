@@ -1,5 +1,3 @@
-import { StatusPill } from '@sideout/ui';
-
 import { database } from '../db/client';
 import { homeSnapshot } from '../home/snapshot';
 
@@ -12,14 +10,9 @@ export default async function HomePage() {
   return (
     <div className="flex flex-col gap-8">
       <section aria-labelledby="live-heading" className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-4">
-          <h1 id="live-heading" className="display text-display-l text-text-primary">
-            State of play
-          </h1>
-          <StatusPill tone={snapshot.liveEvents > 0 ? 'live' : 'neutral'}>
-            {snapshot.liveEvents > 0 ? `${snapshot.liveEvents} live` : 'No live play'}
-          </StatusPill>
-        </div>
+        <h1 id="live-heading" className="display text-display-l text-text-primary">
+          State of play
+        </h1>
       </section>
 
       <section aria-labelledby="upcoming-heading" className="flex flex-col gap-3">
@@ -41,7 +34,6 @@ export default async function HomePage() {
         </h2>
         <dl className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Stat label="Beneficiaries onboard" value={snapshot.activeCharities} />
-          <Stat label="Upcoming events" value={snapshot.upcomingEvents} />
         </dl>
       </section>
     </div>
