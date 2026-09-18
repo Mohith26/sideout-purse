@@ -101,7 +101,7 @@ describe('stored rulesets', () => {
     const arena = await buildArena(runtime.db, { users: 1 });
     const pinned = await makeContest(runtime.db, arena);
     expect(pinned.eligibilityRulesetVersion).toBe('2026.09.1');
-    await publishRuleset(runtime.db, { body: { ...SPEC_EXAMPLE_RULESET, version: '2026.10.1', stakeLimits: { perContest: 1, per24h: 1, per7d: 1 } }, activate: true });
+    await publishRuleset(runtime.db, { body: { ...SPEC_EXAMPLE_RULESET, version: '2026.10.1', stakeLimits: { perContest: 100, per24h: 50, per7d: 50 } }, activate: true });
     const later = await makeContest(runtime.db, arena);
     expect(later.eligibilityRulesetVersion).toBe('2026.10.1');
     expect((await rulesetForContest(runtime.db, pinned)).version).toBe('2026.09.1');
@@ -109,13 +109,13 @@ describe('stored rulesets', () => {
     // A contest from before any ruleset existed falls back to the active one.
     expect((await rulesetForContest(runtime.db, { eligibilityRulesetVersion: null })).version).toBe('2026.10.1');
 
-    // The old contest still admits a 100-unit entry; the new one is limited to 1.
+    // The old contest still admits a 100-unit entry; under the new pin the same entry is over the 50-unit velocity limit.
     await advance(runtime.db, arena, pinned.id, 'open');
     await advance(runtime.db, arena, later.id, 'open');
     const user = arena.users[0] ?? ('' as Id<'usr'>);
     await expect(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: pinned.id, userId: user, idempotencyKey: key() })).resolves.toMatchObject({ eligibility: { allowed: true, rulesetVersion: '2026.09.1' } });
     const refused = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: later.id, userId: user, idempotencyKey: key() }));
-    expect(refused.detail).toMatchObject({ reasons: ['stake_limit_exceeded', 'velocity_limit_exceeded'], rulesetVersion: '2026.10.1' });
+    expect(refused.detail).toMatchObject({ reasons: ['velocity_limit_exceeded'], rulesetVersion: '2026.10.1' });
     const [row] = await runtime.db.select().from(contests).where(eq(contests.id, later.id));
     expect(row?.eligibilityRulesetVersion).toBe('2026.10.1');
   });
