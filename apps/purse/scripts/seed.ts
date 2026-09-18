@@ -4,7 +4,7 @@ import type { Id } from '@repo/ids';
 import { createLogger, errorFields } from '@repo/logger';
 
 import { connect } from '../src/db/client';
-import { seedApiKeys, seedContests, seedPlatformAccounts, seedRuleset, seedSideoutTenant, seedTenantOrigins, seedUsers } from '../src/db/seed';
+import { seedApiKeys, seedContests, seedOperatorAdmin, seedPlatformAccounts, seedRuleset, seedSideoutTenant, seedTenantOrigins, seedUsers } from '../src/db/seed';
 import { env, requireMigratorUrl } from '../src/env';
 
 /**
@@ -18,6 +18,12 @@ import { env, requireMigratorUrl } from '../src/env';
  *                                                        this run created (the only time it
  *                                                        exists outside the hash)
  *   pnpm --filter @purse/api db:seed -- --rotate-keys    revoke the seed keys and mint new ones
+ *   pnpm --filter @purse/api db:seed -- --print-operator-password
+ *                                                        print the console admin's password if
+ *                                                        this run set it (the only time it exists)
+ *   pnpm --filter @purse/api db:seed -- --rotate-operator-password
+ *                                                        set a new admin password and sign the
+ *                                                        account out everywhere
  */
 // `pnpm ... db:seed -- --print-keys` hands the script a literal `--` first; drop it so the
 // flags parse either way.
@@ -26,6 +32,8 @@ const { values: args } = parseArgs({
   options: {
     'print-keys': { type: 'boolean', default: false },
     'rotate-keys': { type: 'boolean', default: false },
+    'print-operator-password': { type: 'boolean', default: false },
+    'rotate-operator-password': { type: 'boolean', default: false },
   },
 });
 
@@ -96,6 +104,22 @@ try {
     created: seeded.contests.filter((contest) => contest.created).length,
     contests: seeded.contests.map((contest) => `${contest.externalId}=${contest.state}`),
   });
+
+  const admin = await seedOperatorAdmin(database.db, {
+    ...(process.env['PURSE_OPERATOR_ADMIN_EMAIL'] === undefined ? {} : { email: process.env['PURSE_OPERATOR_ADMIN_EMAIL'] }),
+    rotate: args['rotate-operator-password'],
+  });
+  logger.info(admin.created ? 'console admin created' : 'console admin present', { id: admin.operator.id, email: admin.operator.email, role: admin.operator.role, passwordSet: admin.password !== null });
+  if (args['print-operator-password']) {
+    if (admin.password === null) {
+      logger.warn('the console admin password was not set in this run, so there is nothing to print; use --rotate-operator-password to set a new one');
+    } else {
+      // The one place the password is ever written out, and only when asked for.
+      logger.info('console admin password', { email: admin.operator.email, password: admin.password });
+    }
+  } else if (admin.password !== null) {
+    logger.info('console admin password was set; rerun with --print-operator-password --rotate-operator-password to obtain it');
+  }
 } catch (error) {
   logger.error('seed failed', errorFields(error));
   process.exitCode = 1;

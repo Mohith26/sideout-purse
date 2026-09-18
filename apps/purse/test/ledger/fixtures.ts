@@ -19,6 +19,8 @@ import {
   journalEntries,
   journalLines,
   operatorFlags,
+  operatorSessions,
+  operators,
   rulesets,
   tenantOrigins,
   tenants,
@@ -72,6 +74,8 @@ export async function wipeLedger(migrator: Database): Promise<void> {
   await migrator.db.delete(users);
   await migrator.db.delete(apiKeys);
   await migrator.db.delete(tenants);
+  await migrator.db.delete(operatorSessions);
+  await migrator.db.delete(operators);
 }
 
 export type CreateUserOptions = {

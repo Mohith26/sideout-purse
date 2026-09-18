@@ -2,7 +2,9 @@
 # pnpm, a postgres:16 service container provisioned by `pnpm db:setup`, and all four gates
 # (typecheck, lint, test, build). Database tests run against the two `_TEST` databases.
 # Between test and build, Purse's `purse` database is migrated and seeded and `reconcile`
-# runs against it: a failing ledger invariant fails the build (spec 4.2.4).
+# runs against it: a failing ledger invariant fails the build (spec 4.2.4). After the build,
+# the operator console's Playwright smoke runs the built console against the API on that
+# same seeded database (spec section 8).
 name: CI
 
 on:
@@ -92,3 +94,9 @@ jobs:
       - name: Build
         run: |
           pnpm build
+
+      - name: Install the Playwright browser
+        run: pnpm --filter @purse/console exec playwright install --with-deps chromium
+
+      - name: Console end-to-end smoke
+        run: pnpm --filter @purse/console e2e

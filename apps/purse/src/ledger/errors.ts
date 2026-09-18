@@ -15,6 +15,8 @@ export const LEDGER_ERROR_CODES = {
   invalid_idempotency_key: 'invalid_request',
   invalid_description: 'invalid_request',
   idempotency_conflict: 'conflict',
+  // Explorer reads (spec 4.10)
+  invalid_input: 'invalid_request',
   // Accounts
   account_not_found: 'invalid_request',
   account_wrong_tenant: 'permission_error',

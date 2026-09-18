@@ -32,6 +32,8 @@ export const SIDEOUT_FILES = ['apps/sideout/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
 export const PURSE_FILES = ['apps/purse/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
 /** The Purse embed app: Purse's, so it never reaches Sideout, but it renders on the shared design system. */
 export const EMBED_FILES = ['apps/purse-embed/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
+/** The Purse operator console: the same rule as the embed, and it speaks to the API over HTTP (`/console`) only. */
+export const CONSOLE_FILES = ['apps/purse-console/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
 
 /**
  * Rules applied to files under `apps/sideout`.
@@ -152,6 +154,44 @@ export function embedBoundary(repoRoot) {
           zones: [
             { target: './apps/purse-embed', from: './apps/sideout', message: PURSE_MESSAGE },
             { target: './apps/purse-embed', from: './apps/purse', message: 'The embed app reaches the Purse API over HTTP (/v1/embed), never through its source.' },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * Rules applied to files under `apps/purse-console`: like the embed, a Purse app on the
+ * shared design system that reaches the API only over HTTP (its `/console` routes), never
+ * through the API's source, and never anything of Sideout.
+ *
+ * @param {string} repoRoot absolute path of the repository root
+ * @returns {import('eslint').Linter.Config}
+ */
+export function consoleBoundary(repoRoot) {
+  const message = 'The console app reaches the Purse API over HTTP (/console), never through its source.';
+  return {
+    name: 'boundary/purse-console',
+    files: CONSOLE_FILES,
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['@sideout/*', '!@sideout/ui'], message: PURSE_MESSAGE },
+            { group: ['**/apps/sideout', '**/apps/sideout/**', '**/apps/purse', '**/apps/purse/**', '@purse/api', '@purse/embed'], message },
+          ],
+        },
+      ],
+      'import-x/no-restricted-paths': [
+        'error',
+        {
+          basePath: repoRoot,
+          zones: [
+            { target: './apps/purse-console', from: './apps/sideout', message: PURSE_MESSAGE },
+            { target: './apps/purse-console', from: './apps/purse', message },
+            { target: './apps/purse-console', from: './apps/purse-embed', message },
           ],
         },
       ],

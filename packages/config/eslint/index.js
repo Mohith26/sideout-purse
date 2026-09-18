@@ -6,7 +6,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-import { embedBoundary, purseBoundary, sideoutBoundary } from './boundary.js';
+import { consoleBoundary, embedBoundary, purseBoundary, sideoutBoundary } from './boundary.js';
 
 /**
  * Paths ESLint never looks at. Migrations are generated SQL and JSON; build output and
@@ -156,7 +156,7 @@ export function defineConfig({ repoRoot }) {
 
     {
       name: 'repo/react',
-      files: ['apps/sideout/**/*.{ts,tsx}', 'apps/purse-embed/**/*.{ts,tsx}', 'packages/ui/**/*.{ts,tsx}'],
+      files: ['apps/sideout/**/*.{ts,tsx}', 'apps/purse-embed/**/*.{ts,tsx}', 'apps/purse-console/**/*.{ts,tsx}', 'packages/ui/**/*.{ts,tsx}'],
       plugins: { 'react-hooks': reactHooks },
       languageOptions: { globals: { ...globals.browser } },
       rules: {
@@ -166,17 +166,18 @@ export function defineConfig({ repoRoot }) {
 
     {
       name: 'repo/nextjs',
-      files: ['apps/sideout/**/*.{ts,tsx}', 'apps/purse-embed/**/*.{ts,tsx}'],
+      files: ['apps/sideout/**/*.{ts,tsx}', 'apps/purse-embed/**/*.{ts,tsx}', 'apps/purse-console/**/*.{ts,tsx}'],
       plugins: { '@next/next': nextPlugin },
       rules: {
         ...nextPlugin.configs.recommended.rules,
         ...nextPlugin.configs['core-web-vitals'].rules,
       },
-      settings: { next: { rootDir: [`${repoRoot}/apps/sideout`, `${repoRoot}/apps/purse-embed`] } },
+      settings: { next: { rootDir: [`${repoRoot}/apps/sideout`, `${repoRoot}/apps/purse-embed`, `${repoRoot}/apps/purse-console`] } },
     },
 
     sideoutBoundary(repoRoot),
     purseBoundary(repoRoot),
     embedBoundary(repoRoot),
+    consoleBoundary(repoRoot),
   ];
 }

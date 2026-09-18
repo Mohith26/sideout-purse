@@ -8,6 +8,7 @@ import { activeOrigins, addOrigin } from '../embed/origins';
 import { findAccount, openAccount } from '../ledger/accounts';
 import type { Actor } from '../ledger/audit';
 import { issuePromoPoints } from '../ledger/flows';
+import { createOperator, generatePassword, revokeOtherSessions, setPassword } from '../operators';
 import { devIdentityProvider } from '../providers';
 import { addRestriction, getVerification, recordLocation, refreshFingerprint, startVerification } from '../users';
 import type { Db, DbOrTx } from './client';
@@ -15,6 +16,7 @@ import {
   apiKeys,
   asset,
   contests,
+  operators,
   tenants,
   userVerification,
   users,
@@ -22,6 +24,7 @@ import {
   type AccountKind,
   type ApiKey,
   type Contest,
+  type Operator,
   type RulesetRow,
   type Tenant,
   type User,
@@ -274,6 +277,7 @@ export const SEED_OPERATOR: Actor = { kind: 'operator', ref: 'seed' };
 export const SEED_CONTESTS = {
   draft: 'seed-draft-doubles',
   open: 'seed-open-doubles',
+  awaiting: 'seed-awaiting-doubles',
   settled: 'seed-settled-doubles',
 } as const;
 
@@ -281,8 +285,9 @@ export type SeedContestsResult = { contests: Array<{ externalId: string; id: str
 
 /**
  * One contest per state the seed can reach without scores from Sideout: a `draft`, an
- * `open` with four entered users holding promo points, and a `settled` one whose results
- * reconcile (I4, I5, I7), so the console phase has data to show. Each is keyed on its
+ * `open` with four entered users holding promo points, an `awaiting_settlement` one with
+ * every score in (the console's close flow settles it behind the frozen preview), and a
+ * `settled` one whose results reconcile (I4, I5, I7). Each is keyed on its
  * `external_id` and built in one transaction through the same services the API uses, so
  * a rerun creates nothing and a partial run leaves nothing behind.
  */
@@ -300,6 +305,8 @@ export async function seedContests(db: Db, tenantId: Id<'tnt'>): Promise<SeedCon
           return seedDraftContest(tx, tenantId, externalId);
         case 'open':
           return seedOpenContest(tx, tenantId, externalId);
+        case 'awaiting':
+          return seedAwaitingContest(tx, tenantId, externalId);
         case 'settled':
           return seedSettledContest(tx, tenantId, externalId);
       }
@@ -344,6 +351,38 @@ async function seedOpenContest(tx: DbOrTx, tenantId: Id<'tnt'>, externalId: stri
   for (const userId of entrants) {
     await enterContest(tx, { tenantId, contestId: contest.id, userId, idempotencyKey: `seed:enter:${externalId}:${userId}`, actor: SEED_OPERATOR });
   }
+  return getContest(tx, tenantId, contest.id);
+}
+
+/** Four entrants, all scored (24, 21, 19, 17), results complete: waits for an operator to close it from the console. */
+async function seedAwaitingContest(tx: DbOrTx, tenantId: Id<'tnt'>, externalId: string): Promise<Contest> {
+  const { contest } = await createContest(tx, {
+    tenantId,
+    externalId,
+    kind: 'tournament',
+    title: 'Sideout seed: Friday night doubles (awaiting close)',
+    asset: 'POINTS',
+    entryAmount: SEED_ENTRY_AMOUNT,
+    prizeStructure: { type: 'percentage_split', percentages: [60, 40] },
+    idempotencyKey: `seed:create:${externalId}`,
+    actor: SEED_OPERATOR,
+  });
+  await transition(tx, { tenantId, contestId: contest.id, to: 'open', actor: SEED_OPERATOR, reason: 'seed' });
+  const entrants = SEED_USER_IDS.slice(0, 4);
+  await fundWallets(tx, tenantId, entrants);
+  for (const userId of entrants) {
+    await enterContest(tx, { tenantId, contestId: contest.id, userId, idempotencyKey: `seed:enter:${externalId}:${userId}`, actor: SEED_OPERATOR });
+  }
+  await transition(tx, { tenantId, contestId: contest.id, to: 'locked', actor: SEED_OPERATOR, reason: 'seed' });
+  await transition(tx, { tenantId, contestId: contest.id, to: 'in_progress', actor: SEED_OPERATOR, reason: 'seed' });
+  const scores = [24, 21, 19, 17];
+  await submitScores(tx, {
+    tenantId,
+    contestId: contest.id,
+    scores: entrants.map((userId, index) => ({ userId, score: scores[index] ?? null, attemptFinished: true, sourceRef: `seed:match:${index + 1}` })),
+    idempotencyKey: `seed:scores:${externalId}`,
+    actor: SEED_OPERATOR,
+  });
   return getContest(tx, tenantId, contest.id);
 }
 
@@ -404,4 +443,36 @@ async function fundWallets(tx: DbOrTx, tenantId: Id<'tnt'>, userIds: ReadonlyArr
       description: `Seed promo points for ${userId}`,
     });
   }
+}
+
+// ---- Operator console (phase 5) --------------------------------------------------------
+
+/**
+ * The first console account (spec 4.10): an `admin`, `PURSE_OPERATOR_ADMIN_EMAIL` or
+ * `admin@purse.local`, with a random password that exists only in the return value of the
+ * run that set it. `pnpm --filter @purse/api db:seed -- --print-operator-password` prints
+ * it then and never again; `--rotate-operator-password` sets a new one and signs the
+ * account out everywhere. A rerun without either flag leaves the account as it is.
+ */
+export const DEFAULT_OPERATOR_ADMIN_EMAIL = 'admin@purse.local';
+
+export type SeedOperatorResult = { operator: Omit<Operator, 'passwordHash'>; password: string | null; created: boolean };
+
+export async function seedOperatorAdmin(db: Db, options: { email?: string; rotate?: boolean } = {}): Promise<SeedOperatorResult> {
+  const email = (options.email ?? DEFAULT_OPERATOR_ADMIN_EMAIL).trim().toLowerCase();
+  const result = await db.transaction(async (tx): Promise<{ operator: Operator; password: string | null; created: boolean }> => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`seed-operator:${email}`}, 0))`);
+    const [existing] = await tx.select().from(operators).where(eq(operators.email, email));
+    if (existing !== undefined && options.rotate !== true) return { operator: existing, password: null, created: false };
+    const password = generatePassword();
+    if (existing !== undefined) {
+      const rotated = await setPassword(tx, { operatorId: existing.id, newPassword: password, actor: SEED_OPERATOR });
+      await revokeOtherSessions(tx, existing.id, null);
+      return { operator: rotated, password, created: false };
+    }
+    const created = await createOperator(tx, { email, password, role: 'admin', actor: SEED_OPERATOR });
+    return { operator: created, password, created: true };
+  });
+  const { passwordHash: _hash, ...operator } = result.operator;
+  return { operator, password: result.password, created: result.created };
 }

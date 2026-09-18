@@ -5,8 +5,9 @@
  * locations), the eligibility engine's stored rulesets and decisions (4.5), the risk
  * tables (4.6: identity fingerprints and operator flags), API keys and embed tokens;
  * phase 4 adds the embed's origin allowlist and sign-in codes (4.8) and the webhook
- * endpoints, deliveries and attempts (4.9). Later phases add plumbing in this file and
- * generate migrations from it with `pnpm db:generate`.
+ * endpoints, deliveries and attempts (4.9); phase 5 adds the operator console's accounts
+ * and sessions (4.10). Later phases add plumbing in this file and generate migrations from
+ * it with `pnpm db:generate`.
  *
  * Conventions every table follows:
  *
@@ -22,8 +23,9 @@
  * - Privileges are explicit. Tables are owned by `purse_migrator`; the runtime role
  *   `purse_app` gets exactly what it needs per table in a custom migration (see
  *   `drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`, `0006_contest_guards.sql`,
- *   `0008_identity_guards.sql`, `0010_idempotency_reservation_grants.sql` and
- *   `0012_embed_webhook_guards.sql`). A new table with no grant is unreadable by the runtime,
+ *   `0008_identity_guards.sql`, `0010_idempotency_reservation_grants.sql`,
+ *   `0012_embed_webhook_guards.sql` and `0014_operator_guards.sql`). A new table with no
+ *   grant is unreadable by the runtime,
  *   which `test/ledger/roles.test.ts` turns into a failing test rather than a surprise in
  *   production. Append-only tables (the journal, the audit log, contest results, used
  *   idempotency keys) never grant UPDATE, DELETE or TRUNCATE; other tables grant UPDATE
@@ -58,6 +60,7 @@ import { TIE_BREAK_RULES, type PrizeStructure } from '../settlement/types';
 // ---- Tenancy -------------------------------------------------------------------------
 
 export const tenantStatus = pgEnum('tenant_status', ['active', 'suspended']);
+export type TenantStatus = (typeof tenantStatus.enumValues)[number];
 
 /**
  * One row per partner application. Sideout is the first, upserted by `pnpm db:seed`
@@ -1194,3 +1197,70 @@ export const webhookDeliveryAttempts = pgTable(
 );
 
 export type WebhookDeliveryAttempt = typeof webhookDeliveryAttempts.$inferSelect;
+
+// ---- Operator console (spec 4.10) ----------------------------------------------------
+
+export const operatorRole = pgEnum('operator_role', ['admin', 'operator']);
+export type OperatorRole = (typeof operatorRole.enumValues)[number];
+
+/**
+ * The console's own accounts (spec 4.10: "behind its own auth"). Nothing here is a
+ * partner or a user: an operator is a member of the platform's staff, signs in with an
+ * email and a password (argon2id, the same parameters as API keys; a CHECK refuses anything
+ * but a hash), and acts as the `operator` audit actor with the operator id as its ref.
+ * `admin` may also do the platform-shaping things (tenant status, API keys, rulesets;
+ * docs/decisions.md, phase 5). The runtime may change the password hash and nothing else;
+ * creating and disabling operators is the seed's and the owner's, for now.
+ */
+export const operators = pgTable(
+  'operators',
+  {
+    id: text('id').primaryKey(),
+    email: text('email').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    role: operatorRole('role').notNull().default('operator'),
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('operators_id_prefix', table.id, 'opr'),
+    uniqueIndex('operators_email_key').on(table.email),
+    check('operators_email_shape', sql`${table.email} = lower(${table.email}) and ${table.email} ~ '^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$' and length(${table.email}) <= 254`),
+    check('operators_password_hash_argon2id', sql`${table.passwordHash} like '$argon2id$%'`),
+  ],
+);
+
+export type Operator = typeof operators.$inferSelect;
+
+/**
+ * Console sessions: one row per sign-in, storing only the SHA-256 of a 256-bit random
+ * token (the console's cookie carries the token; the API sees it as a bearer). A session
+ * ends at `expires_at` or when it is revoked (sign-out), and a revoked session never comes
+ * back; `last_seen_at` is written at most once a minute. Stateful, unlike the embed's
+ * signed cookie, so an operator's sessions can be revoked at once. Expired and revoked
+ * rows are removed by `pnpm --filter @purse/api db:purge`.
+ */
+export const operatorSessions = pgTable(
+  'operator_sessions',
+  {
+    id: text('id').primaryKey(),
+    operatorId: text('operator_id')
+      .notNull()
+      .references(() => operators.id),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    idCheck('operator_sessions_id_prefix', table.id, 'ops'),
+    uniqueIndex('operator_sessions_token_hash_key').on(table.tokenHash),
+    check('operator_sessions_token_hash_shape', sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
+    check('operator_sessions_expires_after_created', sql`${table.expiresAt} > ${table.createdAt}`),
+    index('operator_sessions_operator_id_idx').on(table.operatorId),
+    index('operator_sessions_expires_at_idx').on(table.expiresAt),
+  ],
+);
+
+export type OperatorSession = typeof operatorSessions.$inferSelect;

@@ -48,6 +48,19 @@ body {
   color: var(--text-secondary);
 }
 
+/* Visually hidden, still read by assistive technology (table captions, icon labels). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* 6.4: one focus treatment everywhere, 2px volt ring at 2px offset. */
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
   outline: var(--focus-ring-width) solid var(--volt);
@@ -130,4 +143,372 @@ body {
   .so-shell__main {
     padding-top: var(--space-6);
   }
+}
+
+/* ---- Primitives (phase 5) --------------------------------------------------------- */
+/*
+ * Dense, table-driven primitives the operator console is built from, written against the
+ * tokens like everything above so Sideout and the embed can adopt them too. One accent:
+ * `.so-button--primary` is the only volt surface, and a screen carries one of them.
+ */
+
+.so-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--target-min);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-input);
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  line-height: 1.2;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--d-micro) var(--ease-out-expo),
+    border-color var(--d-micro) var(--ease-out-expo),
+    opacity var(--d-micro) var(--ease-out-expo);
+}
+
+.so-button--primary {
+  background: var(--volt);
+  color: var(--on-volt);
+}
+
+.so-button--primary:hover {
+  background: var(--volt-dim);
+}
+
+.so-button--secondary {
+  border-color: var(--border-strong);
+}
+
+.so-button--secondary:hover {
+  background: var(--bg-overlay);
+}
+
+.so-button--danger {
+  border-color: color-mix(in srgb, var(--fault) 60%, var(--border-strong));
+  color: var(--fault);
+}
+
+.so-button--danger:hover {
+  background: color-mix(in srgb, var(--fault) 12%, transparent);
+}
+
+.so-button--small {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-label);
+}
+
+.so-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.so-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border-strong);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  line-height: 1.3;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.so-chip--surf {
+  border-color: var(--surf);
+  color: var(--surf);
+}
+
+.so-chip--fault {
+  border-color: var(--fault);
+  color: var(--fault);
+}
+
+.so-chip--volt {
+  border-color: var(--volt);
+  color: var(--volt);
+}
+
+.so-chip--ember {
+  border-color: var(--ember);
+  color: var(--ember);
+}
+
+.so-chip--muted {
+  border-color: var(--border-subtle);
+  color: var(--text-tertiary);
+}
+
+/* A chip that is a link (a filter) reads as a chip, not as underlined text; the current one is filled. */
+a.so-chip {
+  text-decoration: none;
+}
+
+a.so-chip:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.so-chip--current {
+  border-color: var(--text-primary);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+.so-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--bg-raised);
+}
+
+.so-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body);
+}
+
+.so-table th,
+.so-table td {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.so-table th {
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: var(--bg-overlay);
+  white-space: nowrap;
+}
+
+.so-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.so-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--bg-overlay) 60%, transparent);
+}
+
+.so-table .so-num,
+.so-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.so-nowrap {
+  white-space: nowrap;
+}
+
+.so-table__empty {
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: var(--space-5) var(--space-3);
+}
+
+.so-mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.875em;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+.so-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.so-input,
+.so-select,
+.so-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-input);
+  font: inherit;
+  font-size: var(--text-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.so-textarea {
+  min-height: 160px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.so-input:focus-visible,
+.so-select:focus-visible,
+.so-textarea:focus-visible {
+  border-color: var(--volt);
+}
+
+.so-input[aria-invalid='true'] {
+  border-color: var(--fault);
+}
+
+.so-field__hint {
+  color: var(--text-tertiary);
+  font-size: var(--text-label);
+}
+
+.so-notice {
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.so-notice--error {
+  border-color: color-mix(in srgb, var(--fault) 55%, var(--border-subtle));
+}
+
+.so-notice--positive {
+  border-color: color-mix(in srgb, var(--surf) 55%, var(--border-subtle));
+}
+
+.so-notice--warning {
+  border-color: color-mix(in srgb, var(--ember) 55%, var(--border-subtle));
+}
+
+.so-notice__title {
+  font-weight: var(--weight-semibold);
+}
+
+.so-notice--error .so-notice__title {
+  color: var(--fault);
+}
+
+.so-notice--positive .so-notice__title {
+  color: var(--surf);
+}
+
+.so-notice--warning .so-notice__title {
+  color: var(--ember);
+}
+
+.so-notice__body {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.so-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.so-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.so-card__title {
+  margin: 0;
+  font-size: var(--text-subheading);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-heading);
+}
+
+.so-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+}
+
+.so-kv dt {
+  color: var(--text-secondary);
+  font-size: var(--text-label);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  line-height: 1.55;
+  padding-top: 2px;
+}
+
+.so-kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.so-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.so-stat__value {
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: var(--weight-display);
+  font-size: var(--text-heading);
+  line-height: var(--leading-display);
+  letter-spacing: var(--tracking-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.so-stat__value--fault {
+  color: var(--fault);
+}
+
+.so-stat__value--surf {
+  color: var(--surf);
+}
+
+.so-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.so-link {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--border-strong);
+}
+
+.so-link:hover {
+  text-decoration-color: var(--volt);
 }

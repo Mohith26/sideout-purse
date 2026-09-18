@@ -3349,8 +3349,8 @@
         "data": {
           "sha": "test-sha",
           "migrations": {
-            "applied": 13,
-            "available": 13,
+            "applied": 15,
+            "available": 15,
             "pending": 0
           },
           "rulesetVersion": "2026.09.1",
