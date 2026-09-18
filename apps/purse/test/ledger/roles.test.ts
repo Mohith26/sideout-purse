@@ -161,6 +161,38 @@ describe('append-only enforcement at the role level', () => {
     expect(updatable['contest_scores']).not.toContain('score');
   });
 
+  it('the identity, eligibility and access tables follow the same model, column by column', async () => {
+    const tables = ['users', 'user_verification', 'user_restrictions', 'user_locations', 'rulesets', 'eligibility_decisions', 'identity_fingerprints', 'operator_flags', 'api_keys', 'embed_tokens'];
+    const columns = await runtime.sql<Array<{ table: string; column: string; update: boolean }>>`
+      select c.table_name as "table", c.column_name as "column",
+        has_column_privilege('purse_app', format('public.%I', c.table_name), c.column_name, 'UPDATE') as "update"
+      from information_schema.columns c
+      where c.table_schema = 'public' and c.table_name = any(${runtime.sql.array(tables)}::text[])
+      order by 1, 2
+    `;
+    const updatable = Object.fromEntries(tables.map((table) => [table, columns.filter((row) => row.table === table && row.update).map((row) => row.column)]));
+    expect(updatable).toEqual({
+      users: ['date_of_birth', 'display_name', 'phone_e164', 'updated_at'],
+      user_verification: ['provider', 'provider_ref', 'reverify_after', 'state', 'updated_at', 'verified_at'],
+      user_restrictions: ['lifted_at', 'lifted_by', 'updated_at'],
+      user_locations: ['confidence', 'region_code', 'resolved_at', 'source', 'updated_at'],
+      rulesets: ['active', 'updated_at'],
+      eligibility_decisions: [],
+      identity_fingerprints: ['computed_at', 'fingerprint'],
+      operator_flags: ['reviewed_at', 'reviewed_by', 'status', 'updated_at'],
+      api_keys: ['last_used_at', 'revoked_at', 'updated_at'],
+      embed_tokens: ['consumed_at'],
+    });
+    // Append-only where a row is history: a decision, a used key. No DELETE or TRUNCATE anywhere.
+    for (const table of tables) {
+      for (const statement of [() => runtime.sql.unsafe(`delete from ${table}`), () => runtime.sql.unsafe(`truncate ${table}`)]) {
+        expect(String(await rejection(statement())), table).toMatch(new RegExp(`permission denied for table ${table}`));
+      }
+    }
+    expect(String(await rejection(runtime.sql`update eligibility_decisions set allowed = true`))).toMatch(/permission denied for table eligibility_decisions/);
+    expect(String(await rejection(runtime.sql`update accounts set user_id = null where id = ${walletId}`))).toMatch(/permission denied for table accounts/);
+  });
+
   it('the owner role fails the runtime check, so an API started on the migrator URL refuses to serve', async () => {
     const error = await rejection(assertRuntimeRole(migrator.sql));
     expect(String(error)).toMatch(/Refusing to serve as purse_migrator/);
