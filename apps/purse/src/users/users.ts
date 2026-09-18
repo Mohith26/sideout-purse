@@ -6,17 +6,18 @@ import type { DbOrTx } from '../db/client';
 import { userVerification, users, type OperatorFlag, type User, type UserVerification } from '../db/schema';
 import { regionCodeSchema } from '../eligibility/ruleset';
 import { recordAudit, SYSTEM_ACTOR, type Actor } from '../ledger/audit';
-import type { GeoProvider } from '../providers/types';
+import type { GeoProvider, GeoResolution } from '../providers/types';
 import { UsersError } from './errors';
 import { refreshFingerprint } from './fingerprint';
-import { resolveAndRecordLocation } from './locations';
+import { recordResolvedLocation, resolveLocation } from './locations';
 
 /**
  * Users (spec 4.1, decision D8): Purse owns the wallet-bearing identity and the partner
  * links to it by `external_id`. `upsertUser` is `POST /users`: it creates the user on the
  * first call and corrects the demographics on later ones, under a row lock so two racing
  * upserts of one external id end with one row. Every write recomputes the identity
- * fingerprint (spec 4.6) and records a location when the request carries one.
+ * fingerprint (spec 4.6) and records a location when the request carries one; the geo
+ * seam is asked before the transaction opens, so a vendor call never holds the lock.
  */
 const PHONE_E164 = /^\+[1-9][0-9]{6,14}$/;
 
@@ -69,6 +70,12 @@ export async function upsertUser(db: DbOrTx, input: UpsertUserInput): Promise<Up
   const who = actor ?? SYSTEM_ACTOR;
   const audit = requestId === undefined ? {} : { requestId };
 
+  let resolution: GeoResolution | undefined;
+  if (parsed.location !== undefined) {
+    if (geo === undefined) throw new UsersError('invalid_input', 'a location was given but no geolocation provider is configured', { field: 'location' });
+    resolution = await resolveLocation(geo, parsed.location);
+  }
+
   return db.transaction(async (tx) => {
     // Two racing upserts of one external id serialise here and the second sees the first's row.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`user:${tenantId}:${parsed.externalId}`}, 0))`);
@@ -119,10 +126,7 @@ export async function upsertUser(db: DbOrTx, input: UpsertUserInput): Promise<Up
     }
 
     const { flags } = await refreshFingerprint(tx, user);
-    if (parsed.location !== undefined) {
-      if (geo === undefined) throw new UsersError('invalid_input', 'a location was given but no geolocation provider is configured', { field: 'location' });
-      await resolveAndRecordLocation(tx, { user, location: parsed.location, geo, actor: who, ...audit });
-    }
+    if (resolution !== undefined) await recordResolvedLocation(tx, { user, resolution, actor: who, ...audit });
     const verification = await getVerification(tx, user.id);
     return { user, verification, created, flags };
   });

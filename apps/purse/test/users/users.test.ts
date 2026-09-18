@@ -7,7 +7,7 @@ import { newId, type Id } from '@repo/ids';
 import { consumeEmbedToken } from '../../src/auth';
 import type { Database } from '../../src/db/client';
 import { auditLog, identityFingerprints, operatorFlags, userLocations, userVerification, users } from '../../src/db/schema';
-import { devGeoProvider, devIdentityProvider, type IdentityProvider } from '../../src/providers';
+import { devGeoProvider, devIdentityProvider, type GeoProvider, type GeoResolution, type IdentityProvider } from '../../src/providers';
 import {
   activeRestrictions,
   addRestriction,
@@ -177,6 +177,43 @@ describe('users', () => {
     // Without a provider a location cannot be taken.
     const noGeo = await rejection(upsertUser(runtime.db, { tenantId, externalId: 'loc', location: { declaredRegion: 'US-TX' } }));
     expect(isUsersError(noGeo, 'invalid_input')).toBe(true);
+  });
+
+  it('asks the geo seam before the upsert transaction opens, holding no lock and no connection while it answers', async () => {
+    const existing = await upsertUser(runtime.db, { tenantId, externalId: 'slow-geo', displayName: 'Ana' });
+    let asked: () => void = () => undefined;
+    let answer: (resolution: GeoResolution) => void = () => undefined;
+    const askedPromise = new Promise<void>((resolve) => {
+      asked = resolve;
+    });
+    const resolution = new Promise<GeoResolution>((resolve) => {
+      answer = resolve;
+    });
+    const gated: GeoProvider = {
+      name: 'dev',
+      resolve: () => {
+        asked();
+        return resolution;
+      },
+    };
+    // One connection in the pool: were the upsert holding it (and the user's locks) across the vendor call, nothing below could run.
+    const single = connectRuntime({ max: 1 });
+    try {
+      const upsert = upsertUser(single.db, { tenantId, externalId: 'slow-geo', displayName: 'Ana M.', location: { declaredRegion: 'US-TX' }, geo: gated });
+      await askedPromise;
+      const [row] = await migrator.sql<Array<{ display_name: string }>>`select display_name from users where id = ${existing.user.id} for update nowait`;
+      expect(row?.display_name).toBe('Ana');
+      const [advisory] = await migrator.sql<Array<{ free: boolean }>>`select pg_try_advisory_xact_lock(hashtextextended(${`user:${tenantId}:slow-geo`}, 0)) as free`;
+      expect(advisory?.free).toBe(true);
+      await expect(single.sql`select 1`).resolves.toBeDefined();
+      answer({ region: 'US-TX', confidence: 0.6, source: 'declared' });
+      const done = await upsert;
+      expect(done.user.displayName).toBe('Ana M.');
+      const profile = await loadProfile(runtime.db, tenantId, existing.user.id);
+      expect(profile.location).toMatchObject({ regionCode: 'US-TX', source: 'declared' });
+    } finally {
+      await single.close();
+    }
   });
 
   it('restrictions: a user may exclude themself and cool off, never lift them, and only the active ones count', async () => {

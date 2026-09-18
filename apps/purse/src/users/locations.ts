@@ -25,8 +25,21 @@ export type RecordLocationInput = {
 
 export type RecordedLocation = { resolution: GeoResolution; location: UserLocation | null };
 
+/** Ask the seam. A vendor call: never made while a transaction, a lock or a pool connection is held. */
+export function resolveLocation(geo: GeoProvider, location: LocationInput): Promise<GeoResolution> {
+  return geo.resolve({ declaredRegion: location.declaredRegion ?? null, ip: location.ip ?? null });
+}
+
 export async function resolveAndRecordLocation(db: DbOrTx, input: RecordLocationInput): Promise<RecordedLocation> {
-  const resolution = await input.geo.resolve({ declaredRegion: input.location.declaredRegion ?? null, ip: input.location.ip ?? null });
+  const resolution = await resolveLocation(input.geo, input.location);
+  return recordResolvedLocation(db, { user: input.user, resolution, actor: input.actor, ...(input.requestId === undefined ? {} : { requestId: input.requestId }), ...(input.now === undefined ? {} : { now: input.now }) });
+}
+
+export type RecordResolvedInput = Omit<RecordLocationInput, 'location' | 'geo'> & { resolution: GeoResolution };
+
+/** Store what the seam answered; a resolution with no region records nothing. */
+export async function recordResolvedLocation(db: DbOrTx, input: RecordResolvedInput): Promise<RecordedLocation> {
+  const { resolution } = input;
   const region = resolution.region;
   if (region === null) return { resolution, location: null };
   const location = await recordLocation(db, { user: input.user, resolution: { ...resolution, region }, actor: input.actor, ...(input.requestId === undefined ? {} : { requestId: input.requestId }), ...(input.now === undefined ? {} : { now: input.now }) });

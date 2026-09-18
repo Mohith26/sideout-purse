@@ -444,7 +444,8 @@ API (`invalid_state` / `verification_rejected`); the database admits `rejected -
 unstarted` for the operator reset phase 5 builds. `pending` may be started again (a fresh
 embed token for an abandoned iframe). The provider is called between two short
 transactions, never under the row lock, and its answer is applied only if the user is still
-`pending` when it arrives.
+`pending` when it arrives. The geo seam is held to the same rule: `upsertUser` and
+`enterContest` ask it before their transactions open.
 
 ### Risk signals are surfaced, never enforced
 
@@ -503,7 +504,9 @@ case it is the entry that many from the header's right (the hosted deploy, behin
 load balancer, sets it to 1; a bare process leaves it 0 so a client cannot choose its own
 bucket). A shared store for several replicas is a phase 9 hosting concern. `/health` now
 reports the active ruleset version; the last reconcile result still waits for phase 9's
-scheduled job.
+scheduled job. `apps/purse/.env.example` lags `src/env.ts` for the phase 3 variables
+because writes to env templates are denied by policy in the automated pipeline;
+`src/env.ts` and `docs/providers.md` are the canonical variable list.
 
 ## Phase 6 decisions (Sideout domain)
 

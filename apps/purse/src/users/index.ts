@@ -26,6 +26,16 @@ export {
   type AddRestrictionInput,
   type LiftRestrictionInput,
 } from './restrictions';
-export { resolveAndRecordLocation, recordLocation, locationOf, type LocationInput, type RecordLocationInput, type RecordedLocation } from './locations';
+export {
+  resolveLocation,
+  resolveAndRecordLocation,
+  recordResolvedLocation,
+  recordLocation,
+  locationOf,
+  type LocationInput,
+  type RecordLocationInput,
+  type RecordResolvedInput,
+  type RecordedLocation,
+} from './locations';
 export { refreshFingerprint, identityFingerprint, normalizeName, type FingerprintResult } from './fingerprint';
 export { loadProfile, profileOf, type UserProfile } from './profile';
