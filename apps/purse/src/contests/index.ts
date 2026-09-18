@@ -43,7 +43,7 @@ export {
   type UpdateContestFields,
   type UpdatedContest,
 } from './create';
-export { evaluateEntryEligibility, notEligible, rulesetVersionOf, assertEntryAmountWithinLimit, type EntryEligibilityInput } from './eligibility';
+export { evaluateEntryEligibility, notEligible, type EntryEligibilityInput } from './eligibility';
 export { enterContest, withdrawEntry, loadEntry, type EnterContestInput, type EnteredContest, type WithdrawEntryInput, type WithdrawnEntry } from './entries';
 export { submitScores, allExpectedResultsPresent, ACCEPTING_SCORES, type ScoreSubmission, type SubmitScoresInput, type SubmittedScores } from './scores';
 export {
