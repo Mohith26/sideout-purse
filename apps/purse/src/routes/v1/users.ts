@@ -67,6 +67,7 @@ export function usersRoutes(deps: V1Deps) {
       requestId: c.get('requestId'),
     });
     const profile = await profileOf(c.get('db'), started.user);
+    if (started.embedToken === undefined) throw new Error('startVerification issued no embed token');
     const body: VerificationStartResource = {
       user: userResource(profile),
       verification: verificationResource(started.verification),

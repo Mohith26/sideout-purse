@@ -37,6 +37,12 @@ export const ID_PREFIXES = {
   operatorFlag: 'flg',
   apiKey: 'key',
   embedToken: 'emb',
+  // Purse embed sessions and webhooks (system spec 4.8, 4.9)
+  signinCode: 'sic',
+  webhookEndpoint: 'whe',
+  webhookEvent: 'evt',
+  webhookDelivery: 'whd',
+  webhookAttempt: 'wha',
   // Sideout (system spec 5.1). Sideout's local account is `sou`, never `usr`: the two
   // identities are linked by an opaque external id (decision D8), not by sharing a prefix.
   charity: 'chr',

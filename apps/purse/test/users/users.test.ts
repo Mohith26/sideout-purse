@@ -277,8 +277,8 @@ describe('verification state machine', () => {
     expect(started.result.outcome).toBe('verified');
     expect(started.verification).toMatchObject({ state: 'verified', provider: 'dev', verifiedAt: now, reverifyAfter: new Date('2027-09-18T12:00:00.000Z') });
     expect(started.verification.providerRef).toMatch(/^dev-[0-9a-f]{24}$/);
-    expect(started.embedToken.token).toMatch(/^embt_[A-Za-z0-9_-]{43}$/);
-    expect(started.embedToken.row).toMatchObject({ userId: user.id, flow: 'identity', consumedAt: null, expiresAt: new Date('2026-09-18T12:05:00.000Z') });
+    expect(started.embedToken?.token).toMatch(/^embt_[A-Za-z0-9_-]{43}$/);
+    expect(started.embedToken?.row).toMatchObject({ userId: user.id, flow: 'identity', consumedAt: null, expiresAt: new Date('2026-09-18T12:05:00.000Z') });
 
     const audit = await runtime.db.select().from(auditLog).where(eq(auditLog.subject, user.id));
     expect(audit.map((row) => [row.action, row.actorKind, row.actorRef])).toEqual([
@@ -297,9 +297,10 @@ describe('verification state machine', () => {
     expect((await runtime.db.select().from(auditLog).where(eq(auditLog.subject, user.id))).map((row) => row.action)).toContain('user.verification.restarted');
 
     // The embed token opens the identity flow exactly once.
-    const consumed = await consumeEmbedToken(runtime.db, { token: started.embedToken.token, flow: 'identity', now });
+    const token = started.embedToken?.token ?? '';
+    const consumed = await consumeEmbedToken(runtime.db, { token, flow: 'identity', now });
     expect(consumed.consumedAt).toBeInstanceOf(Date);
-    expect((await rejection(consumeEmbedToken(runtime.db, { token: started.embedToken.token, now }))) as { code: string }).toMatchObject({ code: 'embed_token_used' });
+    expect((await rejection(consumeEmbedToken(runtime.db, { token, now }))) as { code: string }).toMatchObject({ code: 'embed_token_used' });
   });
 
   it('a rejection is terminal for the user and pending can be resumed', async () => {
@@ -315,7 +316,7 @@ describe('verification state machine', () => {
     const resumed = await startVerification(runtime.db, { tenantId, userId: slow.user.id, identity });
     expect(resumed.before.state).toBe('pending');
     expect(resumed.verification.state).toBe('pending');
-    expect(resumed.embedToken.token).not.toBe(pending.embedToken.token);
+    expect(resumed.embedToken?.token).not.toBe(pending.embedToken?.token);
 
     // Without demographics the dev provider cannot verify.
     const bare = await upsertUser(runtime.db, { tenantId, externalId: 'bare' });

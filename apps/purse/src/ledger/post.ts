@@ -12,6 +12,8 @@ import {
   type JournalEntryKind,
   type JournalLine,
 } from '../db/schema';
+import { subscribedEndpoints } from '../webhooks/endpoints';
+import { emitEvent } from '../webhooks/events';
 import { balancesOf } from './balance';
 import { LedgerError } from './errors';
 import { requestHash } from './hash';
@@ -44,6 +46,10 @@ import {
  * Lock order, so concurrent posts cannot deadlock: the idempotency key's advisory lock,
  * then (for a reversal) the reversed entry's advisory lock, then account rows sorted by
  * id. Callers passing their own transaction should not already hold account row locks.
+ *
+ * Every wallet a posted entry touches queues one `wallet.balance.changed` webhook event
+ * in the same transaction (spec 4.9), with the balance after the entry as read under the
+ * lock; a tenant with no subscribed endpoint pays one indexed lookup and nothing else.
  */
 export type PostEntryInput = {
   tenantId: Id<'tnt'>;
@@ -185,8 +191,41 @@ export async function postEntry(db: DbOrTx, input: PostEntryInput): Promise<Post
       .returning();
     lines.sort((a, b) => a.sequence - b.sequence);
 
+    await announceWalletChanges(tx, entry, byId, deltas);
+
     return { entry, lines, replayed: false };
   });
+}
+
+/** One `wallet.balance.changed` per wallet the entry moved, with the balance it left behind. */
+async function announceWalletChanges(tx: DbOrTx, entry: JournalEntry, byId: Map<string, Account>, deltas: Map<string, bigint>): Promise<void> {
+  const wallets = [...deltas].filter(([id, delta]) => delta !== 0n && byId.get(id)?.kind === 'user_wallet');
+  if (wallets.length === 0) return;
+  const endpoints = await subscribedEndpoints(tx, entry.tenantId as Id<'tnt'>, 'wallet.balance.changed');
+  if (endpoints.length === 0) return;
+  const balances = await balancesOf(
+    tx,
+    wallets.map(([id]) => id),
+  );
+  for (const [id, delta] of wallets) {
+    const account = byId.get(id);
+    if (account?.userId === null || account?.userId === undefined) continue;
+    await emitEvent(tx, {
+      tenantId: entry.tenantId as Id<'tnt'>,
+      type: 'wallet.balance.changed',
+      endpoints,
+      data: {
+        userId: account.userId,
+        accountId: account.id,
+        asset: account.asset,
+        balance: (balances.get(id) ?? 0n).toString(),
+        delta: delta.toString(),
+        journalEntryId: entry.id,
+        entryKind: entry.kind,
+        contestId: entry.contestId,
+      },
+    });
+  }
 }
 
 /** The parts of a request that make it "the same request" for idempotency purposes. */

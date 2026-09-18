@@ -38,7 +38,7 @@ export type RestrictionKind = (typeof RESTRICTION_KINDS)[number];
 export const LOCATION_SOURCES = ['ip', 'declared', 'provider'] as const;
 export type LocationSource = (typeof LOCATION_SOURCES)[number];
 
-/** The iframe flows an embed token may open (spec 4.8). */
+/** The iframe flows an embed token may open (spec 4.8); `signin` is mounted without one (`embed.ts`). */
 export const EMBED_FLOWS = ['identity', 'wallet', 'entry', 'rewards'] as const;
 export type EmbedFlow = (typeof EMBED_FLOWS)[number];
 

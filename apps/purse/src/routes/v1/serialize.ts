@@ -10,6 +10,8 @@ import type {
   SettlementResource,
   UserResource,
   VerificationResource,
+  WebhookDeliveryResource,
+  WebhookEndpointResource,
 } from '@purse/types';
 import type { Id } from '@repo/ids';
 
@@ -18,9 +20,10 @@ import { activeParticipants, getContest } from '../../contests/load';
 import { escrowBalance } from '../../contests/settlement';
 import type { IssuedEmbedToken } from '../../auth/embed-tokens';
 import type { DbOrTx } from '../../db/client';
-import type { Contest, ContestParticipant, ContestResult, ContestScore, UserVerification } from '../../db/schema';
+import type { Contest, ContestParticipant, ContestResult, ContestScore, UserVerification, WebhookEndpoint } from '../../db/schema';
 import type { Payout } from '../../settlement';
 import { placedByUser, type UserProfile } from '../../users';
+import type { DeliveryWithAttempts } from '../../webhooks';
 
 /**
  * Rows to wire resources (`@purse/types`). Money becomes a decimal string, instants become
@@ -169,5 +172,46 @@ export async function settlementResource(db: DbOrTx, outcome: SettlementOutcome)
     results: outcome.results.map(resultResource),
     payoutHash: outcome.payoutHash,
     journalEntryId: outcome.entry?.entry.id ?? null,
+  };
+}
+
+/** An endpoint on the wire. `secret` is the plaintext handed out once (creation, rotation) and `null` everywhere else; the envelope never leaves the database. */
+export function endpointResource(endpoint: WebhookEndpoint, secret: string | null): WebhookEndpointResource {
+  return {
+    id: endpoint.id,
+    url: endpoint.url,
+    subscribedEvents: endpoint.subscribedEvents,
+    status: endpoint.status,
+    description: endpoint.description,
+    secret,
+    createdAt: endpoint.createdAt.toISOString(),
+    updatedAt: endpoint.updatedAt.toISOString(),
+  };
+}
+
+export function deliveryResource({ delivery, attempts }: DeliveryWithAttempts): WebhookDeliveryResource {
+  return {
+    id: delivery.id,
+    endpointId: delivery.endpointId,
+    eventId: delivery.eventId,
+    eventType: delivery.eventType,
+    status: delivery.status,
+    attempt: delivery.attempt,
+    maxAttempts: delivery.maxAttempts,
+    responseStatus: delivery.responseStatus,
+    nextAttemptAt: delivery.status === 'pending' || delivery.status === 'failed' ? delivery.nextAttemptAt.toISOString() : null,
+    deliveredAt: iso(delivery.deliveredAt),
+    replayOf: delivery.replayOf,
+    createdAt: delivery.createdAt.toISOString(),
+    updatedAt: delivery.updatedAt.toISOString(),
+    attempts: attempts.map((attempt) => ({
+      id: attempt.id,
+      attempt: attempt.attempt,
+      startedAt: attempt.startedAt.toISOString(),
+      finishedAt: attempt.finishedAt.toISOString(),
+      responseStatus: attempt.responseStatus,
+      error: attempt.error,
+      durationMs: attempt.durationMs,
+    })),
   };
 }

@@ -2,15 +2,22 @@ import { createLogger, type Logger } from '@repo/logger';
 
 import { createApp } from '../src/app';
 import { connect, type ConnectOptions, type Database } from '../src/db/client';
-import { env, requireMigratorUrl } from '../src/env';
+import { logSmsSender, type SmsSender } from '../src/embed/sms';
+import { DEVELOPMENT_SECRET_KEY, env, requireMigratorUrl } from '../src/env';
 import type { RateLimitConfig, TokenBuckets } from '../src/http/rate-limit';
 import { MIGRATIONS_FOLDER } from '../src/paths';
 import { createProviders, type DevIdentityLists, type Providers } from '../src/providers';
+import { deriveProcessKeys, type ProcessKeys } from '../src/secrets';
+
+/** The keys every test process derives, from the same stand-in `pnpm dev` uses. */
+export const TEST_KEYS: ProcessKeys = deriveProcessKeys(DEVELOPMENT_SECRET_KEY);
 
 export type TestHarness = {
   app: ReturnType<typeof createApp>['app'];
   buckets: TokenBuckets;
   providers: Providers;
+  keys: ProcessKeys;
+  sms: SmsSender;
   database: Database;
   logger: Logger;
   lines: Array<Record<string, unknown>>;
@@ -37,6 +44,10 @@ export type HarnessOptions = {
   devIdentity?: DevIdentityLists;
   /** Replace one or more seams, for a test that needs a provider to misbehave. */
   providers?: Partial<Providers>;
+  /** The embed sign-in's SMS seam; defaults to the log sender, which echoes codes. */
+  sms?: SmsSender;
+  /** Where the embed app is served from; defaults to none, so `/embed` answers 404 in tests. */
+  embedDir?: string;
   /** Pool size; the HTTP tests that fire concurrent requests raise it. */
   max?: number;
 };
@@ -59,6 +70,7 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     ...createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', nodeEnv: 'test', allowDevProviders: false, ...(overrides.devIdentity === undefined ? {} : { devIdentity: overrides.devIdentity }) }),
     ...overrides.providers,
   };
+  const sms = overrides.sms ?? logSmsSender(logger);
   const { app, buckets } = createApp({
     sql: database.sql,
     db: database.db,
@@ -68,12 +80,15 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     nodeEnv: 'test',
     internalApiToken: overrides.internalApiToken,
     providers,
+    keys: TEST_KEYS,
+    sms,
+    embedDir: overrides.embedDir ?? '/nonexistent/purse-embed-out',
     rateLimit: overrides.rateLimit ?? TEST_RATE_LIMIT,
     ...(overrides.trustedProxyHops === undefined ? {} : { trustedProxyHops: overrides.trustedProxyHops }),
     ...(overrides.clock === undefined ? {} : { clock: overrides.clock }),
     ...(overrides.inProgressWaitMs === undefined ? {} : { inProgressWaitMs: overrides.inProgressWaitMs }),
   });
-  return { app, buckets, providers, database, logger, lines, close: () => database.close() };
+  return { app, buckets, providers, keys: TEST_KEYS, sms, database, logger, lines, close: () => database.close() };
 }
 
 /** Await a promise that is expected to reject, returning the rejection. Fails when it resolves. */

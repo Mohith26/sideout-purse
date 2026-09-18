@@ -4,6 +4,7 @@ import type { Id } from '@repo/ids';
 import { createApiKey, revokeApiKey, type CreatedApiKey } from '../auth/api-keys';
 import { closeContest, createContest, enterContest, getContest, previewSettlement, submitScores, transition } from '../contests';
 import { publishRuleset, SPEC_EXAMPLE_RULESET } from '../eligibility';
+import { activeOrigins, addOrigin } from '../embed/origins';
 import { findAccount, openAccount } from '../ledger/accounts';
 import type { Actor } from '../ledger/audit';
 import { issuePromoPoints } from '../ledger/flows';
@@ -238,6 +239,28 @@ export async function seedApiKeys(db: Db, tenantId: Id<'tnt'>, options: { rotate
     keys.push({ key, plaintext: created.plaintext, created: created.created });
   }
   return { keys };
+}
+
+// ---- Embed origins (phase 4) ---------------------------------------------------------
+
+/**
+ * The origins Sideout's pages mount Purse flows from (spec 4.8 rule 3): the local dev
+ * server by default, plus whatever `PURSE_TENANT_ORIGINS` (comma-separated) names for a
+ * hosted environment, so a deploy registers `https://sideout.<domain>` by seeding rather
+ * than by hand. Idempotent; a revoked origin that is still listed here is restored.
+ */
+export const SEED_TENANT_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'] as const;
+
+export type SeedOriginsResult = { origins: string[]; created: number };
+
+export async function seedTenantOrigins(db: Db, tenantId: Id<'tnt'>, extra: readonly string[] = []): Promise<SeedOriginsResult> {
+  const before = new Set(await activeOrigins(db, tenantId));
+  let created = 0;
+  for (const origin of [...SEED_TENANT_ORIGINS, ...extra]) {
+    const added = await addOrigin(db, { tenantId, origin, actor: SEED_OPERATOR });
+    if (!before.has(added.origin)) created += 1;
+  }
+  return { origins: await activeOrigins(db, tenantId), created };
 }
 
 // ---- Contests (phase 2) --------------------------------------------------------------

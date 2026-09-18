@@ -12,6 +12,7 @@ import { escrowEntry, refundEscrow } from '../ledger/flows';
 import { getEntry, linesOf, type PostedEntry } from '../ledger/post';
 import type { GeoProvider, RiskProvider } from '../providers/types';
 import { getUser, resolveAndRecordLocation, type LocationInput } from '../users';
+import { emitEvent } from '../webhooks/events';
 import { evaluateEntryEligibility, notEligible, rulesetVersionOf } from './eligibility';
 import { ContestError } from './errors';
 import { idempotent, ledgerKey } from './idempotency';
@@ -216,6 +217,21 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
             after: { ...participant, rulesetVersion: eligibility.rulesetVersion, decisionId: decision.id },
             ...requestId,
           });
+          await emitEvent(tx, {
+            tenantId: input.tenantId,
+            type: 'contest.entry.created',
+            data: {
+              contestId: contest.id,
+              externalId: contest.externalId,
+              userId: user.id,
+              participantId: participant.id,
+              teamRef: participant.teamRef,
+              seed: participant.seed,
+              journalEntryId: entry.entry.id,
+              rulesetVersion: eligibility.rulesetVersion,
+              reentered: existing !== undefined,
+            },
+          });
 
           return {
             value: { contest, participant, entry, eligibility, decision },
@@ -344,6 +360,11 @@ export async function withdrawEntry(db: DbOrTx, input: WithdrawEntryInput): Prom
             before,
             after: { ...after, refundEntryId: refund.entry.id },
             ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+          });
+          await emitEvent(tx, {
+            tenantId: input.tenantId,
+            type: 'contest.entry.withdrawn',
+            data: { contestId: contest.id, externalId: contest.externalId, userId: input.userId, participantId: after.id, refundJournalEntryId: refund.entry.id },
           });
 
           return { value: { contest, participant: after, refund }, record: { contestId: contest.id, participantId: after.id, refundEntryId: refund.entry.id } };

@@ -10,6 +10,19 @@ export const PROVIDER_IMPLEMENTATIONS = ['dev'] as const;
 export type ProviderImplementation = (typeof PROVIDER_IMPLEMENTATIONS)[number];
 
 /**
+ * The process secret every derived key comes from (`src/secrets.ts`): the embed session
+ * signature, the sign-in code HMAC and the webhook signing-secret encryption. Required in
+ * production; outside it this value stands in so a fresh clone runs `pnpm dev` with no
+ * setup, and the boot log says so.
+ */
+export const DEVELOPMENT_SECRET_KEY = 'purse-development-secret-key-not-for-production-use';
+export const SECRET_KEY_MIN_LENGTH = 32;
+
+/** The embed's SMS seam (spec 4.8 sign-in): `log` writes the code to the log and echoes it to the browser; production refuses it. */
+export const SMS_IMPLEMENTATIONS = ['log', 'none'] as const;
+export type SmsImplementation = (typeof SMS_IMPLEMENTATIONS)[number];
+
+/**
  * Everything Purse reads from the environment, validated once.
  *
  * This module is the only place the connection strings are named. It knows
@@ -19,6 +32,8 @@ export type ProviderImplementation = (typeof PROVIDER_IMPLEMENTATIONS)[number];
  * loaded into one process, and `test/env-isolation.test.ts` at the repository root proves
  * `loadEnv` ignores Sideout's even when both are present. The provider seams, the dev
  * identity lists and the rate limit are read here too; `docs/providers.md` documents them.
+ * Phase 4 adds the process secret, the embed's SMS seam and static directory, and the
+ * webhook dispatcher's knobs (docs/decisions.md, phase 4).
  */
 
 const postgresUrl = z
@@ -63,6 +78,17 @@ const schema = z.object({
   // failed-authentication limit counts is taken that many entries from the header's right.
   // 0 (the default) trusts no header and uses the socket's address; the hosted deploy sets 1.
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
+  // The process secret (see DEVELOPMENT_SECRET_KEY). Production refuses to start without it.
+  PURSE_SECRET_KEY: z.string().min(SECRET_KEY_MIN_LENGTH, `must be at least ${SECRET_KEY_MIN_LENGTH} characters`).optional(),
+  // The embed's sign-in SMS seam. Defaults to `log` outside production and `none` in it.
+  EMBED_SMS_PROVIDER: z.enum(SMS_IMPLEMENTATIONS).optional(),
+  // Where the built embed app (`apps/purse-embed/out`) is served from under /embed; the
+  // default is the sibling app's export when it exists.
+  PURSE_EMBED_DIR: z.string().trim().min(1).optional(),
+  // The in-process webhook dispatcher (spec 4.9): off for a process that should only serve.
+  WEBHOOK_DISPATCHER: z.enum(['on', 'off']).default('on'),
+  WEBHOOK_POLL_INTERVAL_MS: z.coerce.number().int().min(50).max(60_000).default(1000),
+  WEBHOOK_DELIVERY_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(10_000),
 });
 
 export type Env = {
@@ -89,6 +115,19 @@ export type Env = {
   rateLimit: { burst: number; perSecond: number };
   /** Proxies whose `X-Forwarded-For` entry is trusted for the client address; 0 means the socket's address. */
   trustedProxyHops: number;
+  /** `PURSE_SECRET_KEY`, or the development stand-in outside production (`secretKeyIsDefault`). */
+  secretKey: string;
+  secretKeyIsDefault: boolean;
+  embed: {
+    smsProvider: SmsImplementation;
+    /** `PURSE_EMBED_DIR`, when set; otherwise the API looks for the sibling app's export. */
+    staticDir: string | undefined;
+  };
+  webhooks: {
+    dispatcher: boolean;
+    pollIntervalMs: number;
+    deliveryTimeoutMs: number;
+  };
 };
 
 export class EnvError extends Error {
@@ -112,6 +151,14 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     const wanted = test ? 'PURSE_DATABASE_URL_TEST' : 'PURSE_DATABASE_URL';
     throw new EnvError(`Invalid environment: ${wanted} is required when NODE_ENV=${raw.NODE_ENV}`);
   }
+  const production = raw.NODE_ENV === 'production';
+  if (production && raw.PURSE_SECRET_KEY === undefined) {
+    throw new EnvError('Invalid environment: PURSE_SECRET_KEY is required when NODE_ENV=production');
+  }
+  const smsProvider = raw.EMBED_SMS_PROVIDER ?? (production ? 'none' : 'log');
+  if (production && smsProvider === 'log') {
+    throw new EnvError('Invalid environment: EMBED_SMS_PROVIDER=log is refused when NODE_ENV=production; sign-in codes must not reach a production log');
+  }
 
   return {
     nodeEnv: raw.NODE_ENV,
@@ -130,6 +177,10 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     },
     rateLimit: { burst: raw.RATE_LIMIT_BURST, perSecond: raw.RATE_LIMIT_PER_SECOND },
     trustedProxyHops: raw.TRUSTED_PROXY_HOPS,
+    secretKey: raw.PURSE_SECRET_KEY ?? DEVELOPMENT_SECRET_KEY,
+    secretKeyIsDefault: raw.PURSE_SECRET_KEY === undefined,
+    embed: { smsProvider, staticDir: raw.PURSE_EMBED_DIR },
+    webhooks: { dispatcher: raw.WEBHOOK_DISPATCHER === 'on', pollIntervalMs: raw.WEBHOOK_POLL_INTERVAL_MS, deliveryTimeoutMs: raw.WEBHOOK_DELIVERY_TIMEOUT_MS },
   };
 }
 
