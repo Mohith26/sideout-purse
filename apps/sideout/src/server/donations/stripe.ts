@@ -67,6 +67,19 @@ export function stripeDonationProvider(config: StripeConfig): DonationProvider {
         status: intent.data.status === 'succeeded' ? 'succeeded' : 'pending',
       };
     },
+    async retrievePayment(providerRef, options) {
+      const response = await doFetch(`${baseUrl}/v1/payment_intents/${encodeURIComponent(providerRef)}`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${config.secretKey}`, 'x-request-id': options.requestId },
+      });
+      const text = await response.text();
+      if (!response.ok) throw new DonationProviderError('stripe', `Stripe returned ${response.status}: ${summarise(text)}`, response.status);
+      const intent = paymentIntentSchema.safeParse(safeJson(text));
+      if (!intent.success) throw new DonationProviderError('stripe', 'Stripe returned an unexpected PaymentIntent shape');
+      // A completed or cancelled intent has nothing for the browser to confirm.
+      const open = intent.data.status === 'requires_payment_method' || intent.data.status === 'requires_confirmation' || intent.data.status === 'requires_action';
+      return { providerRef: intent.data.id, clientSecret: open ? intent.data.client_secret : null, status: intent.data.status === 'succeeded' ? 'succeeded' : 'pending' };
+    },
     async cancelPayment(providerRef, options) {
       const form = new URLSearchParams({ cancellation_reason: 'abandoned' });
       const response = await doFetch(`${baseUrl}/v1/payment_intents/${encodeURIComponent(providerRef)}/cancel`, {

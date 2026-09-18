@@ -38,6 +38,21 @@ const ruleIds = (violations: Violation[]) => violations.map((v) => v.ruleId);
 describe('Sideout → Purse', () => {
   const file = 'apps/sideout/src/boundary-fixture.ts';
 
+  it('lets only PurseGate mount the SDK in the browser; server modules may use its helpers', async () => {
+    const component = await lint('apps/sideout/src/components/x-fixture.ts', "import { Purse } from '@purse/sdk';\nPurse;\n");
+    expect(ruleIds(component)).toContain('no-restricted-imports');
+    expect(component.find((v) => v.ruleId === 'no-restricted-imports')?.message).toMatch(/PurseGate/);
+    const page = await lint('apps/sideout/src/app/x-fixture.ts', "import { Purse } from '@purse/sdk';\nPurse;\n");
+    expect(ruleIds(page)).toContain('no-restricted-imports');
+    const gate = await lint('apps/sideout/src/components/purse/PurseGate-fixture.ts', "import { Purse } from '@purse/sdk';\nPurse;\n");
+    expect(ruleIds(gate)).toContain('no-restricted-imports');
+    const server = await lint('apps/sideout/src/server/x-fixture.ts', "import { verifyWebhook } from '@purse/sdk';\nverifyWebhook;\n");
+    expect(ruleIds(server)).not.toContain('no-restricted-imports');
+    // The gate's own rules still refuse the platform's internals.
+    const deep = await lint('apps/sideout/src/components/x-fixture.ts', "import { SDK_VERSION } from '@purse/sdk/src/version';\nSDK_VERSION;\n");
+    expect(ruleIds(deep)).toContain('no-restricted-imports');
+  });
+
   it('rejects a relative import into apps/purse by resolved path', async () => {
     const violations = await lint(file, "import { createApp } from '../../purse/src/app';\ncreateApp;\n");
     expect(ruleIds(violations)).toContain('import-x/no-restricted-paths');

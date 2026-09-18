@@ -1137,3 +1137,112 @@ after, on the pool rather than in a caller's transaction, with bodies scrubbed o
 key-shaped (`src/purse/redact.ts`). A 429 is retried after Purse's `Retry-After` up to four
 attempts, each its own row; Purse stores no 429 under an idempotency key, so the repeat is
 safe. The seed's walk over three tournaments meets the default limit and waits it out.
+
+## Phase 8 decisions (Sideout UI)
+
+### One component mounts the SDK
+
+`@purse/sdk` reaches the browser through `apps/sideout/src/components/purse/PurseGate.tsx`
+and nowhere else: the ESLint boundary (`sideoutSdkGate` in
+`packages/config/eslint/boundary.js`) refuses the import in every other file under
+`src/app`, `src/components` and `src/lib`, and `test/purse/sdk-gate.test.ts` proves the rule
+holds. The gate links the account, mints the embed token, calls `Purse.init` once with the
+Sideout theme, and mounts a flow either into its own bottom sheet (identity, wallet, rewards)
+or into a slot a screen registers (the contest-entry step of the register screen). What a
+flow returns is mapped by the pure `mapPurseError` (`components/purse/eligibility.ts`) into
+four UI states: `terminal` (`identity_rejected`, `platform_blocked`, `under_minimum_age`,
+`region_not_permitted`: a plain row, a support link, no retry button), `action` (the flow
+that clears it), `retry`, and `unavailable` (the server has no publishable key, or Purse
+does not answer). The profile is read from `GET /api/me/purse` on every mount and never
+stored; the wallet chip shows what Purse says now.
+
+### Live data is polling (D11)
+
+`LiveRefresh` calls `router.refresh()` every five seconds on the home strip, the
+tournament tabs of a live event and an open match, and stops while the tab is hidden. The
+count-up, the FLIP reorder and the bracket draw animate the difference between two server
+renders: there is no client store, and a refresh that changes nothing moves nothing. SSE
+stays the phase 9 follow-up the spec names.
+
+### The service worker is a production-build feature
+
+`public/sw.js` is registered only by a production build (`NODE_ENV === 'production'`,
+inlined by Next): `next dev` serves chunks under `/_next/static` that are not immutable,
+and a cache-first worker would keep running stale code; a dev session unregisters any
+worker a previous production build left on the origin. The worker is versioned by the
+build sha in its query string (`/sw.js?v=<sha>`) and `/sw.js` itself is served with
+`Cache-Control: no-store`, so every build starts from empty caches and drops the previous
+build's on activation. It precaches the offline page and the icons, keeps the pages a
+player opened (never `/sign-in`, `/organizer/*`, `/admin/*` or any API route other than
+the public tournament, match and profile reads), answers a navigation from the network
+first and from the cache after four seconds, and drops the pages and API caches on the
+`clear-pages` message a sign-out sends. To run the PWA locally: `pnpm --filter @sideout/web
+build && pnpm --filter @sideout/web start`.
+
+A consequence for the end-to-end run: it needs `next start`, and a production build has no
+`/api/dev/login`, so `apps/sideout/e2e/session.ts` mints session cookies with the app's own
+`issueSession` under a `SESSION_SECRET` that `playwright.config.ts` hands the server for the
+run. No login bypass exists in the build; the test knows the secret because it configured
+the server.
+
+### The outbox: one queued scoreline per match, replayed through the same route
+
+A scoreline submitted with no connection (or when the request fails with no status or a
+5xx) is written to IndexedDB (`src/lib/offline/outbox.ts`) as the exact body
+`POST /api/matches/:id/scores` takes, latest per match wins, and is replayed on page load,
+on `online` and when the tab becomes visible, through the same route with the same
+validation and the same consensus path. A transient failure leaves the item queued; a 4xx
+marks it `failed` and the match page shows the refusal with a way to discard it;
+`match_not_open` and `already_decided` mean the match was settled without it and the item is
+dropped with a neutral toast. The UI never says "sent" for a queued item: the sheet says
+"Saved on this phone", the match page shows the queued scoreline in match orientation, and
+the shell's status line counts what is waiting.
+
+### Stripe in the browser is optional outside production
+
+`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is public by design and optional: the Payment Element
+mounts only when it is set, and without it the register screen says the card form is
+unavailable rather than pretending. The `dev` donation provider needs no key (it settles
+its own pending donations, phase 6). A checkout interrupted by a reload resumes from
+`GET /api/me/donations/:id/payment`, which asks the provider afresh (`retrievePayment`, the
+third method of the `DonationProvider` seam) for the client secret; the secret is never
+stored, and the route answers 503 when the configured provider is not the one that created
+the donation.
+
+### The console is a 404 to anyone else
+
+`/organizer/*` and `/admin/purse` render for an organizer and answer the same not-found
+screen as an unknown path to a player or a visitor (`organizerPageContext`), so the
+console's existence is not confirmed by a redirect. The player screens (`/me`,
+`/t/[slug]/register`, `/teams/new`) redirect a visitor to `/sign-in?next=` instead. The
+`/api/admin/*` routes keep their 403.
+
+### What the profile shows as rewards
+
+Sideout stores no contest value of its own (phase 7). The rewards panel therefore reads the
+viewer's placements and payouts out of the frozen close preview of every settled tournament
+they played (`server/rewards.ts`); the wallet is read live through the gate. A tournament
+closed without a stored preview shows no reward row.
+
+### Where the responsible-play links go
+
+The profile's "responsible play policy" and "limits and self-exclusion" links point at
+`/responsible-play` and `/support` on the Purse origin (`server/pages.ts`, `purseLinks`):
+Purse publishes the policy and holds the limits, and Sideout does not write a second copy.
+Purse serving those two pages is a phase 9 item.
+
+### Sponsors are seeded, not edited
+
+The event builder edits every field the phase 6 API accepts; sponsors have no write API,
+so the builder shows them read-only and the seed is their only source. A sponsor editor is
+a follow-up.
+
+### The widths, the icons, and the streamed not-found
+
+Tailwind's breakpoints are the spec's three widths (`sm` 390, `md` 768, `lg` 1280), so
+`sm:` means "a phone" and two-column layouts start at `md:`. The one icon set is
+`lucide-react` at 1.5px stroke, wrapped as `Icons` in `@sideout/ui` so no screen picks a
+stroke of its own; the PWA icons are rendered by `apps/sideout/scripts/render-icons.ts`
+rather than checked in from elsewhere. A missing event answers the not-found screen inside a
+200: the route's loading boundary streams, and Next cannot change the status once the shell
+has gone out. The e2e asserts the screen, not the status.

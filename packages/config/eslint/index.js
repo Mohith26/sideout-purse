@@ -6,7 +6,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-import { consoleBoundary, embedBoundary, purseBoundary, sideoutBoundary } from './boundary.js';
+import { consoleBoundary, embedBoundary, purseBoundary, sideoutBoundary, sideoutSdkGate } from './boundary.js';
 
 /**
  * Paths ESLint never looks at. Migrations are generated SQL and JSON; build output and
@@ -130,6 +130,13 @@ export function defineConfig({ repoRoot }) {
     },
 
     {
+      // The service worker is plain JavaScript served from public/ and runs in a worker, not Node.
+      name: 'repo/service-worker',
+      files: ['apps/sideout/public/sw.js'],
+      languageOptions: { globals: { ...globals.serviceworker } },
+    },
+
+    {
       name: 'repo/logger-exemption',
       files: LOGGER_FILES,
       rules: { 'no-console': 'off' },
@@ -176,6 +183,7 @@ export function defineConfig({ repoRoot }) {
     },
 
     sideoutBoundary(repoRoot),
+    sideoutSdkGate(),
     purseBoundary(repoRoot),
     embedBoundary(repoRoot),
     consoleBoundary(repoRoot),

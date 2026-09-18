@@ -146,3 +146,19 @@ jobs:
 
       - name: Console end-to-end smoke
         run: pnpm --filter @purse/console e2e
+
+      - name: Sideout end-to-end smoke
+        # The built app against a Purse API on the seeded databases: every screen at 390, 768 and
+        # 1280 with screenshots, axe, the keyboard walks and the offline score queue. The Purse keys
+        # come from the seed step above; the run supplies its own SESSION_SECRET.
+        run: |
+          pnpm --filter @sideout/web exec playwright install --with-deps chromium
+          pnpm --filter @sideout/web e2e
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sideout-screenshots
+          path: docs/screenshots
+          if-no-files-found: ignore

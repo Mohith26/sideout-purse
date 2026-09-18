@@ -1,0 +1,232 @@
+/*
+ * The six named transitions (system spec 6.3), defined once. Each one is a keyframe and a
+ * class on the motion tokens in tokens.css, and every one has its own branch under
+ * `prefers-reduced-motion: reduce` further down that keeps only opacity.
+ * `packages/ui/test/motion.test.ts` parses this file and asserts that branch exists for
+ * every keyframe and carries nothing but opacity. The count-up (1) and the FLIP (2) are
+ * driven from JavaScript in Sideout's `src/components/motion/`; their reduced-motion
+ * keyframes live there and are asserted by their own tests.
+ *
+ * Motion communicates state, never decorates: a number rolls because it changed, a row
+ * slides because it moved, a path draws because a winner advanced, the check lands once
+ * because both teams agreed, the sheet rises because it opened, the dot breathes because
+ * play is live.
+ */
+
+/* 1. Score count-up: the digits are rolled by ScoreDisplay; the settled glyphs fade in over the last beat. */
+@keyframes score-settle {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 2. Standings reorder: the FLIP moves rows; a row whose rank changed flashes --surf once. */
+@keyframes rank-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--surf) 24%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* 3. Bracket advancement: a winner path draws in over --d-draw (paths carry pathLength="1"). */
+@keyframes draw-path {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* 4. Consensus confirm: one decisive beat in --surf, not a celebration. */
+@keyframes confirm-check {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* 5. Sheet: translateY in and out on --ease-out-expo; the backdrop fades in behind an 8px blur. */
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes sheet-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 6. Live pulse: a 2s breath on live indicators only. */
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.72);
+  }
+}
+
+.score-roll {
+  font-variant-numeric: tabular-nums;
+}
+
+.score-settle {
+  animation: score-settle var(--d-base) var(--ease-out-expo) both;
+}
+
+.rank-flash {
+  animation: rank-flash calc(var(--d-base) * 4) var(--ease-out-expo) both;
+}
+
+.path-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: draw-path var(--d-draw) var(--ease-in-out-quart) both;
+}
+
+.confirm-enter {
+  animation: confirm-check var(--d-base) var(--ease-out-expo) both;
+}
+
+.sheet-enter {
+  animation: sheet-in var(--d-enter) var(--ease-out-expo) both;
+}
+
+.sheet-exit {
+  animation: sheet-out var(--d-base) var(--ease-in-out-quart) both;
+}
+
+/* The one place backdrop blur is allowed: a sheet or dialog backdrop (spec 7). */
+.so-sheet::backdrop,
+.so-dialog::backdrop {
+  background: rgb(5 6 7 / 0.6);
+  backdrop-filter: blur(8px);
+  animation: backdrop-in var(--d-base) var(--ease-out-expo) both;
+}
+
+.live-dot {
+  animation: live-pulse 2s var(--ease-in-out-quart) infinite;
+}
+
+/*
+ * Reduced motion: the same names, opacity only. Every keyframe above is redefined here so
+ * nothing moves, scales or draws; the durations stay short (tokens.css shortens them) and
+ * the breathing dot holds still.
+ */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes score-settle {
+    from {
+      opacity: 0.55;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes rank-flash {
+    0% {
+      opacity: 0.35;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes draw-path {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes confirm-check {
+    0% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes sheet-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes sheet-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes backdrop-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes live-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+  }
+
+  .path-draw {
+    stroke-dasharray: none;
+  }
+
+  .live-dot {
+    animation: none;
+  }
+}

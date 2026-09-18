@@ -28,6 +28,10 @@ export function devDonationProvider(deps: { db: Db; reservationTtlMs: number }):
       await Promise.resolve();
       return { providerRef: `dev_${randomUUID()}`, clientSecret: null, status: 'pending' };
     },
+    retrievePayment: async (providerRef) => {
+      const [donation] = await deps.db.select({ status: donations.status }).from(donations).where(and(eq(donations.provider, 'dev'), eq(donations.providerRef, providerRef)));
+      return { providerRef, clientSecret: null, status: donation?.status === 'succeeded' ? 'succeeded' : 'pending' };
+    },
     cancelPayment: async (providerRef) => {
       const clock: ReservationClock = { now: new Date(), reservationTtlMs: deps.reservationTtlMs };
       await deps.db.transaction(async (tx) => {

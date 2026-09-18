@@ -14,7 +14,7 @@ import { teamMembersWithUsers } from './teams';
 
 export type MatchView = {
   match: PublicMatch;
-  tournament: { id: string; slug: string; name: string; status: string };
+  tournament: { id: string; slug: string; name: string; status: string; timezone: string };
   teamA: PublicTeam | null;
   teamB: PublicTeam | null;
   nextMatch: { id: string; round: number; bracketPosition: number | null } | null;
@@ -44,7 +44,7 @@ export async function matchView(db: DbOrTx, matchId: string): Promise<MatchView 
 
   return {
     match: toPublicMatch(row.match, setRows),
-    tournament: { id: row.tournament.id, slug: row.tournament.slug, name: row.tournament.name, status: row.tournament.status },
+    tournament: { id: row.tournament.id, slug: row.tournament.slug, name: row.tournament.name, status: row.tournament.status, timezone: row.tournament.venueTimezone },
     teamA: publicTeam(row.match.teamAId),
     teamB: publicTeam(row.match.teamBId),
     nextMatch: next ?? null,

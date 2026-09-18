@@ -1,50 +1,83 @@
-import { database } from '../db/client';
-import { homeSnapshot } from '../home/snapshot';
+import type { Metadata } from 'next';
+import { EmptyState } from '@sideout/ui';
 
-// Live-first: the page reflects the state of play at request time, never a cached build.
+import { LiveRefresh } from '../components/motion/LiveRefresh';
+import { LiveMatchStrip } from '../components/tournament/LiveMatchStrip';
+import { TournamentCard } from '../components/tournament/TournamentCard';
+import { pageContext } from '../server/pages';
+import { bracketRoundCount, listLiveMatches, listMatchViews, listTournamentSummaries, PAST_STATUSES, UPCOMING_STATUSES, type TournamentSummary } from '../server/screens';
+
 export const dynamic = 'force-dynamic';
+export const metadata: Metadata = { title: 'Live play' };
 
+/**
+ * Home opens into the state of play (spec 5.3, item 1): the live strip when an event is in
+ * progress, then the featured event, upcoming events, and past events with what each
+ * raised. No hero, no marketing. While a strip is showing the page polls (decision D11)
+ * so the cards' scores roll as they change.
+ */
 export default async function HomePage() {
-  const snapshot = await homeSnapshot(database().db);
-
-  return (
-    <div className="flex flex-col gap-8">
-      <section aria-labelledby="live-heading" className="flex flex-col gap-3">
-        <h1 id="live-heading" className="display text-display-l text-text-primary">
-          State of play
-        </h1>
-      </section>
-
-      <section aria-labelledby="upcoming-heading" className="flex flex-col gap-3">
-        <h2 id="upcoming-heading" className="label">
-          Upcoming
-        </h2>
-        <div className="rounded-card border border-border-subtle bg-bg-raised p-6">
-          <p className="text-heading font-semibold text-text-primary">No events yet</p>
-          <p className="mt-2 max-w-prose text-body text-text-secondary">
-            The first Sideout tournament has not been scheduled. When it is, it opens here with its
-            beneficiary, pool and bracket.
-          </p>
-        </div>
-      </section>
-
-      <section aria-labelledby="impact-heading" className="flex flex-col gap-3">
-        <h2 id="impact-heading" className="label">
-          Impact
-        </h2>
-        <dl className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Stat label="Beneficiaries onboard" value={snapshot.activeCharities} />
-        </dl>
-      </section>
-    </div>
+  const { app, now, clock } = await pageContext();
+  const summaries = await listTournamentSummaries(app.db, clock);
+  const live = summaries.filter((s) => s.tournament.status === 'live');
+  const strips = await Promise.all(
+    live.map(async (summary) => {
+      const [matches, all] = await Promise.all([listLiveMatches(app.db, summary.tournament.id), listMatchViews(app.db, summary.tournament.id)]);
+      return { summary, matches, bracketRounds: bracketRoundCount(all) };
+    }),
   );
-}
+  const upcoming = summaries.filter((s) => UPCOMING_STATUSES.includes(s.tournament.status)).sort((a, b) => a.tournament.startsAt.localeCompare(b.tournament.startsAt));
+  const past = summaries.filter((s) => PAST_STATUSES.includes(s.tournament.status)).sort((a, b) => b.tournament.startsAt.localeCompare(a.tournament.startsAt));
+  const featured: TournamentSummary | undefined = strips[0]?.summary ?? upcoming[0];
+  const otherUpcoming = upcoming.filter((s) => s !== featured);
+  const nowMs = now.getTime();
 
-function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-card border border-border-subtle bg-bg-raised p-4">
-      <dt className="label">{label}</dt>
-      <dd className="display tabular mt-2 text-display-l text-text-primary">{value}</dd>
-    </div>
+    <>
+      <h1 className="sr-only">Live play</h1>
+      {strips.length > 0 ? <LiveRefresh /> : null}
+      {strips.map((strip) => (
+        <LiveMatchStrip key={strip.summary.tournament.id} tournamentName={strip.summary.tournament.name} slug={strip.summary.tournament.slug} matches={strip.matches} bracketRounds={strip.bracketRounds} />
+      ))}
+
+      <div className="space-y-10">
+        {featured === undefined ? (
+          <EmptyState level={2} icon="calendar" title="No events scheduled" body="When an organizer opens registration, it shows up here first." />
+        ) : (
+          <section aria-labelledby="featured-heading">
+            <h2 id="featured-heading" className="type-label mb-3 text-text-tertiary">
+              {featured.tournament.status === 'live' ? 'Happening now' : 'Next up'}
+            </h2>
+            <TournamentCard summary={featured} variant="featured" nowMs={nowMs} />
+          </section>
+        )}
+
+        {otherUpcoming.length > 0 ? (
+          <section aria-labelledby="upcoming-heading">
+            <h2 id="upcoming-heading" className="type-label mb-3 text-text-tertiary">
+              Upcoming
+            </h2>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {otherUpcoming.map((s) => (
+                <TournamentCard key={s.tournament.id} summary={s} nowMs={nowMs} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {past.length > 0 ? (
+          <section aria-labelledby="past-heading">
+            <h2 id="past-heading" className="type-label mb-3 text-text-tertiary">
+              Past events
+            </h2>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {past.map((s) => (
+                <TournamentCard key={s.tournament.id} summary={s} nowMs={nowMs} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </div>
+    </>
   );
 }

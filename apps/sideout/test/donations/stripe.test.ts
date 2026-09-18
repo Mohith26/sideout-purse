@@ -402,6 +402,7 @@ describe('POST /api/webhooks/stripe', () => {
         if (providerRef === 'pi_refuses') throw new DonationProviderError('stripe', 'Stripe returned 400: already canceled', 400);
         cancelledRefs.push(providerRef);
       },
+      retrievePayment: (providerRef) => Promise.resolve({ providerRef, clientSecret: null, status: 'pending' as const }),
     };
     resetAppContext({ donationProvider: recording, env: { ...env(), stripe: { secretKey: 'sk_test_fixture', webhookSecret: WEBHOOK_SECRET } } });
     const [lapsed] = await database.db

@@ -1,4 +1,5 @@
-/* Everything a consumer needs: raw tokens, the Tailwind theme mapping, and the primitives. */
+/* Everything a consumer needs: raw tokens, the Tailwind theme mapping, the primitives and the six transitions. */
 @import './tokens.css';
 @import './theme.css';
 @import './components.css';
+@import './motion.css';

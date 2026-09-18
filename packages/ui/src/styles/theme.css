@@ -72,6 +72,12 @@
 
   --ease-*: initial;
   --ease-out-expo: var(--ease-out-expo);
+  --ease-in-out-quart: var(--ease-in-out-quart);
+
+  --spacing-gutter: var(--gutter);
+  --spacing-tabbar: var(--tabbar-height);
+  --spacing-navrail: var(--navrail-width);
+  --spacing-target: var(--target-min);
 
   --breakpoint-*: initial;
   --breakpoint-sm: 390px;
@@ -79,4 +85,119 @@
   --breakpoint-lg: 1280px;
 
   --container-content: var(--content-max);
+}
+
+/*
+ * Composition utilities for Tailwind consumers (Sideout): the type scale as single
+ * classes, the three surfaces, the minimum target and the inline link. Pages compose
+ * these rather than restating the tokens, so a design review can name what a screen
+ * uses. Plain-CSS consumers (the embed, the console) use the `.display`, `.label` and
+ * `so-*` classes in components.css instead; the two sets agree on every value.
+ */
+
+@utility type-display-xl {
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: 800;
+  font-size: var(--text-display-xl);
+  line-height: var(--leading-display);
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+@utility type-display-l {
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: var(--weight-display);
+  font-size: var(--text-display-l);
+  line-height: 1.05;
+  letter-spacing: var(--tracking-display);
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+@utility type-heading {
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: var(--weight-display);
+  font-size: var(--text-heading);
+  line-height: var(--leading-heading);
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+@utility type-subheading {
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-subheading);
+  line-height: 1.3;
+}
+
+@utility type-body {
+  font-weight: var(--weight-regular);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+@utility type-label {
+  font-weight: var(--weight-medium);
+  font-size: var(--text-label);
+  line-height: 1.2;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A small figure beside a label (a set score in a card, a differential): tabular, 14px, never in running text. */
+@utility type-stat {
+  font-weight: var(--weight-medium);
+  font-size: 0.875rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Elevation on dark: a lighter background plus a hairline border, never a shadow. */
+@utility surface-raised {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+}
+
+@utility surface-overlay {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-strong);
+}
+
+@utility surface-inset {
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+}
+
+/* A link inside running text is told apart by its underline, never by colour alone (WCAG 1.4.1). */
+@utility link-inline {
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--border-strong);
+  transition:
+    text-decoration-color var(--d-micro) var(--ease-out-expo),
+    color var(--d-micro) var(--ease-out-expo);
+  &:hover,
+  &:focus-visible {
+    text-decoration-color: currentColor;
+  }
+}
+
+/* The 44px minimum target (spec 6.4). */
+@utility target {
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+}
+
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }

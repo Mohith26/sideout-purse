@@ -512,3 +512,764 @@ a.so-chip:hover {
 .so-link:hover {
   text-decoration-color: var(--volt);
 }
+
+/* ---- Phase 8 primitives ------------------------------------------------------------ */
+/*
+ * The vocabulary Sideout's screens are built from (spec 5.3, 6): the shell's tab bar and
+ * rail, status pills, empty states, skeletons, toasts, the confirm dialog, the bottom
+ * sheet and the set stepper. Written against the tokens like everything above; one accent
+ * (`.so-button--primary`), ember only where a charity figure is, surf for live and agreed,
+ * fault for a dispute.
+ */
+
+.so-button--ghost {
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+.so-button--ghost:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.so-button--large {
+  min-height: 48px;
+  padding: 0 var(--space-5);
+  font-size: var(--text-subheading);
+}
+
+/* A label that carries a team name may wrap; the button grows in height rather than widening the page. */
+.so-button--wrap {
+  white-space: normal;
+  text-align: center;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+  line-height: 1.3;
+}
+
+.so-button--block {
+  width: 100%;
+}
+
+.so-button__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* A square control holding one icon: the 44px minimum target, labelled by aria-label. */
+.so-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+  padding: 0;
+  border-radius: var(--radius-input);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--d-micro) var(--ease-out-expo),
+    color var(--d-micro) var(--ease-out-expo);
+}
+
+.so-icon-button:hover {
+  color: var(--text-primary);
+  background: var(--bg-raised);
+}
+
+.so-icon-button--raised {
+  background: var(--bg-overlay);
+  border-color: var(--border-strong);
+}
+
+.so-icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The skip link: visually hidden until focused, then the one volt element on the screen. */
+.so-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: var(--space-3);
+  z-index: 60;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-chip);
+  background: var(--volt);
+  color: var(--on-volt);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.so-skip-link:focus-visible {
+  left: var(--space-3);
+}
+
+/* ---- Tab bar (below 1280px) and rail (from 1280px) --------------------------------- */
+
+.so-tabbar {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 40;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.so-tabbar__list {
+  display: flex;
+  align-items: stretch;
+  height: var(--tabbar-height);
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.so-tabbar__item {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.so-tabbar__link {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--target-min);
+  color: var(--text-tertiary);
+  text-decoration: none;
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  transition: color var(--d-micro) var(--ease-out-expo);
+}
+
+.so-tabbar__link:hover {
+  color: var(--text-secondary);
+}
+
+.so-tabbar__link[aria-current='page'] {
+  color: var(--text-primary);
+}
+
+.so-tabbar__link[aria-current='page'] .so-nav-icon {
+  color: var(--volt);
+}
+
+/* In the tab bar the badge sits on the icon's corner rather than beside the label. */
+.so-tabbar__link {
+  position: relative;
+}
+
+.so-tabbar__link .so-nav-badge {
+  position: absolute;
+  top: 4px;
+  left: calc(50% + 6px);
+}
+
+.so-navrail {
+  position: fixed;
+  inset-block: 0;
+  left: 0;
+  z-index: 40;
+  display: none;
+  width: var(--navrail-width);
+  flex-direction: column;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+  box-sizing: border-box;
+}
+
+.so-navrail__brand {
+  display: flex;
+  align-items: center;
+  height: 64px;
+  padding: 0 var(--space-5);
+}
+
+.so-navrail__nav {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+}
+
+.so-navrail__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.so-navrail__link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--target-min);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-input);
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  transition:
+    background-color var(--d-micro) var(--ease-out-expo),
+    color var(--d-micro) var(--ease-out-expo);
+}
+
+.so-navrail__link:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.so-navrail__link[aria-current='page'] {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.so-navrail__link[aria-current='page'] .so-nav-icon {
+  color: var(--volt);
+}
+
+.so-navrail__foot {
+  padding: var(--space-5);
+  color: var(--text-tertiary);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.so-nav-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--fault) 15%, transparent);
+  color: var(--fault);
+  font-size: var(--text-label);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+/* The shell with a tab bar and rail: content clears the bar below 1280px and the rail above it. */
+.so-shell--tabs .so-shell__main {
+  padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px) + var(--space-6));
+}
+
+.so-shell__status:empty {
+  display: none;
+}
+
+@media (min-width: 1280px) {
+  .so-shell--rail {
+    padding-left: var(--navrail-width);
+  }
+
+  .so-shell--rail .so-navrail {
+    display: flex;
+  }
+
+  .so-shell--rail .so-tabbar {
+    display: none;
+  }
+
+  .so-shell--tabs .so-shell__main {
+    padding-bottom: var(--space-8);
+  }
+
+  .so-shell--rail .so-shell__header {
+    display: none;
+  }
+}
+
+/* ---- Status pill ------------------------------------------------------------------- */
+
+.so-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  line-height: 1.2;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.so-pill--sm {
+  height: 24px;
+  padding: 0 8px;
+}
+
+.so-pill--muted {
+  color: var(--text-secondary);
+}
+
+.so-pill--live,
+.so-pill--success {
+  border-color: color-mix(in srgb, var(--surf) 40%, transparent);
+  background: color-mix(in srgb, var(--surf) 10%, transparent);
+  color: var(--surf);
+}
+
+.so-pill--attention {
+  border-color: color-mix(in srgb, var(--fault) 40%, transparent);
+  background: color-mix(in srgb, var(--fault) 10%, transparent);
+  color: var(--fault);
+}
+
+.so-pill__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* The breathing dot (transition 6); the animation is in motion.css. */
+.so-live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surf);
+}
+
+.so-live-dot--sm {
+  width: 6px;
+  height: 6px;
+}
+
+/* ---- Empty state ------------------------------------------------------------------- */
+
+.so-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-inset);
+}
+
+.so-empty__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--target-min);
+  height: var(--target-min);
+  flex-shrink: 0;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+}
+
+.so-empty__content {
+  min-width: 0;
+  flex: 1;
+}
+
+.so-empty__title {
+  margin: 0;
+  font-size: var(--text-subheading);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-heading);
+  color: var(--text-primary);
+}
+
+.so-empty__body {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+}
+
+.so-empty__body p {
+  margin: 0;
+}
+
+.so-empty__body p + p {
+  margin-top: var(--space-2);
+}
+
+.so-empty__action {
+  margin-top: var(--space-4);
+}
+
+/* ---- Skeleton ---------------------------------------------------------------------- */
+
+@keyframes so-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.so-skeleton {
+  border-radius: var(--radius-input);
+  background: var(--bg-overlay);
+  animation: so-skeleton-pulse 2s var(--ease-in-out-quart) infinite;
+}
+
+.so-skeleton--pill {
+  border-radius: var(--radius-pill);
+}
+
+/* ---- Toast ------------------------------------------------------------------------- */
+
+.so-toast-viewport {
+  position: fixed;
+  inset-inline: 0;
+  bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px) + var(--space-3));
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--gutter);
+  pointer-events: none;
+}
+
+@media (min-width: 1280px) {
+  .so-toast-viewport {
+    bottom: var(--space-5);
+    align-items: flex-end;
+  }
+}
+
+.so-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 24rem;
+  padding: var(--space-3);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-overlay);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.45);
+  pointer-events: auto;
+}
+
+.so-toast__icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-primary);
+}
+
+.so-toast__icon--success {
+  color: var(--surf);
+}
+
+.so-toast__icon--error {
+  color: var(--fault);
+}
+
+.so-toast__content {
+  min-width: 0;
+  flex: 1;
+}
+
+.so-toast__title {
+  margin: 0;
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.so-toast__body {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+}
+
+/* ---- Dialog and sheet -------------------------------------------------------------- */
+
+.so-dialog {
+  margin: auto;
+  width: min(100vw - 2 * var(--gutter), 28rem);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sheet);
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.so-dialog:not([open]) {
+  display: none;
+}
+
+.so-dialog__panel {
+  width: 100%;
+  padding: var(--space-5);
+  box-sizing: border-box;
+  border-radius: var(--radius-sheet);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-overlay);
+}
+
+.so-dialog__title {
+  margin: 0;
+  font-size: var(--text-subheading);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-heading);
+}
+
+.so-dialog__body {
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+}
+
+.so-dialog__actions {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+@media (min-width: 640px) {
+  .so-dialog__actions {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}
+
+/* The bottom sheet (transition 5): thumb-reachable on a phone, a centred column from 640px. */
+.so-sheet {
+  position: fixed;
+  inset-inline: 0;
+  top: auto;
+  bottom: 0;
+  margin: 0;
+  width: 100%;
+  max-width: 100%;
+  max-height: 92dvh;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.so-sheet:not([open]) {
+  display: none;
+}
+
+.so-sheet[open] {
+  display: flex;
+}
+
+@media (min-width: 640px) {
+  .so-sheet {
+    inset-inline: auto;
+    left: 50%;
+    width: min(100vw - 2 * var(--gutter), 32rem);
+    transform: translateX(-50%);
+  }
+}
+
+.so-sheet__panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 92dvh;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
+  border-bottom: 0;
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  background: var(--bg-overlay);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  outline: none;
+}
+
+.so-sheet__grip {
+  width: 40px;
+  height: 4px;
+  flex-shrink: 0;
+  margin: var(--space-2) auto 0;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}
+
+.so-sheet__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5) 0;
+}
+
+.so-sheet__title {
+  margin: 0;
+  font-size: var(--text-subheading);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-heading);
+}
+
+.so-sheet__subtitle {
+  margin: 2px 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.so-sheet__body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+.so-sheet__foot {
+  flex-shrink: 0;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ---- Set stepper (spec 5.3, 6.4: larger than the 44px floor) ------------------------ */
+
+.so-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.so-stepper__label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.so-stepper__controls {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.so-stepper__button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color var(--d-micro) var(--ease-out-expo),
+    border-color var(--d-micro) var(--ease-out-expo);
+}
+
+.so-stepper__button:hover {
+  border-color: var(--border-strong);
+}
+
+.so-stepper__button:active {
+  background: var(--bg-overlay);
+}
+
+.so-stepper__button:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.so-stepper__value {
+  width: 64px;
+  height: 56px;
+  box-sizing: border-box;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  text-align: center;
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: var(--weight-display);
+  font-size: var(--text-display-l);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  outline: none;
+}
+
+.so-stepper__value:focus-visible {
+  border-color: var(--volt);
+}
+
+.so-stepper__value--leading {
+  border-color: color-mix(in srgb, var(--surf) 50%, transparent);
+}
+
+.so-stepper__value:disabled {
+  opacity: 0.4;
+}
+
+/* ---- Section heading --------------------------------------------------------------- */
+
+.so-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.so-section-heading h2,
+.so-section-heading h3 {
+  margin: 0;
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  line-height: 1.2;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.so-section-heading__aside {
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A short, cancellable disclosure used for form errors and inline alerts. */
+.so-inline-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-input);
+  border: 1px solid color-mix(in srgb, var(--fault) 40%, transparent);
+  background: color-mix(in srgb, var(--fault) 10%, transparent);
+  color: var(--fault);
+}
