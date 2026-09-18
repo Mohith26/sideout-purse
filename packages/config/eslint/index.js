@@ -16,6 +16,7 @@ export const IGNORES = [
   '**/node_modules/**',
   '**/dist/**',
   '**/.next/**',
+  '**/out/**',
   '**/coverage/**',
   '**/drizzle/meta/**',
   '**/next-env.d.ts',

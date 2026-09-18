@@ -67,7 +67,7 @@ export function Signin({ api, state, onSignedIn, onError }: { api: EmbedApi; sta
       </Field>
       {sent === undefined ? null : (
         <Field id="code" label="Code" hint={sent.devCode === null ? 'Six digits, sent by text. It expires in ten minutes.' : `Development: your code is ${sent.devCode}.`}>
-          <input id="code" className="field__input" inputMode="numeric" autoComplete="one-time-code" pattern="\\d{6}" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))} disabled={busy} required />
+          <input id="code" className="field__input" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))} disabled={busy} required />
         </Field>
       )}
       {error === undefined ? null : <ErrorNotice error={error} />}

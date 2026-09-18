@@ -24,7 +24,7 @@ type Call = { method: string; path: string; body: unknown };
 
 function fakeApi(origins: string[], calls: Call[]): EmbedApi {
   const fetchImpl: typeof fetch = (input, init) => {
-    const path = String(input);
+    const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
     calls.push({ method: init?.method ?? 'GET', path, body });
     const answer = (data: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify({ data }), { status }));
@@ -144,7 +144,7 @@ describe('Bridge', () => {
 
   it('a bad URL is refused before anything is fetched', async () => {
     const calls: Call[] = [];
-    const broken = new Proxy(window, { get: (target, property) => (property === 'location' ? { ...target.location, search: '?flow=admin' } : Reflect.get(target, property)) });
+    const broken = new Proxy(window, { get: (target, property): unknown => (property === 'location' ? { ...target.location, search: '?flow=admin' } : Reflect.get(target, property)) });
     const bridge = new Bridge({ win: broken, api: fakeApi([PARENT], calls) });
     await bridge.start();
     expect(bridge.current).toEqual({ phase: 'refused', reason: 'bad_url' });
