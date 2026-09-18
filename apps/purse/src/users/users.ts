@@ -9,7 +9,7 @@ import { recordAudit, SYSTEM_ACTOR, type Actor } from '../ledger/audit';
 import type { GeoProvider } from '../providers/types';
 import { UsersError } from './errors';
 import { refreshFingerprint } from './fingerprint';
-import { resolveAndRecordLocation, type LocationInput } from './locations';
+import { resolveAndRecordLocation } from './locations';
 
 /**
  * Users (spec 4.1, decision D8): Purse owns the wallet-bearing identity and the partner
@@ -121,7 +121,7 @@ export async function upsertUser(db: DbOrTx, input: UpsertUserInput): Promise<Up
     const { flags } = await refreshFingerprint(tx, user);
     if (parsed.location !== undefined) {
       if (geo === undefined) throw new UsersError('invalid_input', 'a location was given but no geolocation provider is configured', { field: 'location' });
-      await resolveAndRecordLocation(tx, { user, location: parsed.location as LocationInput, geo, actor: who, ...audit });
+      await resolveAndRecordLocation(tx, { user, location: parsed.location, geo, actor: who, ...audit });
     }
     const verification = await getVerification(tx, user.id);
     return { user, verification, created, flags };

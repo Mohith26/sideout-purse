@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { PROVIDER_IMPLEMENTATIONS, type ProviderImplementation } from './providers';
+/**
+ * Which implementation may fill each provider seam (spec 4.5). Only `dev` exists today; a
+ * vendor integration adds its name here and a branch in `src/providers/index.ts`. Declared
+ * here rather than in `src/providers` so this module keeps no local imports: the
+ * repository-level `test/env-isolation.test.ts` compiles it on its own.
+ */
+export const PROVIDER_IMPLEMENTATIONS = ['dev'] as const;
+export type ProviderImplementation = (typeof PROVIDER_IMPLEMENTATIONS)[number];
 
 /**
  * Everything Purse reads from the environment, validated once.

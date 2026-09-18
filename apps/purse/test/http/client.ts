@@ -80,7 +80,7 @@ export function client(h: TestHarness, apiKey: string | undefined): Client {
     }
     const res = await h.app.request(path, { method, headers, ...(payload === undefined ? {} : { body: payload }) });
     const text = await res.text();
-    let raw: unknown = undefined;
+    let raw: unknown;
     try {
       raw = text === '' ? undefined : JSON.parse(text);
     } catch {

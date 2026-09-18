@@ -1,3 +1,4 @@
+import type { ProviderImplementation } from '../env';
 import { devGeoProvider } from './dev/geo';
 import { devIdentityProvider, type DevIdentityLists } from './dev/identity';
 import { devRiskProvider } from './dev/risk';
@@ -23,11 +24,11 @@ export { devGeoProvider, resolveDev, DEV_GEO_IP_PREFIXES, DEV_GEO_PROVIDER_NAME 
 export { devRiskProvider, assessDev, DEV_RISK_PROVIDER_NAME, NEAR_LIMIT_SHARE, NEW_ACCOUNT_MS } from './dev/risk';
 
 /**
- * Which implementation fills each seam. Only `dev` exists today; a vendor integration adds
- * its name here and a branch in `createProviders`, and nothing else in Purse changes.
+ * Which implementation fills each seam: `PROVIDER_IMPLEMENTATIONS` in `../env`. Only `dev`
+ * exists today; a vendor integration adds its name there and a branch in
+ * `createProviders`, and nothing else in Purse changes.
  */
-export const PROVIDER_IMPLEMENTATIONS = ['dev'] as const;
-export type ProviderImplementation = (typeof PROVIDER_IMPLEMENTATIONS)[number];
+export { PROVIDER_IMPLEMENTATIONS, type ProviderImplementation } from '../env';
 
 export type ProviderConfig = {
   identity: ProviderImplementation;

@@ -58,4 +58,26 @@ describe('env', () => {
     );
     expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, INTERNAL_API_TOKEN: 'short' })).toThrow(EnvError);
   });
+
+  it('selects the provider seams, reads the dev identity lists, and sizes the rate limit', () => {
+    const defaults = loadEnv({ PURSE_DATABASE_URL: DEV_URL });
+    expect(defaults.providers).toEqual({ identity: 'dev', geo: 'dev', risk: 'dev', allowDevProviders: false, devIdentity: { allow: [], deny: [], pending: [] } });
+    expect(defaults.rateLimit).toEqual({ burst: 100, perSecond: 20 });
+    const configured = loadEnv({
+      PURSE_DATABASE_URL: DEV_URL,
+      ALLOW_DEV_PROVIDERS: 'true',
+      DEV_IDENTITY_ALLOW: 'vip, staff',
+      DEV_IDENTITY_DENY: 'banned',
+      DEV_IDENTITY_PENDING: '',
+      RATE_LIMIT_BURST: '10',
+      RATE_LIMIT_PER_SECOND: '2.5',
+    });
+    expect(configured.providers.allowDevProviders).toBe(true);
+    expect(configured.providers.devIdentity).toEqual({ allow: ['vip', 'staff'], deny: ['banned'], pending: [] });
+    expect(configured.rateLimit).toEqual({ burst: 10, perSecond: 2.5 });
+    // Only implementations that exist can be named; a vendor is added in env.ts and src/providers.
+    expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, IDENTITY_PROVIDER: 'persona' })).toThrow(EnvError);
+    expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, ALLOW_DEV_PROVIDERS: 'yes' })).toThrow(EnvError);
+    expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, RATE_LIMIT_BURST: '0' })).toThrow(EnvError);
+  });
 });

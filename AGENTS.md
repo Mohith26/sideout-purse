@@ -10,6 +10,9 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 
 - Gates: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`. `.no-mistakes.yaml` and
   `.github/workflows/ci.yml` run the same four; keep them in step.
+- `apps/purse/src/env.ts` is the authoritative list of Purse's variables (`.env.example` is
+  the template); the provider seams and the dev identity lists are explained in
+  `docs/providers.md`, the rate limit is `RATE_LIMIT_BURST` / `RATE_LIMIT_PER_SECOND`.
 - Local Postgres: `pnpm db:setup` (any reachable Postgres; writes `apps/*/.env`) or
   `docker compose up -d` plus `cp apps/<app>/.env.example apps/<app>/.env` for both apps (the
   examples match compose), then `pnpm db:migrate` and `pnpm db:seed`. Tests use the `*_test`
@@ -28,16 +31,19 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - Two Purse roles (`docs/decisions.md`): `purse_migrator` owns the databases and runs
   `db:migrate`, `db:seed`, `db:setup` and the test reset (`PURSE_MIGRATOR_DATABASE_URL`);
   `purse_app` is the runtime (`PURSE_DATABASE_URL`), owns nothing, and holds only what
-  `apps/purse/drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql` and
-  `0006_contest_guards.sql` grant. Every new table needs an explicit
+  `apps/purse/drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`,
+  `0006_contest_guards.sql` and `0008_identity_guards.sql` grant. Every new table needs an explicit
   `GRANT ... TO purse_app` in a custom migration (`db:generate:custom`); an append-only
   table (journal, audit log, `contest_results`, `idempotency_keys`) gets `SELECT, INSERT`
   only, and a table with columns that legitimately change gets column-level `UPDATE`
   (`accounts`, `tenants`: `status, updated_at`; `contests`: `state`, `settled_at`,
   `locks_at` and the draft-editable fields; `contest_participants`: `state`, and
   `entry_journal_entry_id`, `team_ref`, `seed` only when a withdrawn entrant re-enters;
-  `contest_scores`: `superseded_by`). `test/ledger/roles.test.ts` fails on a table with
-  no grant and pins the updatable columns of every contest table. Tests take the runtime
+  `contest_scores`: `superseded_by`; the phase 3 tables per the header of
+  `drizzle/0008_identity_guards.sql`). `test/ledger/roles.test.ts` fails on a table with
+  no grant and pins the updatable columns of every contest and identity table. A wallet
+  needs a `users` row (`accounts.user_id` is a foreign key), so test fixtures create users
+  before wallets (`createUser`, `openWallet`, `buildArena`). Tests take the runtime
   connection from `test/helpers.ts` (`connectRuntime`) and the owner connection only for
   fixtures and teardown (`connectMigrator`). The API refuses to boot on a role that can
   `UPDATE` any append-only table (`src/ledger/role-check.ts`).
@@ -73,7 +79,48 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   (`contests/idempotency.ts`, backed by `idempotency_keys`); money moves only through the
   ledger's typed flows inside the same transaction. New mutations follow the same shape:
   lock the contest first, post through `postEntry`'s helpers, record with `idempotent`.
-- The eligibility hook `contests/eligibility.ts` always allows and is phase 3's to replace.
+- `contests/eligibility.ts` is where an entry meets the eligibility engine: `enterContest`
+  evaluates under the contest lock plus a per-user advisory lock, records one
+  `eligibility_decisions` row per attempt (a refusal's after its savepoint rolled back), and
+  refuses with `not_eligible`, or `insufficient_funds` when a shortfall is the only reason.
+
+## Identity, eligibility and the v1 API
+
+- `apps/purse/src/eligibility/`: `evaluate.ts` is pure (no database, clock or randomness;
+  `asOf` is an input) over a `Ruleset` from `ruleset.ts` (Zod; `SPEC_EXAMPLE_RULESET` is the
+  seeded active version). `rulesets.ts` stores versions (body immutable, one active),
+  `velocity.ts` sums the journal, `decide.ts` gathers the input and persists the decision,
+  `collusion.ts` is the head-to-head signal. `test/eligibility/evaluate.test.ts` is the case
+  table; a new reason or action is a `@purse/types` change first.
+- `apps/purse/src/users/`: users (upsert by `external_id`), the verification machine
+  (`verification.ts`, provider called between two transactions), restrictions (a user can
+  never lift one), locations, and the duplicate-identity fingerprint. Every write audits.
+- `apps/purse/src/providers/`: the three seams and their `dev` implementations, selected
+  by `IDENTITY_PROVIDER` / `GEO_PROVIDER` / `RISK_PROVIDER` (`env.ts` owns the sealed list);
+  production refuses `dev` without `ALLOW_DEV_PROVIDERS=true`. `docs/providers.md` is the
+  seam table.
+- `apps/purse/src/auth/`: API keys (argon2id hash only, lookup by prefix, `scopes` holds the
+  `operator` flag) and embed tokens (SHA-256, single use, five minutes).
+- `apps/purse/src/http/` is the v1 middleware, outermost first: `rate-limit.ts` (per key
+  prefix, in memory), `auth.ts` (bearer secret key; `requireOperator()`), `body.ts` (JSON
+  read once, `parseBody` with Zod), `idempotency.ts` (owns the request's transaction as
+  `c.get('db')`, stores the response under the `http` scope of `idempotency_keys`), and
+  `errors.ts` (`toApiError` maps every domain error by shape; throw `RequestValidationError`,
+  never a Zod 4 `ZodError`, which is not an `Error`). Routes live in `routes/v1/`
+  (`users.ts`, `contests.ts`, `embed.ts`, `serialize.ts` for wire shapes, `schemas.ts` for
+  money and ids); `/health` and `/internal/reconcile` are mounted at the root and under
+  `/v1` outside that stack. Response shapes are the `@purse/types` resources.
+- Contract: `test/contract/contract.test.ts` drives every endpoint and error type and
+  compares with `test/contract/fixtures.json`; after a deliberate contract change rerun it
+  with `UPDATE_CONTRACT_FIXTURES=1` and commit the file.
+- A sandbox key locally: `pnpm --filter @purse/api db:seed -- --print-keys` prints the seed
+  keys' plaintext the one time they are created; `-- --print-keys --rotate-keys` revokes
+  and reissues them. Then `curl -H "Authorization: Bearer sk_sandbox_..." -H
+  "Idempotency-Key: k1" -H "content-type: application/json" -d '{"externalId":"u1"}'
+  localhost:4000/v1/users`.
+- Retention scripts run as the owner: `pnpm --filter @purse/api purge` (idempotency keys
+  past 30 days, stale embed tokens); `risk:scan` rescans the collusion signal as the
+  runtime.
 
 ## The boundary, and where things go
 

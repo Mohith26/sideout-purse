@@ -173,7 +173,7 @@ export async function seedUsers(db: Db, tenantId: Id<'tnt'>): Promise<SeedUsersR
       if (seed.region !== null) {
         await recordLocation(tx, { user: row, resolution: { region: seed.region, confidence: 0.6, source: 'declared' }, actor: SEED_OPERATOR });
       }
-      return { user: row, created: existing === undefined || existing.externalId !== seed.externalId };
+      return { user: row, created: existing?.externalId !== seed.externalId };
     });
 
     const verification = await getVerification(db, user.id);

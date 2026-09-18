@@ -54,7 +54,7 @@ export async function recordLocation(db: DbOrTx, input: StoreLocationInput): Pro
       })
       .returning();
     if (after === undefined) throw new Error('user_locations upsert returned no row');
-    if (before === undefined || before.regionCode !== after.regionCode || before.source !== after.source) {
+    if (before?.regionCode !== after.regionCode || before.source !== after.source) {
       await recordAudit(tx, {
         tenantId: input.user.tenantId as Id<'tnt'>,
         actor: input.actor,

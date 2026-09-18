@@ -2,12 +2,11 @@ import type { EligibilityDecision } from '@purse/types';
 import type { Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
-import type { Contest } from '../db/schema';
+import type { Contest, User } from '../db/schema';
 import { decideEntry, rulesetForContest, type EntryDecision } from '../eligibility';
+import type { Actor } from '../ledger/audit';
 import type { GeoProvider, RiskProvider } from '../providers/types';
 import { profileOf, resolveAndRecordLocation, type LocationInput } from '../users';
-import type { User } from '../db/schema';
-import type { Actor } from '../ledger/audit';
 import { ContestError } from './errors';
 
 /**

@@ -550,7 +550,7 @@ describe(`randomized operation sequence (${OPS} ops, seed ${SEED})`, () => {
           if (result instanceof ContestError && 'contest' in op) {
             const named = result.detail['from'] ?? result.detail['state'];
             if (typeof named === 'string' && (STATE_ORDER as string[]).concat('cancelled', 'voided').includes(named)) {
-              observe(op.contest, { state: named as ContestState } as Contest);
+              observe(op.contest, { state: named as ContestState });
             }
           }
           if (result instanceof ContestError && op.kind === 'c_withdraw' && result.code === 'participant_not_active') op.contest.participants.set(op.userId, 'withdrawn');

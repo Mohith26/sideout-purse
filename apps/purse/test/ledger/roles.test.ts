@@ -111,7 +111,7 @@ describe('append-only enforcement at the role level', () => {
     const privileges = await runtimeRolePrivileges(runtime.sql);
     expect(privileges.role).toBe('purse_app');
     expect(privileges.ownedTables).toBe(0);
-    expect(APPEND_ONLY_TABLES).toEqual(['journal_entries', 'journal_lines', 'audit_log', 'contest_results', 'idempotency_keys']);
+    expect(APPEND_ONLY_TABLES).toEqual(['journal_entries', 'journal_lines', 'audit_log', 'contest_results', 'idempotency_keys', 'eligibility_decisions']);
     for (const table of APPEND_ONLY_TABLES) {
       expect(privileges.tables[table], table).toEqual({ present: true, select: true, insert: true, update: false, delete: false, truncate: false });
     }

@@ -2,7 +2,7 @@
   "name": "@purse/types",
   "version": "0.0.1",
   "private": true,
-  "description": "Public Purse types: the API error taxonomy and header names. The only Purse package besides @purse/sdk that a partner app may import.",
+  "description": "Public Purse types: the API error taxonomy, header names, the sealed eligibility vocabulary and the v1 resource shapes. The only Purse package besides @purse/sdk that a partner app may import.",
   "type": "module",
   "sideEffects": false,
   "exports": {

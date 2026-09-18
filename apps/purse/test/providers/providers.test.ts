@@ -84,7 +84,7 @@ describe('dev RiskProvider (Sardine seam)', () => {
     const everything = assessDev(transaction({ accountAgeMs: 0, amount: 50_000n, openFlags: ['duplicate_identity'], velocity: { enteredLast24h: 150_000n, enteredLast7d: 950_000n } }));
     expect(everything.decision).toBe('review');
     expect(everything.signals).toHaveLength(4);
-    expect(everything.signals.every((signal) => JSON.stringify(signal.detail ?? {}).indexOf('undefined') === -1)).toBe(true);
+    expect(everything.signals.every((signal) => !JSON.stringify(signal.detail ?? {}).includes('undefined'))).toBe(true);
     // No limit, no signal.
     const unlimited = assessDev(transaction({ ruleset: { ...SPEC_EXAMPLE_RULESET, stakeLimits: { perContest: null, per24h: null, per7d: null } }, velocity: { enteredLast24h: 10n ** 9n, enteredLast7d: 10n ** 9n } }));
     expect(unlimited.decision).toBe('allow');
