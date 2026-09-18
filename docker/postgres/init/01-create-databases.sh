@@ -18,9 +18,10 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
 --
 -- Purse has two. purse_migrator owns its databases and every table and is the only role
 -- that runs migrations and seeds. purse_app is the runtime role: it owns nothing, so it
--- cannot grant itself anything, and migration 0002_ledger_roles gives it exactly what the
--- API needs, which excludes UPDATE and DELETE on the journal (spec 4.2.2 rule 5). An
--- owner can always re-grant what was revoked, which is why the runtime is not the owner.
+-- cannot grant itself anything, and migrations 0002_ledger_roles and 0004_ledger_guards
+-- give it exactly what the API needs, which excludes UPDATE and DELETE on the journal
+-- (spec 4.2.2 rule 5). An owner can always re-grant what was revoked, which is why the
+-- runtime is not the owner.
 create role purse_migrator login password :'purse_migrator_password' nosuperuser nocreatedb nocreaterole noinherit;
 create role purse_app      login password :'purse_password'          nosuperuser nocreatedb nocreaterole noinherit;
 create role sideout_app    login password :'sideout_password'        nosuperuser nocreatedb nocreaterole noinherit;

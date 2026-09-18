@@ -12,9 +12,10 @@ import postgres from 'postgres';
  *   roles      purse_migrator                     owner of the Purse databases and every
  *                                                 table in them; runs db:migrate and db:seed
  *              purse_app                          Purse's runtime role: owns nothing, can
- *                                                 grant nothing, holds only what migration
- *                                                 0002_ledger_roles grants it (no UPDATE or
- *                                                 DELETE on the journal, spec 4.2.2 rule 5)
+ *                                                 grant nothing, holds only what migrations
+ *                                                 0002_ledger_roles and 0004_ledger_guards
+ *                                                 grant it (no UPDATE or DELETE on the
+ *                                                 journal, spec 4.2.2 rule 5)
  *              sideout_app                        Sideout's single role (owner and runtime)
  *   databases  purse, purse_test                  owned by purse_migrator; purse_app may connect
  *              sideout, sideout_test              owned by sideout_app

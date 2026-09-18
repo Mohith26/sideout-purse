@@ -28,9 +28,10 @@ import {
  * `postEntry` is the only way value moves. Everything in spec 4.2.2 is enforced here, in
  * one transaction, before commit:
  *
- *   1-4  by `validateLines`, before a connection is even used, and again by the database
- *        at commit (the deferred constraint trigger in `drizzle/0004_ledger_guards.sql`),
- *        so an entry that reaches the journal by any other route is held to the same rules;
+ *   1-4  by `validateLines`, before a connection is even used, and again by the database:
+ *        rule 4 by the `amount > 0` CHECK on `journal_lines`, rules 1-3 by the deferred
+ *        constraint trigger at commit (`drizzle/0004_ledger_guards.sql`), so an entry that
+ *        reaches the journal by any other route is held to the same rules;
  *   5    by the database role (the runtime cannot UPDATE or DELETE what this inserts);
  *   6    reversals must mirror the entry they reverse, and an entry is reversed once;
  *   7    the idempotency key is unique within the tenant, and a replay returns the

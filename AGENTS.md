@@ -13,8 +13,10 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - Local Postgres: `pnpm db:setup` (any reachable Postgres; writes `apps/*/.env`) or
   `docker compose up -d` plus `cp apps/<app>/.env.example apps/<app>/.env` for both apps (the
   examples match compose), then `pnpm db:migrate` and `pnpm db:seed`. Tests use the `*_test`
-  databases and wipe them in each app's `test/global-setup.ts`. A compose volume from
-  before phase 1 lacks `purse_migrator`; `pnpm db:setup --admin-url ...` upgrades it in place.
+  databases, wipe them in each app's `test/global-setup.ts`, and need no `.env`: each app's
+  `test/setup-env.ts` falls back to `db:setup`'s default URLs (CI's or a `.env`'s values
+  win). A compose volume from before phase 1 lacks `purse_migrator`;
+  `pnpm db:setup --admin-url ...` upgrades it in place.
 - `pnpm dev` starts Purse on :4000 and Sideout on :3000; both expose `/health`.
 - CI also migrates and seeds Purse's `purse` database and runs
   `pnpm --filter @purse/api reconcile`; a failing invariant fails the build.
