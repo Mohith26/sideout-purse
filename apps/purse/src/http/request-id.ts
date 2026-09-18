@@ -1,7 +1,5 @@
-import { randomUUID } from 'node:crypto';
-
 import type { MiddlewareHandler } from 'hono';
-import { REQUEST_ID_HEADER } from '@purse/types';
+import { REQUEST_ID_HEADER, isRequestId } from '@purse/types';
 import type { Logger } from '@repo/logger';
 
 /**
@@ -9,8 +7,6 @@ import type { Logger } from '@repo/logger';
  * hop), otherwise mints a UUID. Either way the id is echoed on the response and bound to a
  * request-scoped logger available as `c.get('logger')`.
  */
-const REQUEST_ID_SHAPE = /^[A-Za-z0-9._:-]{8,128}$/;
-
 export type RequestScope = {
   Variables: {
     requestId: string;
@@ -19,7 +15,7 @@ export type RequestScope = {
 };
 
 export function readOrMintRequestId(header: string | null | undefined): string {
-  return header !== undefined && header !== null && REQUEST_ID_SHAPE.test(header) ? header : randomUUID();
+  return isRequestId(header) ? header : globalThis.crypto.randomUUID();
 }
 
 export function requestId(baseLogger: Logger): MiddlewareHandler<RequestScope> {

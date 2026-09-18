@@ -39,8 +39,9 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   resolver do not realpath pnpm symlinks before resolving a preset's own `extends`.
 - Referenced packages emit declarations to `dist/` (gitignored) because `tsc -b` refuses
   `noEmit` on a referenced project; runtime consumers still read `src/` via `exports`.
-- Next's `env` config only inlines static `process.env.X` reads; the apps resolve
-  `BUILD_SHA` at runtime in `build-info.ts` instead.
+- Next's `env` config only inlines static `process.env.X` reads; Sideout resolves
+  `BUILD_SHA` at runtime in `apps/sideout/src/build-info.ts` (via `@repo/logger`'s
+  `resolveBuildSha`) instead.
 
 ## Maintaining this file
 
