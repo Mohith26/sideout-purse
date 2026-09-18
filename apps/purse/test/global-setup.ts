@@ -1,11 +1,10 @@
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-
 import { runMigrations } from '@repo/db';
 
 import { connect } from '../src/db/client';
 import { loadEnv, requireMigratorUrl } from '../src/env';
 import { MIGRATIONS_FOLDER } from '../src/paths';
+// Same `.env` loading and db:setup fallbacks as the workers; this runs in the main process.
+import './setup-env';
 
 /**
  * Bring the test database to a known state once per run: wipe it and apply every
@@ -13,9 +12,6 @@ import { MIGRATIONS_FOLDER } from '../src/paths';
  * fully migrated, otherwise empty, schema through the runtime role.
  */
 export default async function globalSetup(): Promise<void> {
-  const envFile = path.resolve(import.meta.dirname, '../.env');
-  if (existsSync(envFile)) process.loadEnvFile(envFile);
-
   const config = loadEnv({ ...process.env, NODE_ENV: 'test' });
   const database = connect(requireMigratorUrl(config), { max: 1, applicationName: 'purse-test-setup' });
   try {
