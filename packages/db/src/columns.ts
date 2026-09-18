@@ -10,15 +10,16 @@ import { idCheckPattern, type IdPrefix } from '@repo/ids';
 
 /**
  * The prefix pattern as a SQL literal (not a bind parameter) because it has to appear
- * verbatim in the generated migration.
+ * verbatim in the generated migration. Exported for CHECKs that mention a prefix inside a
+ * larger expression, so the pattern is never restated by hand.
  */
-function patternLiteral(prefix: IdPrefix) {
+export function idPatternLiteral(prefix: IdPrefix) {
   return sql.raw(`'${idCheckPattern(prefix).replaceAll("'", "''")}'`);
 }
 
 /** CHECK constraint pinning an id column to one prefix, e.g. `CHECK (id ~ '^tnt_...')`. */
 export function idCheck(constraintName: string, column: PgColumn, prefix: IdPrefix) {
-  return check(constraintName, sql`${column} ~ ${patternLiteral(prefix)}`);
+  return check(constraintName, sql`${column} ~ ${idPatternLiteral(prefix)}`);
 }
 
 /**
@@ -27,7 +28,7 @@ export function idCheck(constraintName: string, column: PgColumn, prefix: IdPref
  * foreign key) so a mis-typed id is still refused today.
  */
 export function nullableIdCheck(constraintName: string, column: PgColumn, prefix: IdPrefix) {
-  return check(constraintName, sql`${column} is null or ${column} ~ ${patternLiteral(prefix)}`);
+  return check(constraintName, sql`${column} is null or ${column} ~ ${idPatternLiteral(prefix)}`);
 }
 
 /** `created_at` / `updated_at` as `timestamptz not null default now()`. */

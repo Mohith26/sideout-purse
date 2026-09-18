@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@repo/ids';
 import type { ApiErrorEnvelope } from '@purse/types';
@@ -5,7 +6,6 @@ import type { ApiErrorEnvelope } from '@purse/types';
 import type { Database } from '../../src/db/client';
 import { journalEntries, journalLines } from '../../src/db/schema';
 import { escrowEntry, INVARIANTS, issuePromoPoints, reconcile, settleEscrow, type ReconcileReport } from '../../src/ledger';
-import type { HealthReport } from '../../src/routes/health';
 import { connectMigrator, connectRuntime, harness } from '../helpers';
 import { buildWorld, key, wipeLedger, type World } from './fixtures';
 
@@ -45,13 +45,21 @@ describe('reconcile()', () => {
     await settleEscrow(runtime.db, { ...common, escrowAccountId: world.escrows[0]?.id ?? '', payouts: [{ walletAccountId: wallet(0), amount: 80n }], idempotencyKey: key() });
   }
 
-  /** A raw, unbalanced write, as the owner: the corruption the service and the role make impossible. */
+  /**
+   * A raw, unbalanced write, as the owner, with the commit-time balance trigger switched
+   * off for that one transaction (only the owner can): the corruption the service, the
+   * role and the trigger make impossible, and the reason `reconcile()` exists anyway.
+   */
   async function corrupt(lines: Array<{ accountId: string; direction: 'debit' | 'credit'; amount: bigint }>): Promise<string> {
     const entryId = newId('je');
-    await migrator.db.insert(journalEntries).values({ id: entryId, tenantId: world.tenantId, kind: 'adjustment', description: 'corrupt', idempotencyKey: key('corrupt'), requestHash: 'x' });
-    if (lines.length > 0) {
-      await migrator.db.insert(journalLines).values(lines.map((line, i) => ({ id: newId('jl'), entryId, asset: 'POINTS' as const, sequence: i + 1, ...line })));
-    }
+    await migrator.db.transaction(async (tx) => {
+      await tx.execute(sql`alter table journal_lines disable trigger journal_lines_entry_balanced`);
+      await tx.insert(journalEntries).values({ id: entryId, tenantId: world.tenantId, kind: 'adjustment', description: 'corrupt', idempotencyKey: key('corrupt'), requestHash: 'x' });
+      if (lines.length > 0) {
+        await tx.insert(journalLines).values(lines.map((line, i) => ({ id: newId('jl'), entryId, asset: 'POINTS' as const, sequence: i + 1, ...line })));
+      }
+      await tx.execute(sql`alter table journal_lines enable trigger journal_lines_entry_balanced`);
+    });
     return entryId;
   }
 
@@ -147,7 +155,7 @@ describe('reconcile()', () => {
   });
 });
 
-describe('GET /internal/reconcile and /health', () => {
+describe('GET /internal/reconcile', () => {
   let migrator: Database;
   beforeAll(async () => {
     migrator = connectMigrator();
@@ -158,20 +166,14 @@ describe('GET /internal/reconcile and /health', () => {
     await migrator.close();
   });
 
-  it('is open without a token only under NODE_ENV=test, and records the run for /health', async () => {
+  it('is open without a token only under NODE_ENV=test', async () => {
     const h = harness();
     try {
-      expect(((await (await h.app.request('/health')).json()) as { data: HealthReport }).data.lastReconcile).toBeNull();
-
       const res = await h.app.request('/internal/reconcile');
       expect(res.status).toBe(200);
       const body = (await res.json()) as { data: ReconcileReport };
       expect(body.data.ok).toBe(true);
       expect(body.data.invariants).toHaveLength(7);
-
-      const health = ((await (await h.app.request('/health')).json()) as { data: HealthReport }).data;
-      expect(health.lastReconcile).toEqual({ at: body.data.ranAt, ok: true });
-      expect(h.tracker.last()).toEqual({ at: body.data.ranAt, ok: true });
       expect(h.lines.some((l) => l['msg'] === 'reconcile clean')).toBe(true);
     } finally {
       await h.close();
@@ -214,9 +216,6 @@ describe('GET /internal/reconcile and /health', () => {
       const report = body.error.detail as ReconcileReport;
       expect(report.ok).toBe(false);
       expect(report.invariants.find((r) => r.id === 'I2')?.detail).toContain(entryId);
-
-      const health = ((await (await h.app.request('/health')).json()) as { data: HealthReport }).data;
-      expect(health.lastReconcile).toEqual({ at: report.ranAt, ok: false });
       expect(h.lines.some((l) => l['msg'] === 'reconcile failed' && l['level'] === 'error')).toBe(true);
     } finally {
       await h.close();

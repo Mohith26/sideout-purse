@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 
 import type { Db } from '../db/client';
-import { reconcile, type ReconcileTracker } from '../ledger';
+import { reconcile } from '../ledger';
 import { ApiFailure, ok } from '../http/envelope';
 import type { RequestScope } from '../http/request-id';
 
@@ -18,7 +18,6 @@ import type { RequestScope } from '../http/request-id';
  */
 export type InternalDeps = {
   db: Db;
-  tracker: ReconcileTracker;
   internalApiToken: string | undefined;
   nodeEnv: 'development' | 'test' | 'production';
 };
@@ -28,7 +27,6 @@ export function internalRoutes(deps: InternalDeps) {
     authorize(c.req.header('Authorization'), deps);
 
     const report = await reconcile(deps.db);
-    deps.tracker.record(report);
     const logger = c.get('logger');
     if (report.ok) {
       logger.info('reconcile clean', { durationMs: report.durationMs });

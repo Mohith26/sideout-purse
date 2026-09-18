@@ -164,11 +164,11 @@ describe(`randomized operation sequence (${OPS} ops, seed ${SEED})`, () => {
         case 'settle':
           return settleEscrow(runtime.db, { ...common, escrowAccountId: op.escrow, payouts: op.payouts, idempotencyKey: key });
         case 'void':
-          return voidEscrow(runtime.db, { entryId: op.held.entryId as Id<'je'>, idempotencyKey: key });
+          return voidEscrow(runtime.db, { tenantId: world.tenantId, entryId: op.held.entryId as Id<'je'>, idempotencyKey: key });
         case 'replay':
           return op.of.run(op.of.key);
         case 'reversal':
-          return reverseEntry(runtime.db, { entryId: op.of.entryId as Id<'je'>, idempotencyKey: key });
+          return reverseEntry(runtime.db, { tenantId: world.tenantId, entryId: op.of.entryId as Id<'je'>, idempotencyKey: key });
       }
     };
 
@@ -179,7 +179,7 @@ describe(`randomized operation sequence (${OPS} ops, seed ${SEED})`, () => {
       refund: ['insufficient_funds'],
       settle: ['insufficient_funds'],
       void: ['insufficient_funds', 'already_reversed'],
-      replay: ['insufficient_funds'],
+      replay: [],
       reversal: ['insufficient_funds', 'already_reversed'],
       overdraft: ['insufficient_funds'],
     };

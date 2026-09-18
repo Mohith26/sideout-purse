@@ -1,4 +1,4 @@
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
@@ -28,10 +28,13 @@ import {
  * `postEntry` is the only way value moves. Everything in spec 4.2.2 is enforced here, in
  * one transaction, before commit:
  *
- *   1-4  by `validateLines`, before a connection is even used;
+ *   1-4  by `validateLines`, before a connection is even used, and again by the database
+ *        at commit (the deferred constraint trigger in `drizzle/0004_ledger_guards.sql`),
+ *        so an entry that reaches the journal by any other route is held to the same rules;
  *   5    by the database role (the runtime cannot UPDATE or DELETE what this inserts);
  *   6    reversals must mirror the entry they reverse, and an entry is reversed once;
- *   7    the idempotency key is unique, and a replay returns the original entry.
+ *   7    the idempotency key is unique within the tenant, and a replay returns the
+ *        original entry.
  *
  * I3 (no wallet below zero) is enforced at write time, not merely detected: the affected
  * accounts are locked `FOR UPDATE` in id order, so two posts against one wallet serialise
@@ -76,9 +79,9 @@ export async function postEntry(db: DbOrTx, input: PostEntryInput): Promise<Post
   const reversesEntryId = input.reversesEntryId ?? null;
 
   return db.transaction(async (tx) => {
-    await advisoryLock(tx, `je:${input.idempotencyKey}`);
+    await advisoryLock(tx, `je:${input.tenantId}:${input.idempotencyKey}`);
 
-    const existing = await findEntryByKey(tx, input.idempotencyKey);
+    const existing = await findEntryByKey(tx, input.tenantId, input.idempotencyKey);
     if (existing !== undefined) {
       if (existing.requestHash !== hash) {
         throw new LedgerError(
@@ -206,9 +209,22 @@ async function advisoryLock(tx: DbOrTx, key: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
 }
 
-export async function findEntryByKey(db: DbOrTx, idempotencyKey: string): Promise<JournalEntry | undefined> {
-  const [row] = await db.select().from(journalEntries).where(eq(journalEntries.idempotencyKey, idempotencyKey));
+/** The tenant's entry under this key, if the key has been used. Another tenant's use of the same key is invisible. */
+export async function findEntryByKey(db: DbOrTx, tenantId: Id<'tnt'>, idempotencyKey: string): Promise<JournalEntry | undefined> {
+  const [row] = await db
+    .select()
+    .from(journalEntries)
+    .where(and(eq(journalEntries.tenantId, tenantId), eq(journalEntries.idempotencyKey, idempotencyKey)));
   return row;
+}
+
+/** Load an entry that must belong to `tenantId`, or throw: `entry_not_found`, or `entry_wrong_tenant` for another tenant's. */
+export async function getTenantEntry(db: DbOrTx, tenantId: Id<'tnt'>, entryId: string): Promise<JournalEntry> {
+  const entry = await getEntry(db, entryId);
+  if (entry.tenantId !== tenantId) {
+    throw new LedgerError('entry_wrong_tenant', `Entry ${entry.id} belongs to another tenant`, { entryId: entry.id });
+  }
+  return entry;
 }
 
 export async function getEntry(db: DbOrTx, entryId: string): Promise<JournalEntry> {
@@ -266,10 +282,7 @@ async function checkReversal(
   tx: DbOrTx,
   input: PostEntryInput & { contestId: Id<'cnt'> | null; reversesEntryId: Id<'je'> },
 ): Promise<void> {
-  const original = await getEntry(tx, input.reversesEntryId);
-  if (original.tenantId !== input.tenantId) {
-    throw new LedgerError('entry_wrong_tenant', `Entry ${original.id} belongs to another tenant`, { entryId: original.id });
-  }
+  const original = await getTenantEntry(tx, input.tenantId, input.reversesEntryId);
   if (original.contestId !== input.contestId) {
     throw new LedgerError('reversal_mismatch', `A reversal must carry the reversed entry's contest`, {
       entryId: original.id,

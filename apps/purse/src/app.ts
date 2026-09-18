@@ -5,7 +5,6 @@ import { errorFields, type Logger } from '@repo/logger';
 import type { Db } from './db/client';
 import { ApiFailure, fail } from './http/envelope';
 import { requestId, type RequestScope } from './http/request-id';
-import { createReconcileTracker, type ReconcileTracker } from './ledger';
 import { healthRoutes } from './routes/health';
 import { internalRoutes } from './routes/internal';
 
@@ -17,8 +16,6 @@ export type AppDeps = {
   sha: string;
   nodeEnv: 'development' | 'test' | 'production';
   internalApiToken: string | undefined;
-  /** Shared memory of the last reconcile; one is created when the caller passes none. */
-  tracker?: ReconcileTracker;
 };
 
 /**
@@ -27,7 +24,6 @@ export type AppDeps = {
  */
 export function createApp(deps: AppDeps) {
   const app = new Hono<RequestScope>();
-  const tracker = deps.tracker ?? createReconcileTracker();
 
   app.use(requestId(deps.logger));
 
@@ -54,8 +50,8 @@ export function createApp(deps: AppDeps) {
     return fail(c, { type: 'internal_error', code: 'unhandled', message: 'Something went wrong' });
   });
 
-  app.route('/', healthRoutes({ sql: deps.sql, migrationsFolder: deps.migrationsFolder, sha: deps.sha, tracker }));
-  app.route('/', internalRoutes({ db: deps.db, tracker, internalApiToken: deps.internalApiToken, nodeEnv: deps.nodeEnv }));
+  app.route('/', healthRoutes({ sql: deps.sql, migrationsFolder: deps.migrationsFolder, sha: deps.sha }));
+  app.route('/', internalRoutes({ db: deps.db, internalApiToken: deps.internalApiToken, nodeEnv: deps.nodeEnv }));
 
   return app;
 }

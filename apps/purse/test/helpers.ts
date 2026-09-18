@@ -3,7 +3,6 @@ import { createLogger, type Logger } from '@repo/logger';
 import { createApp } from '../src/app';
 import { connect, type ConnectOptions, type Database } from '../src/db/client';
 import { env, requireMigratorUrl } from '../src/env';
-import { createReconcileTracker, type ReconcileTracker } from '../src/ledger';
 import { MIGRATIONS_FOLDER } from '../src/paths';
 
 export type TestHarness = {
@@ -11,7 +10,6 @@ export type TestHarness = {
   database: Database;
   logger: Logger;
   lines: Array<Record<string, unknown>>;
-  tracker: ReconcileTracker;
   close(): Promise<void>;
 };
 
@@ -38,7 +36,6 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     },
   });
   const database = connectRuntime();
-  const tracker = createReconcileTracker();
   const app = createApp({
     sql: database.sql,
     db: database.db,
@@ -47,9 +44,8 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     sha: overrides.sha ?? 'test-sha',
     nodeEnv: 'test',
     internalApiToken: overrides.internalApiToken,
-    tracker,
   });
-  return { app, database, logger, lines, tracker, close: () => database.close() };
+  return { app, database, logger, lines, close: () => database.close() };
 }
 
 /** Await a promise that is expected to reject, returning the rejection. Fails when it resolves. */

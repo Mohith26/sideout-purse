@@ -18,6 +18,7 @@ export {
   postEntry,
   findEntryByKey,
   getEntry,
+  getTenantEntry,
   linesOf,
   reversalOf,
   type PostEntryInput,
@@ -38,5 +39,4 @@ export {
   type VoidEscrowInput,
 } from './flows';
 export { reconcile, INVARIANTS, type InvariantId, type InvariantResult, type ReconcileReport } from './reconcile';
-export { createReconcileTracker, type ReconcileTracker, type LastReconcile } from './tracker';
 export { assertRuntimeRole, runtimeRolePrivileges, type JournalPrivileges } from './role-check';

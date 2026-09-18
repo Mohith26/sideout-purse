@@ -7,10 +7,12 @@ import { accounts, journalEntries, journalLines } from '../../src/db/schema';
 import {
   balanceOf,
   escrowEntry,
+  findEntryByKey,
   isLedgerError,
   issuePromoPoints,
   LedgerError,
   postEntry,
+  reconcile,
   refundEscrow,
   reverseEntry,
   reversalOf,
@@ -99,7 +101,7 @@ describe('postEntry', () => {
       expect(await balanceOf(runtime.db, wallet(2))).toBe(500n);
 
       // Void one entrant: the reversing entry of their escrow entry.
-      const voided = await voidEscrow(runtime.db, { entryId: e1.entry.id as Id<'je'>, idempotencyKey: key('void') });
+      const voided = await voidEscrow(runtime.db, { tenantId: world.tenantId, entryId: e1.entry.id as Id<'je'>, idempotencyKey: key('void') });
       expect(voided.entry.kind).toBe('void');
       expect(voided.entry.reversesEntryId).toBe(e1.entry.id);
       expect(voided.entry.contestId).toBe(contestId);
@@ -299,6 +301,26 @@ describe('postEntry', () => {
       expect(await entryCount()).toBe(1);
     });
 
+    it('keys are scoped to the tenant: another tenant using the same key posts its own entry and learns nothing', async () => {
+      const k = key('shared');
+      const mine = { tenantId: world.tenantId, asset: 'POINTS' as const, promoLiabilityAccountId: world.promo.id, walletAccountId: wallet(0), amount: 5n, idempotencyKey: k };
+      const first = await issuePromoPoints(runtime.db, mine);
+
+      const other = await buildWorld(runtime.db, { wallets: 1, escrows: 0 });
+      const theirs = await issuePromoPoints(runtime.db, { tenantId: other.tenantId, asset: 'POINTS', promoLiabilityAccountId: other.promo.id, walletAccountId: other.wallets[0]?.id ?? '', amount: 9n, idempotencyKey: k });
+      expect(theirs.replayed).toBe(false);
+      expect(theirs.entry.id).not.toBe(first.entry.id);
+      expect(theirs.entry.idempotencyKey).toBe(k);
+      expect(await entryCount()).toBe(2);
+
+      // Each tenant's replay is its own entry, and neither can see the other's under the key.
+      const again = await issuePromoPoints(runtime.db, mine);
+      expect(again).toEqual({ ...first, replayed: true });
+      expect((await findEntryByKey(runtime.db, other.tenantId, k))?.id).toBe(theirs.entry.id);
+      expect((await findEntryByKey(runtime.db, world.tenantId, k))?.id).toBe(first.entry.id);
+      expect(await findEntryByKey(runtime.db, await createTenant(runtime.db), k)).toBeUndefined();
+    });
+
     it('a replay of a refused request is refused again, not turned into a post', async () => {
       const k = key('refused');
       const attempt = () => escrowEntry(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', walletAccountId: wallet(0), escrowAccountId: escrow(), amount: 5n, idempotencyKey: k });
@@ -360,7 +382,7 @@ describe('postEntry', () => {
   describe('rule 6: reversals', () => {
     it('reverseEntry posts the mirror image with reverses_entry_id set, once', async () => {
       const issued = await issuePromoPoints(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', promoLiabilityAccountId: world.promo.id, walletAccountId: wallet(0), amount: 100n, idempotencyKey: key() });
-      const reversed = await reverseEntry(runtime.db, { entryId: issued.entry.id as Id<'je'>, idempotencyKey: key('rev') });
+      const reversed = await reverseEntry(runtime.db, { tenantId: world.tenantId, entryId: issued.entry.id as Id<'je'>, idempotencyKey: key('rev') });
       expect(reversed.entry.kind).toBe('reversal');
       expect(reversed.entry.reversesEntryId).toBe(issued.entry.id);
       expect(reversed.lines.map((l) => [l.accountId, l.direction, l.amount, l.asset, l.sequence])).toEqual([
@@ -372,16 +394,16 @@ describe('postEntry', () => {
       expect((await reversalOf(runtime.db, issued.entry.id))?.id).toBe(reversed.entry.id);
 
       // Same key: the same reversal comes back. A new key: refused, history is corrected once.
-      const again = await reverseEntry(runtime.db, { entryId: issued.entry.id as Id<'je'>, idempotencyKey: reversed.entry.idempotencyKey });
+      const again = await reverseEntry(runtime.db, { tenantId: world.tenantId, entryId: issued.entry.id as Id<'je'>, idempotencyKey: reversed.entry.idempotencyKey });
       expect(again.replayed).toBe(true);
       expect(again.entry.id).toBe(reversed.entry.id);
-      const twice = await ledgerError(reverseEntry(runtime.db, { entryId: issued.entry.id as Id<'je'>, idempotencyKey: key('rev2') }));
+      const twice = await ledgerError(reverseEntry(runtime.db, { tenantId: world.tenantId, entryId: issued.entry.id as Id<'je'>, idempotencyKey: key('rev2') }));
       expect(twice.code).toBe('already_reversed');
       expect(twice.detail).toMatchObject({ entryId: issued.entry.id, reversedBy: reversed.entry.id });
       expect(await entryCount()).toBe(2);
 
       // Reversing the reversal is a new correction and is allowed.
-      const unreversed = await reverseEntry(runtime.db, { entryId: reversed.entry.id as Id<'je'>, idempotencyKey: key('rev3') });
+      const unreversed = await reverseEntry(runtime.db, { tenantId: world.tenantId, entryId: reversed.entry.id as Id<'je'>, idempotencyKey: key('rev3') });
       expect(unreversed.entry.reversesEntryId).toBe(reversed.entry.id);
       expect(await balanceOf(runtime.db, wallet(0))).toBe(100n);
     });
@@ -389,7 +411,7 @@ describe('postEntry', () => {
     it('a reversal that would overdraw the wallet is refused like any other debit', async () => {
       const issued = await issuePromoPoints(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', promoLiabilityAccountId: world.promo.id, walletAccountId: wallet(0), amount: 100n, idempotencyKey: key() });
       await escrowEntry(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', walletAccountId: wallet(0), escrowAccountId: escrow(), amount: 60n, idempotencyKey: key() });
-      const refused = await ledgerError(reverseEntry(runtime.db, { entryId: issued.entry.id as Id<'je'>, idempotencyKey: key() }));
+      const refused = await ledgerError(reverseEntry(runtime.db, { tenantId: world.tenantId, entryId: issued.entry.id as Id<'je'>, idempotencyKey: key() }));
       expect(refused.code).toBe('insufficient_funds');
       expect(await reversalOf(runtime.db, issued.entry.id)).toBeUndefined();
     });
@@ -436,9 +458,36 @@ describe('postEntry', () => {
       expect(await balanceOf(runtime.db, wallet(0))).toBe(100n);
     });
 
+    it('reverseEntry and voidEscrow refuse another tenant’s entry at the ledger boundary', async () => {
+      const issued = await issuePromoPoints(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', promoLiabilityAccountId: world.promo.id, walletAccountId: wallet(0), amount: 100n, idempotencyKey: key() });
+      const entered = await escrowEntry(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', walletAccountId: wallet(0), escrowAccountId: escrow(), amount: 30n, idempotencyKey: key() });
+      const intruder = await createTenant(runtime.db);
+
+      const reversal = await ledgerError(reverseEntry(runtime.db, { tenantId: intruder, entryId: entered.entry.id as Id<'je'>, idempotencyKey: key() }));
+      expect(reversal.code).toBe('entry_wrong_tenant');
+      expect(reversal.apiType).toBe('permission_error');
+      const voided = await ledgerError(voidEscrow(runtime.db, { tenantId: intruder, entryId: entered.entry.id as Id<'je'>, idempotencyKey: key() }));
+      expect(voided.code).toBe('entry_wrong_tenant');
+      // The tenant check comes first, so an intruder does not even learn the entry's kind.
+      const notEscrow = await ledgerError(voidEscrow(runtime.db, { tenantId: intruder, entryId: issued.entry.id as Id<'je'>, idempotencyKey: key() }));
+      expect(notEscrow.code).toBe('entry_wrong_tenant');
+      const unknown = await ledgerError(reverseEntry(runtime.db, { tenantId: intruder, entryId: newId('je'), idempotencyKey: key() }));
+      expect(unknown.code).toBe('entry_not_found');
+
+      expect(await reversalOf(runtime.db, entered.entry.id)).toBeUndefined();
+      expect(await entryCount()).toBe(2);
+      expect(await balanceOf(runtime.db, escrow())).toBe(30n);
+
+      // The owning tenant still can.
+      const ok = await voidEscrow(runtime.db, { tenantId: world.tenantId, entryId: entered.entry.id as Id<'je'>, idempotencyKey: key() });
+      expect(ok.entry.reversesEntryId).toBe(entered.entry.id);
+      expect(ok.entry.tenantId).toBe(world.tenantId);
+      expect(await balanceOf(runtime.db, escrow())).toBe(0n);
+    });
+
     it('voidEscrow only voids escrow entries', async () => {
       const issued = await issuePromoPoints(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', promoLiabilityAccountId: world.promo.id, walletAccountId: wallet(0), amount: 100n, idempotencyKey: key() });
-      const notEscrow = await ledgerError(voidEscrow(runtime.db, { entryId: issued.entry.id as Id<'je'>, idempotencyKey: key() }));
+      const notEscrow = await ledgerError(voidEscrow(runtime.db, { tenantId: world.tenantId, entryId: issued.entry.id as Id<'je'>, idempotencyKey: key() }));
       expect(notEscrow.code).toBe('not_reversible');
       expect(isLedgerError(notEscrow, 'not_reversible')).toBe(true);
     });
@@ -446,7 +495,8 @@ describe('postEntry', () => {
 
   describe('the database holds the rules for code that bypasses the service', () => {
     it('CHECKs positive amounts and sequences and the composite (account, asset) foreign key', async () => {
-      // As the owner, insert an entry header directly, then try bad lines.
+      // As the owner, insert an entry header directly, then try bad lines. Each attempt is
+      // a balanced pair with one line altered, so only the altered line can be what fails.
       const entryId = newId('je');
       await migrator.db.insert(journalEntries).values({
         id: entryId,
@@ -459,7 +509,10 @@ describe('postEntry', () => {
       const line = (overrides: Partial<typeof journalLines.$inferInsert>) =>
         migrator.db
           .insert(journalLines)
-          .values({ id: newId('jl'), entryId, accountId: wallet(0), direction: 'credit', amount: 1n, asset: 'POINTS', sequence: 1, ...overrides })
+          .values([
+            { id: newId('jl'), entryId, accountId: wallet(0), direction: 'credit', amount: 1n, asset: 'POINTS', sequence: 1, ...overrides },
+            { id: newId('jl'), entryId, accountId: world.promo.id, direction: 'debit', amount: 1n, asset: 'POINTS', sequence: 2 },
+          ])
           .then(() => undefined, (error: unknown) => String((error as Error).cause));
 
       expect(await line({ amount: 0n })).toMatch(/journal_lines_amount_positive/);
@@ -471,9 +524,57 @@ describe('postEntry', () => {
       expect(await line({ id: newId('jl') })).toMatch(/journal_lines_entry_id_sequence_key/);
     });
 
+    it('checks rules 1 to 3 at commit for any writer: the owner cannot commit a single-line, mixed-asset or unbalanced entry', async () => {
+      const creditWallet = await openWallet(runtime.db, world.tenantId, 'CREDIT');
+      type RawLine = { accountId: string; direction: 'debit' | 'credit'; amount: bigint; asset: 'POINTS' | 'CREDIT' };
+      const attempt = (lines: RawLine[]) =>
+        migrator.db
+          .transaction(async (tx) => {
+            const entryId = newId('je');
+            await tx.insert(journalEntries).values({ id: entryId, tenantId: world.tenantId, kind: 'adjustment', description: 'raw', idempotencyKey: key('raw'), requestHash: 'x' });
+            await tx.insert(journalLines).values(lines.map((line, i) => ({ id: newId('jl'), entryId, sequence: i + 1, ...line })));
+            // Nothing has objected yet: inside the transaction the entry is visible as written.
+            const [row] = await tx.select({ n: count() }).from(journalLines).where(eq(journalLines.entryId, entryId));
+            expect(row?.n).toBe(lines.length);
+            return entryId;
+          })
+          .then(
+            (entryId) => ({ entryId, failure: undefined }),
+            (error: unknown) => ({ entryId: undefined, failure: String((error as Error).cause ?? error) }),
+          );
+      const promo = world.promo.id;
+
+      const single = await attempt([{ accountId: wallet(0), direction: 'credit', amount: 10n, asset: 'POINTS' }]);
+      expect(single.failure).toMatch(/has 1 line\(s\); an entry needs at least two/);
+      const mixed = await attempt([
+        { accountId: promo, direction: 'debit', amount: 10n, asset: 'POINTS' },
+        { accountId: creditWallet.id, direction: 'credit', amount: 10n, asset: 'CREDIT' },
+      ]);
+      expect(mixed.failure).toMatch(/carries 2 assets; all lines must share one/);
+      const unbalanced = await attempt([
+        { accountId: promo, direction: 'debit', amount: 10n, asset: 'POINTS' },
+        { accountId: wallet(0), direction: 'credit', amount: 7n, asset: 'POINTS' },
+      ]);
+      expect(unbalanced.failure).toMatch(/does not balance; debits minus credits is 3/);
+      // Rolled back at commit: none of the three left a header or a line behind.
+      expect(await entryCount()).toBe(0);
+      expect((await reconcile(runtime.db)).ok).toBe(true);
+
+      // The same shape, balanced, commits; and the trigger cannot be removed by the runtime.
+      const balanced = await attempt([
+        { accountId: promo, direction: 'debit', amount: 10n, asset: 'POINTS' },
+        { accountId: wallet(0), direction: 'credit', amount: 4n, asset: 'POINTS' },
+        { accountId: wallet(1), direction: 'credit', amount: 6n, asset: 'POINTS' },
+      ]);
+      expect(balanced.failure).toBeUndefined();
+      expect(await balanceOf(runtime.db, wallet(1))).toBe(6n);
+      const disable = await rejection(runtime.sql`alter table journal_lines disable trigger journal_lines_entry_balanced`);
+      expect(String(disable)).toMatch(/must be owner of table journal_lines/);
+    });
+
     it('refuses a second reversal of one entry and a self-reversal even from the owner', async () => {
       const issued = await issuePromoPoints(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', promoLiabilityAccountId: world.promo.id, walletAccountId: wallet(0), amount: 1n, idempotencyKey: key() });
-      await reverseEntry(runtime.db, { entryId: issued.entry.id as Id<'je'>, idempotencyKey: key() });
+      await reverseEntry(runtime.db, { tenantId: world.tenantId, entryId: issued.entry.id as Id<'je'>, idempotencyKey: key() });
       const header = (overrides: Partial<typeof journalEntries.$inferInsert>) =>
         migrator.db
           .insert(journalEntries)
@@ -482,7 +583,7 @@ describe('postEntry', () => {
       expect(await header({ reversesEntryId: issued.entry.id })).toMatch(/journal_entries_reverses_entry_id_key/);
       const selfId = newId('je');
       expect(await header({ id: selfId, reversesEntryId: selfId })).toMatch(/journal_entries_reversal_not_self|journal_entries_reverses_entry_id_fk/);
-      expect(await header({ idempotencyKey: issued.entry.idempotencyKey })).toMatch(/journal_entries_idempotency_key_key/);
+      expect(await header({ idempotencyKey: issued.entry.idempotencyKey })).toMatch(/journal_entries_tenant_id_idempotency_key_key/);
       expect(await header({ contestId: 'usr_01a0b16a-b475-74d4-b1cb-2dbdc08845a9' })).toMatch(/journal_entries_contest_id_prefix/);
     });
   });

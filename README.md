@@ -71,7 +71,7 @@ pnpm dev                    # Purse on :4000, Sideout on :3000
 Then:
 
 ```sh
-curl localhost:4000/health   # { data: { sha, migrations, rulesetVersion, sdkVersion, lastReconcile } }
+curl localhost:4000/health   # { data: { sha, migrations, rulesetVersion, sdkVersion } }
 curl localhost:3000/health   # { data: { sha, migrations, purseSdkVersion } }
 open http://localhost:3000   # the Sideout shell: "No events yet", plus a beneficiary count read from its database
 pnpm --filter @purse/api reconcile   # the seven ledger invariants against the dev database; exits 1 on any failure
@@ -91,19 +91,20 @@ the local default; `apps/*/.env.example` list every variable with a comment.
 
 The short version, until the full write-up lands with the last phase. Purse's ledger
 (`apps/purse/src/ledger/`) is an immutable double-entry journal: every entry has at least
-two lines, balances per asset inside the transaction that writes it, and is never
-updated or deleted. That last part is a property of the database role the API runs as,
-not a convention in the code: `purse_app` holds `SELECT` and `INSERT` on the journal and
-nothing else, and a test expects the `UPDATE` to fail. Mistakes are corrected by posting a
-reversing entry. Balances are derived by summing lines, so any balance at any past moment
-is one `WHERE posted_at <= $1` away.
+two lines, balances per asset inside the transaction that writes it (checked by the service
+before it writes and by a deferred constraint trigger at commit, so a writer that bypasses
+the service is held to the same rules), and is never updated or deleted. That last part is
+a property of the database role the API runs as, not a convention in the code: `purse_app`
+holds `SELECT` and `INSERT` on the journal and nothing else, and a test expects the
+`UPDATE` to fail. Mistakes are corrected by posting a reversing entry. Balances are derived
+by summing lines, so any balance at any past moment is one `WHERE posted_at <= $1` away.
 
 `reconcile()` (`apps/purse/src/ledger/reconcile.ts`) checks the seven invariants from
 spec 4.2.4 (the journal nets to zero per asset, every entry balances, no wallet is
 negative, settled escrows are empty, payouts equal escrow, snapshots equal derived
 balances, every contest entry links to a matching escrow entry; the three about contests
 arrive with them in phase 2). It runs in CI against the seeded database, is exposed at
-`GET /internal/reconcile`, and its last result is on `/health`. The test worth reading is
+`GET /internal/reconcile`. The test worth reading is
 `apps/purse/test/ledger/random-ops.test.ts`: ten thousand seeded random operations
 (issue, escrow, refund, settle, void, replay, reversal, attempted overdraft), many fired
 concurrently, checked against an independent replay of every accepted line, and then

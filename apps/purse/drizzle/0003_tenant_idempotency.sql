@@ -1,0 +1,2 @@
+DROP INDEX "journal_entries_idempotency_key_key";--> statement-breakpoint
+CREATE UNIQUE INDEX "journal_entries_tenant_id_idempotency_key_key" ON "journal_entries" USING btree ("tenant_id","idempotency_key");

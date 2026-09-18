@@ -38,7 +38,7 @@ describe('balanceOf(asOf)', () => {
     posted.push(await issuePromoPoints(runtime.db, { ...common, promoLiabilityAccountId: world.promo.id, walletAccountId: w[1] ?? '', amount: 300n, idempotencyKey: key() }));
     posted.push(await escrowEntry(runtime.db, { ...common, walletAccountId: w[0] ?? '', escrowAccountId: escrow, amount: 200n, idempotencyKey: key() }));
     posted.push(await escrowEntry(runtime.db, { ...common, walletAccountId: w[1] ?? '', escrowAccountId: escrow, amount: 100n, idempotencyKey: key() }));
-    posted.push(await reverseEntry(runtime.db, { entryId: posted[3]?.entry.id as Id<'je'>, idempotencyKey: key() }));
+    posted.push(await reverseEntry(runtime.db, { tenantId: world.tenantId, entryId: posted[3]?.entry.id as Id<'je'>, idempotencyKey: key() }));
     posted.push(await escrowEntry(runtime.db, { ...common, walletAccountId: w[1] ?? '', escrowAccountId: escrow, amount: 150n, idempotencyKey: key() }));
     posted.push(
       await settleEscrow(runtime.db, {

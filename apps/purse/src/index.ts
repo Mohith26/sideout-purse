@@ -5,7 +5,7 @@ import { createLogger, errorFields, resolveBuildSha } from '@repo/logger';
 import { createApp } from './app';
 import { connect } from './db/client';
 import { env } from './env';
-import { assertRuntimeRole, createReconcileTracker } from './ledger';
+import { assertRuntimeRole } from './ledger';
 import { MIGRATIONS_FOLDER } from './paths';
 
 const config = env();
@@ -36,7 +36,6 @@ const app = createApp({
   sha,
   nodeEnv: config.nodeEnv,
   internalApiToken: config.internalApiToken,
-  tracker: createReconcileTracker(),
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

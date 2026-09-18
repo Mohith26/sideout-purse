@@ -16,10 +16,11 @@
  * - Enumerations are Postgres enums, not free text, so the database rejects a typo.
  * - Privileges are explicit. Tables are owned by `purse_migrator`; the runtime role
  *   `purse_app` gets exactly what it needs per table in a custom migration (see
- *   `drizzle/0002_ledger_roles.sql`). A new table with no grant is unreadable by the
- *   runtime, which `test/ledger/roles.test.ts` turns into a failing test rather than a
- *   surprise in production. Append-only tables (the journal, the audit log) never grant
- *   UPDATE, DELETE or TRUNCATE.
+ *   `drizzle/0002_ledger_roles.sql` and `0004_ledger_guards.sql`). A new table with no
+ *   grant is unreadable by the runtime, which `test/ledger/roles.test.ts` turns into a
+ *   failing test rather than a surprise in production. Append-only tables (the journal,
+ *   the audit log) never grant UPDATE, DELETE or TRUNCATE; tables a balance depends on
+ *   (`accounts`, `tenants`) grant UPDATE on `status` and `updated_at` only.
  */
 import { sql } from 'drizzle-orm';
 import {
@@ -36,7 +37,7 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { idCheck, nullableIdCheck, timestamps } from '@repo/db';
+import { idCheck, idPatternLiteral, nullableIdCheck, timestamps } from '@repo/db';
 
 // ---- Tenancy -------------------------------------------------------------------------
 
@@ -96,9 +97,6 @@ export const NORMAL_SIDE_BY_KIND: Readonly<Record<AccountKind, LedgerSide>> = {
 export const accountStatus = pgEnum('account_status', ['open', 'frozen', 'closed']);
 export type AccountStatus = (typeof accountStatus.enumValues)[number];
 
-const USR_PATTERN = sql.raw(`'^usr_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`);
-const CNT_PATTERN = sql.raw(`'^cnt_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'`);
-
 /**
  * Spec 4.2.1. One account holds exactly one asset. `owner_ref` is the user id for a
  * wallet, the contest id for an escrow, and NULL for the platform-level accounts, which
@@ -144,8 +142,8 @@ export const accounts = pgTable(
     check(
       'accounts_owner_ref_by_kind',
       sql`case ${table.kind}
-        when 'user_wallet' then ${table.ownerRef} is not null and ${table.ownerRef} ~ ${USR_PATTERN}
-        when 'contest_escrow' then ${table.ownerRef} is not null and ${table.ownerRef} ~ ${CNT_PATTERN}
+        when 'user_wallet' then ${table.ownerRef} is not null and ${table.ownerRef} ~ ${idPatternLiteral('usr')}
+        when 'contest_escrow' then ${table.ownerRef} is not null and ${table.ownerRef} ~ ${idPatternLiteral('cnt')}
         else true
       end`,
     ),
@@ -181,7 +179,8 @@ export type JournalEntryKind = (typeof journalEntryKind.enumValues)[number];
  * `posted_at` read back and passed to `balanceOf(asOf)` includes that entry exactly.
  * `request_hash` is what makes idempotency honest: a replay of the same key returns the
  * original only if the payload is the same, and a different payload under a used key is
- * a conflict.
+ * a conflict. Keys are unique per tenant, not globally (docs/decisions.md): a partner's
+ * key can never collide with, or reveal, another partner's entry.
  */
 export const journalEntries = pgTable(
   'journal_entries',
@@ -202,7 +201,7 @@ export const journalEntries = pgTable(
   (table) => [
     idCheck('journal_entries_id_prefix', table.id, 'je'),
     nullableIdCheck('journal_entries_contest_id_prefix', table.contestId, 'cnt'),
-    uniqueIndex('journal_entries_idempotency_key_key').on(table.idempotencyKey),
+    uniqueIndex('journal_entries_tenant_id_idempotency_key_key').on(table.tenantId, table.idempotencyKey),
     foreignKey({
       name: 'journal_entries_reverses_entry_id_fk',
       columns: [table.reversesEntryId],

@@ -3,7 +3,7 @@ import type { Id } from '@repo/ids';
 import type { DbOrTx } from '../db/client';
 import type { Asset } from '../db/schema';
 import { LedgerError } from './errors';
-import { getEntry, postEntry, type PostedEntry } from './post';
+import { getTenantEntry, postEntry, type PostedEntry } from './post';
 import { reverseEntry } from './reverse';
 
 /**
@@ -122,6 +122,7 @@ export async function settleEscrow(db: DbOrTx, input: SettleEscrowInput): Promis
 }
 
 export type VoidEscrowInput = {
+  tenantId: Id<'tnt'>;
   /** The `escrow` entry that put the entrant's stake in. */
   entryId: Id<'je'>;
   idempotencyKey: string;
@@ -135,7 +136,7 @@ export type VoidEscrowInput = {
  */
 export async function voidEscrow(db: DbOrTx, input: VoidEscrowInput): Promise<PostedEntry> {
   return db.transaction(async (tx) => {
-    const original = await getEntry(tx, input.entryId);
+    const original = await getTenantEntry(tx, input.tenantId, input.entryId);
     if (original.kind !== 'escrow') {
       throw new LedgerError('not_reversible', `Only an escrow entry can be voided; ${original.id} is a ${original.kind}`, {
         entryId: original.id,
@@ -143,6 +144,7 @@ export async function voidEscrow(db: DbOrTx, input: VoidEscrowInput): Promise<Po
       });
     }
     return reverseEntry(tx, {
+      tenantId: input.tenantId,
       entryId: input.entryId,
       idempotencyKey: input.idempotencyKey,
       kind: 'void',
