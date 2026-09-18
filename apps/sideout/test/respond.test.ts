@@ -16,9 +16,7 @@ describe('handle', () => {
     const thrown = stale.failure.authentication('code_invalid', 'That code is not right.');
     expect(thrown instanceof ApiFailure).toBe(false);
 
-    const response = await handle(request('POST', '/api/auth/verify'), async () => {
-      throw thrown;
-    });
+    const response = await handle(request('POST', '/api/auth/verify'), () => Promise.reject(thrown));
     expect(response.status).toBe(401);
     expect(await errorOf(response)).toEqual({ type: 'authentication_error', code: 'code_invalid', message: 'That code is not right.' });
   });
