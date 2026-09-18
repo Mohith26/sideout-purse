@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { newId, type Id } from '@repo/ids';
 
-import { authenticateApiKey, createApiKey, isAuthError, keyPrefixOf, listApiKeys, resetAuthCaches, revokeApiKey } from '../../src/auth';
+import { authenticateApiKey, createApiKey, isAuthError, keyPrefixExists, keyPrefixOf, listApiKeys, resetAuthCaches, revokeApiKey } from '../../src/auth';
 import type { Database } from '../../src/db/client';
 import { apiKeys, auditLog, tenants } from '../../src/db/schema';
 import { connectMigrator, connectRuntime, rejection } from '../helpers';
@@ -114,6 +114,14 @@ describe('API keys', () => {
     expect(() => keyPrefixOf('nope')).toThrow();
     const padded = `${key.keyPrefix}${'0'.repeat(24)}`;
     expect(isAuthError(await rejection(authenticateApiKey(runtime.db, padded)), 'invalid_api_key')).toBe(true);
+    // Whether a prefix exists is answerable without a verification, and is all the failed-authentication limit asks.
+    expect(await keyPrefixExists(runtime.db, padded)).toBe(true);
+    expect(await keyPrefixExists(runtime.db, plaintext)).toBe(true);
+    for (const stranger of [`sk_sandbox_${'0'.repeat(32)}`, key.keyPrefix, `${key.keyPrefix}0`, 'nope', undefined]) {
+      expect(await keyPrefixExists(runtime.db, stranger), String(stranger)).toBe(false);
+    }
+    await revokeApiKey(runtime.db, { tenantId, keyId: key.id, actor: { kind: 'operator' } });
+    expect(await keyPrefixExists(runtime.db, padded)).toBe(true);
     // The database refuses a prefix that does not match the key's kind and environment, or an unhashed key.
     const bad = await rejection(
       migrator.db.insert(apiKeys).values({ id: newId('key'), tenantId, kind: 'secret', environment: 'live', keyPrefix: 'sk_sandbox_AAAAAAAA', keyHash: '$argon2id$x' }),

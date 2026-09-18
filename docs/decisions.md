@@ -493,7 +493,11 @@ keyed by the key's id, so nobody who merely knows a partner's visible prefix can
 the partner's allowance; a request that fails authentication spends from its address's
 bucket, and once that is empty a failure is answered 429 instead of 401. A request that
 authenticates is never refused on its address: behind a proxy every partner shares one,
-and a stream of bad keys must not lock the partners out. The address is the socket's
+and a stream of bad keys must not lock the partners out. Once an address's bucket is
+empty, a key whose prefix no key has (or no key at all) is refused before authentication
+at the cost of one index lookup; a key whose prefix exists is still verified, so a guess
+that copies a real prefix costs one argon2 check per request however many it sends. The
+hosted edge rate limit is the phase 9 backstop for that. The address is the socket's
 unless `TRUSTED_PROXY_HOPS` says how many proxies append to `X-Forwarded-For`, in which
 case it is the entry that many from the header's right (the hosted deploy, behind one
 load balancer, sets it to 1; a bare process leaves it 0 so a client cannot choose its own

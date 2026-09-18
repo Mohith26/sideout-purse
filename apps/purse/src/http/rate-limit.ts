@@ -2,8 +2,10 @@ import type { HttpBindings } from '@hono/node-server';
 import type { Context, MiddlewareHandler } from 'hono';
 import { RATE_LIMIT_LIMIT_HEADER, RATE_LIMIT_REMAINING_HEADER, RATE_LIMIT_RESET_HEADER, RETRY_AFTER_HEADER } from '@purse/types';
 
+import { keyPrefixExists } from '../auth/api-keys';
 import { isAuthError } from '../auth/errors';
-import type { AuthScope } from './auth';
+import type { DbOrTx } from '../db/client';
+import { presentedToken, type AuthScope } from './auth';
 import { ApiFailure } from './envelope';
 
 /**
@@ -18,8 +20,11 @@ import { ApiFailure } from './envelope';
  * address's, and once that bucket is empty a failure is answered 429 instead of 401, so
  * guessing is told to back off where it comes from. A request that authenticates is never
  * refused on its address, whatever else came from it: behind a proxy every partner shares
- * one, and nobody may lock a partner out with a stream of bad keys. Nothing is ever keyed
- * by the prefix.
+ * one, and nobody may lock a partner out with a stream of bad keys. So an address with an
+ * empty bucket is refused before authentication only when its key has no prefix any key
+ * has (one index lookup), which can never authenticate; a key whose prefix exists is
+ * verified, at the cost of one argon2 check, and charged if it fails. Nothing is ever
+ * keyed by the prefix.
  *
  * Buckets live in process memory, at most `MAX_BUCKETS` of them, the least recently used
  * evicted first: one replica, one view. A shared store is a phase 9 concern
@@ -56,6 +61,12 @@ export class TokenBuckets {
       return { allowed: true, remaining: Math.floor(bucket.tokens), retryAfterMs: 0 };
     }
     return { allowed: false, remaining: 0, retryAfterMs: Math.ceil(((1 - bucket.tokens) / this.config.perSecond) * 1000) };
+  }
+
+  /** The tokens `key` holds at `now` without spending one; a key never seen holds a full bucket. */
+  available(key: string, now: number): number {
+    const bucket = this.buckets.get(key);
+    return bucket === undefined ? this.config.burst : Math.floor(this.refilled(bucket, now));
   }
 
   get size(): number {
@@ -131,18 +142,25 @@ function limited(c: Context, buckets: TokenBuckets, taken: Taken): ApiFailure {
   );
 }
 
+export type AuthFailureLimitDeps = AddressOptions & { db: DbOrTx };
+
 /**
  * Around authentication: a request that fails it spends one token from its address's
  * bucket, and when the bucket is empty the answer is 429 rather than 401. A request that
- * authenticates costs the address nothing and is never refused here. Hono renders an error
- * where it is thrown, so by the time `next()` returns the refusal is the response and
- * `c.error` says what it was.
+ * authenticates costs the address nothing and is never refused here; one that cannot
+ * (no key, or a prefix no key has) is refused before the verification it would cost once
+ * the bucket is empty. Hono renders an error where it is thrown, so by the time `next()`
+ * returns the refusal is the response and `c.error` says what it was.
  */
-export function limitAuthFailures(buckets: TokenBuckets, address: AddressOptions, clock: () => number = Date.now): MiddlewareHandler {
+export function limitAuthFailures(buckets: TokenBuckets, deps: AuthFailureLimitDeps, clock: () => number = Date.now): MiddlewareHandler {
   return async (c, next) => {
+    const key = `address:${clientAddress(c, deps)}`;
+    if (buckets.available(key, clock()) < 1 && !(await keyPrefixExists(deps.db, presentedToken(c.req.header('Authorization'))))) {
+      throw limited(c, buckets, buckets.take(key, clock()));
+    }
     await next();
     if (!isAuthError(c.error) || c.error.apiType !== 'authentication_error') return;
-    const taken = buckets.take(`address:${clientAddress(c, address)}`, clock());
+    const taken = buckets.take(key, clock());
     if (!taken.allowed) throw limited(c, buckets, taken);
   };
 }

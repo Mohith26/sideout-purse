@@ -417,7 +417,7 @@ describe('rate limiting', () => {
       // bucket, not the key's: once it is empty their guesses are told to back off.
       now = 1_000;
       const stranger = '203.0.113.7';
-      const lookalike = client(h, `${boot.plainKey.slice(0, 19)}${'Q'.repeat(13)}`);
+      const lookalike = client(h, `${boot.plainKey.slice(0, 19)}${'Q'.repeat(24)}`);
       for (let i = 0; i < 5; i += 1) {
         const guess = await lookalike.get('/v1/users/usr_x', { address: stranger });
         expect(guess.status, `guess ${i}`).toBe(i < 2 ? 401 : 429);
@@ -434,10 +434,17 @@ describe('rate limiting', () => {
       expect(await h.database.db.select().from(idempotencyKeys).where(eq(idempotencyKeys.key, 'rl-2'))).toEqual([]);
       expect(await h.database.db.select().from(idempotencyReservations).where(eq(idempotencyReservations.key, 'rl-2'))).toEqual([]);
       expect(again.headers.get(IDEMPOTENCY_KEY_HEADER)).toBeNull();
-      // A genuine key from the poisoned address is served: behind a proxy that address is everyone's.
+      // From the poisoned address, a key whose prefix exists is still verified: the genuine key is
+      // served (behind a proxy that address is everyone's), a revoked one is refused for what it is.
       const fromPoisoned = await client(h, boot.operatorKey).get('/v1/users/usr_x', { address: stranger });
       expect(fromPoisoned.status).toBe(400);
       expect(fromPoisoned.headers.get(RATE_LIMIT_REMAINING_HEADER)).toBe('1');
+      // One that could never authenticate (a prefix no key has, or no key at all) is refused outright.
+      for (const bogus of [client(h, `sk_sandbox_${'Z'.repeat(32)}`), client(h, `pk_live_${'Z'.repeat(32)}`), client(h, 'not-a-key'), client(h, undefined)]) {
+        const refused = await bogus.get('/v1/users/usr_x', { address: stranger });
+        expect(refused.status).toBe(429);
+        expect(refused.error).toMatchObject({ type: 'rate_limited', code: 'too_many_requests' });
+      }
 
       // Requests that authenticate cost their address nothing: after the operator key's own bucket
       // is spent from a fresh address, that address still has its full allowance for failures.

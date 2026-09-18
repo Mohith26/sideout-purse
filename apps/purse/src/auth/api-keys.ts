@@ -64,6 +64,17 @@ export function keyPrefixOf(plaintext: string): string {
   return `${match[1]}_${match[2]}_${(match[3] ?? '').slice(0, KEY_PREFIX_LENGTH)}`;
 }
 
+/**
+ * Whether a presented token names a prefix some key has: one index lookup, no argon2. The
+ * failed-authentication limit uses it to refuse a guess that could not possibly
+ * authenticate without paying for a verification (`http/rate-limit.ts`).
+ */
+export async function keyPrefixExists(db: DbOrTx, presented: string | undefined): Promise<boolean> {
+  if (presented === undefined || !KEY_SHAPE.test(presented)) return false;
+  const [row] = await db.select({ id: apiKeys.id }).from(apiKeys).where(eq(apiKeys.keyPrefix, keyPrefixOf(presented))).limit(1);
+  return row !== undefined;
+}
+
 export async function hashApiKey(plaintext: string): Promise<string> {
   return argon2Hash(plaintext, ARGON2);
 }

@@ -26,7 +26,7 @@ export type V1RouterDeps = V1Deps & { buckets: TokenBuckets; trustedProxyHops: n
 
 export function v1Routes(deps: V1RouterDeps) {
   const v1 = new Hono<V1Scope>();
-  v1.use('*', limitAuthFailures(deps.buckets, { trustedProxyHops: deps.trustedProxyHops }, deps.clock));
+  v1.use('*', limitAuthFailures(deps.buckets, { db: deps.db, trustedProxyHops: deps.trustedProxyHops }, deps.clock));
   v1.use('*', bearerAuth({ db: deps.db }));
   v1.use('*', rateLimit(deps.buckets, deps.clock));
   v1.use('*', readBody());

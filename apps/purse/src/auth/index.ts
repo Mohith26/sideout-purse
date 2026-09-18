@@ -9,6 +9,7 @@ export {
   authenticateApiKey,
   listApiKeys,
   actorFor,
+  keyPrefixExists,
   keyPrefixOf,
   hashApiKey,
   publicFields,
