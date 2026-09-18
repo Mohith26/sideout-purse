@@ -19,7 +19,10 @@ import { env, requireMigratorUrl } from '../src/env';
  *                                                        exists outside the hash)
  *   pnpm --filter @purse/api db:seed -- --rotate-keys    revoke the seed keys and mint new ones
  */
+// `pnpm ... db:seed -- --print-keys` hands the script a literal `--` first; drop it so the
+// flags parse either way.
 const { values: args } = parseArgs({
+  args: process.argv.slice(2).filter((arg, index) => !(index === 0 && arg === '--')),
   options: {
     'print-keys': { type: 'boolean', default: false },
     'rotate-keys': { type: 'boolean', default: false },
