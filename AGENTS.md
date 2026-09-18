@@ -35,7 +35,7 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   (`admin@purse.local`; `pnpm --filter @purse/api db:seed -- --print-operator-password
   --rotate-operator-password` prints a fresh password) and needs no `.env`
   (`PURSE_API_ORIGIN` defaults to :4000).
-- `SIDEOUT_PURSE_SECRET_KEY` derives every process key (`apps/purse/src/secrets.ts`); production
+- `PURSE_SECRET_KEY` derives every process key (`apps/purse/src/secrets.ts`); production
   refuses to start without it, elsewhere a stand-in is used. `EMBED_SMS_PROVIDER`,
   `PURSE_EMBED_DIR`, `WEBHOOK_DISPATCHER` and `WEBHOOK_POLL_INTERVAL_MS` are the other
   phase 4 variables (`env.ts`); `PURSE_TENANT_ORIGINS` is read by the seed only.
