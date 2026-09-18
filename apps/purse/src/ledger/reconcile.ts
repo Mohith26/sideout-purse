@@ -9,9 +9,9 @@ import type { DbOrTx } from '../db/client';
  * hard alarm: the script exits non-zero and the route answers 500.
  *
  * Each invariant is a registry entry that returns `{ ok, detail }`; the report lists all
- * seven every time so the shape is complete before every check exists. I4, I5 and I7 are
- * about contests and settlement and are registered as not applicable until phase 2, which
- * replaces those three entries and nothing else.
+ * seven every time. I4, I5 and I7 are about contests and settlement and read the phase 2
+ * tables; a check that is not yet applicable would be registered with `notApplicableUntil`
+ * and reported as such rather than silently passing.
  */
 export type InvariantId = 'I1' | 'I2' | 'I3' | 'I4' | 'I5' | 'I6' | 'I7';
 
@@ -136,16 +136,121 @@ async function i6(db: DbOrTx): Promise<Outcome> {
   };
 }
 
-const PHASE_2 = 'phase 2 (contests and settlement)';
+/**
+ * I4. Spec: every `settled` contest's escrow is exactly zero. `voided` contests are held to
+ * the same line (spec 4.3 defines both terminal states with "escrow zero"), so a void that
+ * missed a refund is caught here too.
+ */
+async function i4(db: DbOrTx): Promise<Outcome> {
+  const [count] = await db.execute<{ contests: string }>(sql`select count(*)::text as contests from contests where state in ('settled', 'voided')`);
+  const rows = await db.execute<{ id: string; state: string; balance: string }>(sql`
+    select c.id, c.state::text as state, coalesce(sum(${SIGNED}), 0)::text as balance
+    from contests c
+    join accounts a on a.id = c.escrow_account_id
+    left join journal_lines l on l.account_id = a.id
+    where c.state in ('settled', 'voided')
+    group by c.id, c.state
+    having coalesce(sum(${SIGNED}), 0) <> 0
+    order by c.id
+    limit ${LIMIT}
+  `);
+  if (rows.length === 0) return { ok: true, detail: `every one of ${count?.contests ?? '0'} settled or voided contests has an empty escrow` };
+  return {
+    ok: false,
+    detail: `${rows.length}${rows.length === LIMIT ? '+' : ''} settled or voided contests still hold escrow: ${rows.map((row) => `${row.id} (${row.state}) = ${row.balance}`).join('; ')}`,
+  };
+}
+
+/**
+ * I5. For every `settled` contest, the sum of `contest_results.payout_amount` equals what
+ * the contest escrowed: every credit into its escrow account less every debit out of it
+ * other than the settlement itself (withdrawals refunded before lock, corrections). With
+ * I4 holding, that is exactly what the `settle` entry paid out.
+ */
+async function i5(db: DbOrTx): Promise<Outcome> {
+  const [count] = await db.execute<{ contests: string }>(sql`select count(*)::text as contests from contests where state = 'settled'`);
+  const rows = await db.execute<{ id: string; paid: string; escrowed: string }>(sql`
+    select c.id,
+      coalesce((select sum(r.payout_amount) from contest_results r where r.contest_id = c.id), 0)::text as paid,
+      coalesce((
+        select sum(case when l.direction = 'credit' then l.amount else -l.amount end)
+        from journal_lines l
+        join journal_entries e on e.id = l.entry_id
+        where l.account_id = c.escrow_account_id and e.kind <> 'settle'
+      ), 0)::text as escrowed
+    from contests c
+    where c.state = 'settled'
+      and coalesce((select sum(r.payout_amount) from contest_results r where r.contest_id = c.id), 0) <> coalesce((
+        select sum(case when l.direction = 'credit' then l.amount else -l.amount end)
+        from journal_lines l
+        join journal_entries e on e.id = l.entry_id
+        where l.account_id = c.escrow_account_id and e.kind <> 'settle'
+      ), 0)
+    order by c.id
+    limit ${LIMIT}
+  `);
+  if (rows.length === 0) return { ok: true, detail: `results of every one of ${count?.contests ?? '0'} settled contests sum to what it escrowed` };
+  return {
+    ok: false,
+    detail: `${rows.length}${rows.length === LIMIT ? '+' : ''} settled contests pay out something other than what they escrowed: ${rows
+      .map((row) => `${row.id} paid ${row.paid} of ${row.escrowed}`)
+      .join('; ')}`,
+  };
+}
+
+/**
+ * I7. Every participant's `entry_journal_entry_id` is an `escrow` entry of the contest's
+ * tenant, carrying the contest's id, with exactly two lines: a debit of that user's wallet
+ * and a credit of that contest's escrow account, both in the contest's asset for the
+ * contest's entry amount.
+ */
+async function i7(db: DbOrTx): Promise<Outcome> {
+  const [count] = await db.execute<{ participants: string }>(sql`select count(*)::text as participants from contest_participants`);
+  const rows = await db.execute<{ id: string; contest_id: string; user_id: string; entry_id: string }>(sql`
+    select p.id, p.contest_id, p.user_id, p.entry_journal_entry_id as entry_id
+    from contest_participants p
+    join contests c on c.id = p.contest_id
+    where not exists (
+      select 1 from journal_entries e
+      where e.id = p.entry_journal_entry_id
+        and e.kind = 'escrow'
+        and e.tenant_id = c.tenant_id
+        and e.contest_id = c.id
+        and (select count(*) from journal_lines l where l.entry_id = e.id) = 2
+        and exists (
+          select 1 from journal_lines l
+          join accounts a on a.id = l.account_id
+          where l.entry_id = e.id and l.direction = 'debit'
+            and a.kind = 'user_wallet' and a.tenant_id = c.tenant_id and a.owner_ref = p.user_id
+            and l.asset = c.asset and l.amount = c.entry_amount
+        )
+        and exists (
+          select 1 from journal_lines l
+          where l.entry_id = e.id and l.direction = 'credit'
+            and l.account_id = c.escrow_account_id
+            and l.asset = c.asset and l.amount = c.entry_amount
+        )
+    )
+    order by p.id
+    limit ${LIMIT}
+  `);
+  if (rows.length === 0) return { ok: true, detail: `every one of ${count?.participants ?? '0'} participants links to a matching escrow entry` };
+  return {
+    ok: false,
+    detail: `${rows.length}${rows.length === LIMIT ? '+' : ''} participants do not link to a matching escrow entry: ${rows
+      .map((row) => `${row.id} (${row.user_id} in ${row.contest_id} -> ${row.entry_id})`)
+      .join('; ')}`,
+  };
+}
 
 export const INVARIANTS: readonly InvariantCheck[] = [
   { id: 'I1', name: 'journal nets to zero per asset', check: i1 },
   { id: 'I2', name: 'every entry balances', check: i2 },
   { id: 'I3', name: 'no user wallet is negative', check: i3 },
-  { id: 'I4', name: 'settled contests have zero escrow', notApplicableUntil: PHASE_2, detail: 'no contests table yet' },
-  { id: 'I5', name: 'settled payouts equal escrowed total', notApplicableUntil: PHASE_2, detail: 'no contest_results table yet' },
+  { id: 'I4', name: 'settled contests have zero escrow', check: i4 },
+  { id: 'I5', name: 'settled payouts equal escrowed total', check: i5 },
   { id: 'I6', name: 'every snapshot equals its derived balance', check: i6 },
-  { id: 'I7', name: 'every entry ledger link is a matching escrow entry', notApplicableUntil: PHASE_2, detail: 'no contest_participants table yet' },
+  { id: 'I7', name: 'every entry ledger link is a matching escrow entry', check: i7 },
 ];
 
 /**

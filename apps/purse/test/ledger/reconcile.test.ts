@@ -63,7 +63,7 @@ describe('reconcile()', () => {
     return entryId;
   }
 
-  it('reports all seven invariants every time, with I4, I5 and I7 not applicable until phase 2', async () => {
+  it('reports all seven invariants every time, each checked, none not-applicable', async () => {
     await post();
     const report = await reconcile(runtime.db);
     expect(report.ok).toBe(true);
@@ -72,18 +72,16 @@ describe('reconcile()', () => {
     for (const result of report.invariants) {
       expect(result.ok).toBe(true);
       expect(result.detail.length).toBeGreaterThan(0);
-      if (['I4', 'I5', 'I7'].includes(result.id)) {
-        expect(result.status).toBe('not_applicable');
-        expect(result.notApplicableUntil).toMatch(/phase 2/);
-      } else {
-        expect(result.status).toBe('ok');
-        expect(result.notApplicableUntil).toBeUndefined();
-      }
+      expect(result.status).toBe('ok');
+      expect(result.notApplicableUntil).toBeUndefined();
     }
     expect(report.invariants.find((r) => r.id === 'I1')?.detail).toMatch(/POINTS: debits 360, credits 360/);
     expect(report.invariants.find((r) => r.id === 'I2')?.detail).toMatch(/every one of 5 entries/);
     expect(report.invariants.find((r) => r.id === 'I3')?.detail).toMatch(/none of 2 user wallets/);
+    expect(report.invariants.find((r) => r.id === 'I4')?.detail).toMatch(/every one of 0 settled or voided contests/);
+    expect(report.invariants.find((r) => r.id === 'I5')?.detail).toMatch(/every one of 0 settled contests/);
     expect(report.invariants.find((r) => r.id === 'I6')?.detail).toMatch(/no account_balance_snapshots table/);
+    expect(report.invariants.find((r) => r.id === 'I7')?.detail).toMatch(/every one of 0 participants/);
     expect(Date.parse(report.ranAt)).not.toBeNaN();
     expect(report.durationMs).toBeGreaterThanOrEqual(0);
   });

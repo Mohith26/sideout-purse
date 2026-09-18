@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { newId, type Id } from '@repo/ids';
 
 import type { Database } from '../../src/db/client';
-import { accounts, journalEntries, journalLines } from '../../src/db/schema';
+import { accounts, journalEntries, journalLines, type Account } from '../../src/db/schema';
 import {
   balanceOf,
   escrowEntry,
@@ -21,7 +21,7 @@ import {
   type PostEntryInput,
 } from '../../src/ledger';
 import { connectMigrator, connectRuntime, rejection } from '../helpers';
-import { buildWorld, createTenant, key, openWallet, wipeLedger, type World } from './fixtures';
+import { buildWorld, contestFor, createTenant, key, openWallet, wipeLedger, type World } from './fixtures';
 
 /**
  * The seven journal rules (spec 4.2.2) as the runtime role experiences them through
@@ -83,7 +83,7 @@ describe('postEntry', () => {
       await issuePromoPoints(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', promoLiabilityAccountId: world.promo.id, walletAccountId: wallet(1), amount: 500n, idempotencyKey: key() });
       await issuePromoPoints(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', promoLiabilityAccountId: world.promo.id, walletAccountId: wallet(2), amount: 500n, idempotencyKey: key() });
 
-      const contestId = newId('cnt');
+      const contestId = await contestFor(runtime.db, world.tenantId, world.escrows[0] ?? ({} as Account));
       const enter = (i: number) =>
         escrowEntry(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', walletAccountId: wallet(i), escrowAccountId: escrow(), amount: 100n, contestId, idempotencyKey: key('enter') });
       const e0 = await enter(0);
@@ -417,7 +417,7 @@ describe('postEntry', () => {
     });
 
     it('postEntry with reverses_entry_id set demands the exact mirror, same tenant and same contest', async () => {
-      const contestId = newId('cnt');
+      const contestId = await contestFor(runtime.db, world.tenantId, world.escrows[0] ?? ({} as Account));
       await issuePromoPoints(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', promoLiabilityAccountId: world.promo.id, walletAccountId: wallet(0), amount: 100n, idempotencyKey: key() });
       const entered = await escrowEntry(runtime.db, { tenantId: world.tenantId, asset: 'POINTS', walletAccountId: wallet(0), escrowAccountId: escrow(), amount: 30n, contestId, idempotencyKey: key() });
       const reversal = (lines: PostEntryInput['lines'], overrides: Partial<PostEntryInput> = {}) =>

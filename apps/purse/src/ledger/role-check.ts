@@ -5,9 +5,11 @@ import type { Sql } from '@repo/db';
  * checked once at boot: a Purse API started on the migrator's connection string (or on a
  * role someone granted too much) refuses to serve, because an API that could rewrite the
  * journal is exactly what spec 4.2.2 rule 5 forbids. The audit log is held to the same
- * rule: a record of who changed what is worth nothing if the runtime can edit it.
+ * rule: a record of who changed what is worth nothing if the runtime can edit it. So are
+ * contest results (written once at settlement, spec 4.1) and the idempotency-key record
+ * (a used key is history).
  */
-export const APPEND_ONLY_TABLES = ['journal_entries', 'journal_lines', 'audit_log'] as const;
+export const APPEND_ONLY_TABLES = ['journal_entries', 'journal_lines', 'audit_log', 'contest_results', 'idempotency_keys'] as const;
 
 export type AppendOnlyTable = (typeof APPEND_ONLY_TABLES)[number];
 
@@ -44,7 +46,13 @@ export async function runtimeRolePrivileges(sql: Sql): Promise<JournalPrivileges
   `;
 
   const absent: TablePrivileges = { present: false, select: false, insert: false, update: false, delete: false, truncate: false };
-  const tables: Record<AppendOnlyTable, TablePrivileges> = { journal_entries: absent, journal_lines: absent, audit_log: absent };
+  const tables: Record<AppendOnlyTable, TablePrivileges> = {
+    journal_entries: absent,
+    journal_lines: absent,
+    audit_log: absent,
+    contest_results: absent,
+    idempotency_keys: absent,
+  };
   for (const { table, ...privileges } of rows) tables[table] = privileges;
   return { role: who?.role ?? 'unknown', tables, ownedTables: owned?.count ?? 0 };
 }

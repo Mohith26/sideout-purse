@@ -1,7 +1,21 @@
 import { newId, type Id } from '@repo/ids';
 
 import type { Database, DbOrTx } from '../../src/db/client';
-import { accounts, auditLog, journalEntries, journalLines, tenants, type Account, type AccountKind, type Asset } from '../../src/db/schema';
+import {
+  accounts,
+  auditLog,
+  contestParticipants,
+  contestResults,
+  contestScores,
+  contests,
+  idempotencyKeys,
+  journalEntries,
+  journalLines,
+  tenants,
+  type Account,
+  type AccountKind,
+  type Asset,
+} from '../../src/db/schema';
 import { openAccount } from '../../src/ledger';
 
 /**
@@ -10,10 +24,15 @@ import { openAccount } from '../../src/ledger';
  * thing only the owner role can do, so `wipeLedger` takes the migrator connection.
  */
 
-/** Delete every ledger row, in foreign-key order. Owner role only. */
+/** Delete every ledger and contest row, in foreign-key order. Owner role only. */
 export async function wipeLedger(migrator: Database): Promise<void> {
+  await migrator.db.delete(contestResults);
+  await migrator.db.delete(contestScores);
+  await migrator.db.delete(contestParticipants);
   await migrator.db.delete(journalLines);
   await migrator.db.delete(journalEntries);
+  await migrator.db.delete(contests);
+  await migrator.db.delete(idempotencyKeys);
   await migrator.db.delete(auditLog);
   await migrator.db.delete(accounts);
   await migrator.db.delete(tenants);
@@ -36,6 +55,30 @@ export async function openWallet(db: DbOrTx, tenantId: Id<'tnt'>, asset: Asset =
 
 export async function openEscrow(db: DbOrTx, tenantId: Id<'tnt'>, asset: Asset = 'POINTS', contestId = newId('cnt')): Promise<Account> {
   return (await openAccount(db, { tenantId, kind: 'contest_escrow', ownerRef: contestId, asset })).account;
+}
+
+/**
+ * A bare contest row for an escrow account, so a ledger test can post entries that carry a
+ * `contest_id` (a real foreign key from phase 2). The contest engine's own tests build
+ * contests through `createContest`; this is only for ledger tests that need the id.
+ */
+export async function contestFor(db: DbOrTx, tenantId: Id<'tnt'>, escrow: Account): Promise<Id<'cnt'>> {
+  const id = escrow.ownerRef as Id<'cnt'>;
+  await db
+    .insert(contests)
+    .values({
+      id,
+      tenantId,
+      externalId: `ledger-test-${id}`,
+      kind: 'head_to_head',
+      title: 'ledger fixture',
+      asset: escrow.asset,
+      entryAmount: 1n,
+      prizeStructure: { type: 'winner_take_all' },
+      escrowAccountId: escrow.id,
+    })
+    .onConflictDoNothing({ target: contests.id });
+  return id;
 }
 
 /** A tenant with the accounts the standard flows need, in one asset. */

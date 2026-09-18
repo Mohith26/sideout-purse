@@ -36,6 +36,20 @@
       "when": 1789695834080,
       "tag": "0004_ledger_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789701229276,
+      "tag": "0005_contests",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789701229751,
+      "tag": "0006_contest_guards",
+      "breakpoints": true
     }
   ]
 }
