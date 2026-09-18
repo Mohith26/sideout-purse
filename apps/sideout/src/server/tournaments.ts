@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { newId } from '@repo/ids';
 import { z } from 'zod';
 
@@ -403,7 +403,13 @@ export const listTournamentsQuerySchema = z.object({
   status: z.enum(TOURNAMENT_STATUSES.filter((s) => s !== 'draft') as [TournamentStatus, ...TournamentStatus[]]).optional(),
 });
 
-/** Non-draft tournaments, soonest first, optionally filtered by status. */
+/** Statuses of events still to come or in play; everything else non-draft is over. */
+const AHEAD_STATUSES: readonly TournamentStatus[] = ['registration_open', 'registration_closed', 'live'];
+
+/**
+ * Non-draft tournaments, optionally filtered by status: events still ahead or in play
+ * soonest first, then events that are over, most recent first.
+ */
 export async function listPublicTournaments(
   db: DbOrTx,
   filter: { status?: TournamentStatus | undefined },
@@ -414,10 +420,13 @@ export async function listPublicTournaments(
     .from(tournaments)
     .innerJoin(charities, eq(charities.id, tournaments.beneficiaryId))
     .where(filter.status === undefined ? ne(tournaments.status, 'draft') : eq(tournaments.status, filter.status))
-    .orderBy(desc(tournaments.startsAt));
-  const ids = rows.map((r) => r.tournament.id);
+    .orderBy(asc(tournaments.startsAt), asc(tournaments.id));
+  const ahead = rows.filter((r) => AHEAD_STATUSES.includes(r.tournament.status));
+  const over = rows.filter((r) => !AHEAD_STATUSES.includes(r.tournament.status)).reverse();
+  const ordered = [...ahead, ...over];
+  const ids = ordered.map((r) => r.tournament.id);
   const counts = await teamCounts(db, ids, clock);
-  return rows.map((r) => toPublicTournament(r.tournament, r.beneficiary, counts.get(r.tournament.id) ?? 0));
+  return ordered.map((r) => toPublicTournament(r.tournament, r.beneficiary, counts.get(r.tournament.id) ?? 0));
 }
 
 async function teamCounts(db: DbOrTx, tournamentIds: string[], clock: ReservationClock): Promise<Map<string, number>> {

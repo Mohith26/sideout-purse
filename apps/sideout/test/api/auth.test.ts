@@ -93,6 +93,40 @@ describe('phone sign-in', () => {
     expect((await errorOf(unknown)).code).toBe('code_invalid');
   });
 
+  it("a stranger's requests for the same number neither invalidate the owner's code nor widen the guess budget", async () => {
+    const phone = nextPhone();
+    const owner = await data<CodeResponse>(await requestCode(request('POST', '/api/auth/request-code', { body: { phone } })));
+    const stranger = { 'x-forwarded-for': '198.51.100.9' };
+    const second = await data<CodeResponse>(await requestCode(request('POST', '/api/auth/request-code', { body: { phone }, headers: stranger })));
+    const third = await data<CodeResponse>(await requestCode(request('POST', '/api/auth/request-code', { body: { phone }, headers: stranger })));
+    expect(new Set([owner.code, second.code, third.code]).size).toBeGreaterThan(1);
+    // Five wrong guesses are five for the number, whichever code they are aimed at.
+    const wrong = (code: string | undefined) => (code === '000000' ? '111111' : '000000');
+    for (let i = 0; i < CODE_MAX_ATTEMPTS - 1; i += 1) {
+      expect((await errorOf(await verify(request('POST', '/api/auth/verify', { body: { phone, code: wrong(owner.code) } })))).code).toBe('code_invalid');
+    }
+    // The owner's original code still signs in, and that consumes every code out for the number.
+    const signedIn = await verify(request('POST', '/api/auth/verify', { body: { phone, code: owner.code } }));
+    expect(signedIn.status).toBe(200);
+    const outstanding = await database.db.select().from(authCodes).where(eq(authCodes.phoneE164, phone));
+    expect(outstanding).toHaveLength(3);
+    expect(outstanding.every((row) => row.consumedAt !== null)).toBe(true);
+    expect((await errorOf(await verify(request('POST', '/api/auth/verify', { body: { phone, code: third.code } })))).code).toBe('code_invalid');
+    // The stranger did spend the number's window, which is the cost that remains.
+    const fourth = await requestCode(request('POST', '/api/auth/request-code', { body: { phone } }));
+    expect(fourth.status).toBe(429);
+    expect((await errorOf(fourth)).detail).toMatchObject({ scope: 'phone' });
+  });
+
+  it('caps the codes one instance sends by the configured SMS budget', async () => {
+    resetAppContext({ env: { ...env(), authCodeGlobalCap: 2 } });
+    expect((await requestCode(request('POST', '/api/auth/request-code', { body: { phone: nextPhone() } }))).status).toBe(200);
+    expect((await requestCode(request('POST', '/api/auth/request-code', { body: { phone: nextPhone() } }))).status).toBe(200);
+    const capped = await requestCode(request('POST', '/api/auth/request-code', { body: { phone: nextPhone() } }));
+    expect(capped.status).toBe(429);
+    expect((await errorOf(capped)).detail).toMatchObject({ scope: 'global', retryAfterSeconds: expect.any(Number) as number });
+  });
+
   it('validates the phone number and the body shape with the error envelope', async () => {
     const bad = await requestCode(request('POST', '/api/auth/request-code', { body: { phone: '555-0100' } }));
     expect(bad.status).toBe(400);
@@ -108,7 +142,7 @@ describe('phone sign-in', () => {
     expect(spaced.status).toBe(200);
   });
 
-  it('rate-limits per phone, per address and globally, with a retry hint', async () => {
+  it('rate-limits per phone and per address, with a retry hint', async () => {
     const phone = nextPhone();
     for (let i = 0; i < AUTH_RATE_LIMITS.perPhone.limit; i += 1) {
       expect((await requestCode(request('POST', '/api/auth/request-code', { body: { phone } }))).status).toBe(200);

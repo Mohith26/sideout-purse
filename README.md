@@ -116,8 +116,9 @@ only; production without a provider refuses sign-in), `TRUSTED_PROXY_HOPS` (Rail
 `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (together or not at all; unset outside
 production selects the dev donation provider, unset in production refuses registration), and
 `RESERVATION_TTL_MINUTES` (default 30: how long a registration whose donation is still
-pending holds its place). The SMS provider and the Stripe account are the captain's calls
-before public deploy ([`docs/decisions.md`](docs/decisions.md)).
+pending holds its place), and `AUTH_CODE_GLOBAL_CAP` (default 600: sign-in codes one instance
+sends per ten minutes, the SMS budget). The SMS provider and the Stripe account are the
+captain's calls before public deploy ([`docs/decisions.md`](docs/decisions.md)).
 
 Send `X-Request-Id: anything-you-like` to either and it comes back on the response and in
 that service's JSON log line, which is how a Sideout request will be traced into the Purse

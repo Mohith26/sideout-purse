@@ -544,6 +544,21 @@ says how many entries to count back (Railway: 1). With no proxy the last entry i
 a direct client could supply themselves, so the per-address limit is backed by a per-phone
 limit and a global limit in `server/context.ts`.
 
+### Sign-in codes: any live code verifies, and the SMS budget is a variable
+
+Requesting a code is unauthenticated, so a stranger who knows a number can ask for codes in
+its name. That must not lock the owner out: `verifyCode` accepts any of the last three
+unexpired, unconsumed codes for the number (three is the per-phone cap over a code's
+ten-minute life), a new request never invalidates the codes already sent, a wrong guess counts
+against all of them (five guesses per number, not per code), and a successful one consumes
+them all. The per-phone cap stays at three per ten minutes; what the stranger can still do is
+spend those three, which the owner sees as `too_many_requests` for the rest of the window.
+
+The global cap is the instance's SMS budget and lives in `AUTH_CODE_GLOBAL_CAP` (default 600
+codes per ten minutes, about 3,600 messages an hour at most, which at a few cents each bounds
+the worst hour of abuse to a handful of dollars). Set it to what the SMS account should be
+allowed to spend once phase 9 wires the provider; the per-address and per-phone caps are fixed.
+
 ### Dev donations settle when their status is read
 
 The `dev` provider has no webhook. Instead, the endpoints that report donation status

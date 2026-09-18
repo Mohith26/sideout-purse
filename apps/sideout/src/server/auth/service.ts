@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { newId } from '@repo/ids';
 
 import type { Db } from '../../db/client';
@@ -14,8 +14,14 @@ import { SmsUnavailableError, type SmsSender } from './sms';
 /**
  * Phone-number sign-in. `requestCode` issues a one-time code and sends it through the
  * `SmsSender` seam; `verifyCode` consumes it and returns the user, creating the local
- * account (with a freshly minted Purse external id) on first sign-in.
+ * account (with a freshly minted Purse external id) on first sign-in. Requesting a code is
+ * unauthenticated, so a new request never invalidates the codes already out for a number:
+ * any of the last `LIVE_CODES_PER_PHONE` unexpired, unconsumed codes verifies, a wrong
+ * guess counts against all of them, and a successful one consumes them all.
  */
+
+/** The per-phone request cap over a code's lifetime, so this many codes can be live at once. */
+export const LIVE_CODES_PER_PHONE = 3;
 
 export type AuthLimiters = {
   perAddress: RateLimiter;
@@ -91,23 +97,29 @@ export function createAuthService(deps: AuthServiceDeps) {
 
     async verifyCode(input: VerifyCodeInput): Promise<VerifyCodeResult> {
       const outcome = await deps.db.transaction(async (tx) => {
-        const [latest] = await tx
+        const outstanding = await tx
           .select()
           .from(authCodes)
           .where(and(eq(authCodes.phoneE164, input.phoneE164), isNull(authCodes.consumedAt)))
           .orderBy(desc(authCodes.createdAt))
-          .limit(1)
+          .limit(LIVE_CODES_PER_PHONE)
           .for('update');
-        if (latest === undefined) return { ok: false as const, code: 'code_invalid' as const };
-        if (latest.expiresAt.getTime() <= input.now.getTime()) return { ok: false as const, code: 'code_expired' as const };
-        if (latest.attempts >= CODE_MAX_ATTEMPTS) return { ok: false as const, code: 'code_locked' as const };
+        if (outstanding.length === 0) return { ok: false as const, code: 'code_invalid' as const };
+        const live = outstanding.filter((code) => code.expiresAt.getTime() > input.now.getTime());
+        if (live.length === 0) return { ok: false as const, code: 'code_expired' as const };
+        const open = live.filter((code) => code.attempts < CODE_MAX_ATTEMPTS);
+        if (open.length === 0) return { ok: false as const, code: 'code_locked' as const };
 
-        const matched = codeMatches(latest.codeHash, input.code, input.phoneE164, deps.sessionSecret);
-        await tx
-          .update(authCodes)
-          .set({ attempts: latest.attempts + 1, ...(matched ? { consumedAt: input.now } : {}) })
-          .where(eq(authCodes.id, latest.id));
-        if (!matched) return { ok: false as const, code: 'code_invalid' as const };
+        const matched = open.find((code) => codeMatches(code.codeHash, input.code, input.phoneE164, deps.sessionSecret));
+        const liveIds = live.map((code) => code.id);
+        if (matched === undefined) {
+          await tx
+            .update(authCodes)
+            .set({ attempts: sql`${authCodes.attempts} + 1` })
+            .where(inArray(authCodes.id, liveIds));
+          return { ok: false as const, code: 'code_invalid' as const };
+        }
+        await tx.update(authCodes).set({ consumedAt: input.now }).where(inArray(authCodes.id, liveIds));
 
         const [existing] = await tx.select().from(users).where(eq(users.phoneE164, input.phoneE164)).limit(1);
         if (existing !== undefined) {

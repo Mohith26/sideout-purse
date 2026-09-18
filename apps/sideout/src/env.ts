@@ -26,6 +26,9 @@ export const SESSION_SECRET_MIN_LENGTH = 32;
 /** How long a registration with an unpaid donation holds its place (`server/field.ts`). */
 export const DEFAULT_RESERVATION_TTL_MINUTES = 30;
 
+/** Sign-in codes one instance will send in any ten-minute window: the SMS budget. */
+export const DEFAULT_AUTH_CODE_GLOBAL_CAP = 600;
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -38,6 +41,7 @@ const schema = z.object({
   STRIPE_SECRET_KEY: z.string().trim().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
   RESERVATION_TTL_MINUTES: z.coerce.number().int().min(1).max(24 * 60).default(DEFAULT_RESERVATION_TTL_MINUTES),
+  AUTH_CODE_GLOBAL_CAP: z.coerce.number().int().min(1).max(1_000_000).default(DEFAULT_AUTH_CODE_GLOBAL_CAP),
 });
 
 export type SmsProviderName = 'log' | 'none';
@@ -61,6 +65,8 @@ export type Env = {
   stripe: { secretKey: string; webhookSecret: string } | undefined;
   /** `RESERVATION_TTL_MINUTES` in milliseconds: how long an unpaid registration holds a place. */
   reservationTtlMs: number;
+  /** `AUTH_CODE_GLOBAL_CAP`: sign-in codes this instance sends per ten minutes across every number. */
+  authCodeGlobalCap: number;
 };
 
 export class EnvError extends Error {
@@ -111,6 +117,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     donationProvider,
     stripe,
     reservationTtlMs: raw.RESERVATION_TTL_MINUTES * 60_000,
+    authCodeGlobalCap: raw.AUTH_CODE_GLOBAL_CAP,
   };
 }
 

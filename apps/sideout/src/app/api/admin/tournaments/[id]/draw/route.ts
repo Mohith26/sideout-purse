@@ -11,7 +11,7 @@ import { handle, ok } from '../../../../../../server/http/respond';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const querySchema = z.object({ preview: z.enum(['1', 'true']).optional() });
+const querySchema = z.object({ preview: z.literal('1').optional() });
 
 /**
  * Run a draw stage (`pools` or `bracket`). `?preview=1` computes the same result without

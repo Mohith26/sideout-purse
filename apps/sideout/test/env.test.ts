@@ -43,6 +43,13 @@ describe('env', () => {
     expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, RESERVATION_TTL_MINUTES: 'soon' })).toThrow(EnvError);
   });
 
+  it('reads the sign-in code budget, defaulting to 600 per ten minutes, and refuses nonsense', () => {
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).authCodeGlobalCap).toBe(600);
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, AUTH_CODE_GLOBAL_CAP: '50' }).authCodeGlobalCap).toBe(50);
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, AUTH_CODE_GLOBAL_CAP: '0' })).toThrow(EnvError);
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, AUTH_CODE_GLOBAL_CAP: 'lots' })).toThrow(EnvError);
+  });
+
   it('requires the two Stripe variables together and selects the provider accordingly', () => {
     expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).stripe).toBeUndefined();
     expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, STRIPE_WEBHOOK_SECRET: 'whsec' })).toThrow(/set together/);

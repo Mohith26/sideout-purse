@@ -2,7 +2,7 @@ import { database, type Db } from '../db/client';
 import { env, type Env } from '../env';
 import { logger } from '../lib/logger';
 import { createRateLimiter } from './auth/rate-limit';
-import { createAuthService, type AuthService } from './auth/service';
+import { createAuthService, LIVE_CODES_PER_PHONE, type AuthService } from './auth/service';
 import { logSmsSender, unavailableSmsSender, type SmsSender } from './auth/sms';
 import { devDonationProvider } from './donations/dev';
 import type { DonationProvider } from './donations/provider';
@@ -24,16 +24,21 @@ export type AppContext = {
   purseEntry: PurseContestEntry;
 };
 
-/** Request-code limits: per address, per phone, and for the whole process. */
+/**
+ * Request-code limits: per address, per phone, and for the whole process. The per-phone
+ * cap is what bounds how many codes can be live for one number (`LIVE_CODES_PER_PHONE`);
+ * the global cap is the SMS budget of one instance and comes from `AUTH_CODE_GLOBAL_CAP`.
+ */
 export const AUTH_RATE_LIMITS = {
   perAddress: { limit: 5, windowMs: 10 * 60_000, maxKeys: 10_000 },
-  perPhone: { limit: 3, windowMs: 10 * 60_000, maxKeys: 10_000 },
-  global: { limit: 120, windowMs: 60_000, maxKeys: 1 },
+  perPhone: { limit: LIVE_CODES_PER_PHONE, windowMs: 10 * 60_000, maxKeys: 10_000 },
+  global: { windowMs: 10 * 60_000, maxKeys: 1 },
 } as const;
 
 export type AppContextOverrides = Partial<Pick<AppContext, 'sms' | 'donationProvider' | 'purseEntry' | 'env'>>;
 
-export function buildAppContext(config: Env, db: Db, overrides: AppContextOverrides = {}): AppContext {
+export function buildAppContext(base: Env, db: Db, overrides: AppContextOverrides = {}): AppContext {
+  const config = overrides.env ?? base;
   const log = logger(config.logLevel);
   const sms = overrides.sms ?? (config.smsProvider === 'log' ? logSmsSender(log) : unavailableSmsSender);
   const donationProvider =
@@ -52,11 +57,11 @@ export function buildAppContext(config: Env, db: Db, overrides: AppContextOverri
     limiters: {
       perAddress: createRateLimiter(AUTH_RATE_LIMITS.perAddress),
       perPhone: createRateLimiter(AUTH_RATE_LIMITS.perPhone),
-      global: createRateLimiter(AUTH_RATE_LIMITS.global),
+      global: createRateLimiter({ ...AUTH_RATE_LIMITS.global, limit: config.authCodeGlobalCap }),
     },
   });
   return {
-    env: overrides.env ?? config,
+    env: config,
     db,
     auth,
     sms,

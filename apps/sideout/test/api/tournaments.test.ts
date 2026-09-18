@@ -222,6 +222,28 @@ describe('organizer tournaments', () => {
     expect(trail.filter((a) => a.action === 'tournament.updated')).toHaveLength(2);
   });
 
+  it('lists events still ahead soonest first, then events that are over most recent first', async () => {
+    const day = 24 * 3600 * 1000;
+    const at = (days: number) => ({ startsAt: new Date(Date.now() + days * day).toISOString(), endsAt: new Date(Date.now() + days * day + 3600 * 1000).toISOString() });
+    const make = async (slug: string, days: number, status: 'registration_open' | 'cancelled') => {
+      const { tournament } = await data<AdminTournament>(await create(tournamentBody(charity, { slug, ...at(days) })));
+      await patch(tournament.id, { status: 'registration_open' });
+      if (status === 'cancelled') await patch(tournament.id, { status: 'cancelled' });
+      return tournament.id;
+    };
+    const farAhead = await make('far-ahead', 21, 'registration_open');
+    const overLongAgo = await make('over-long-ago', -30, 'cancelled');
+    const nextUp = await make('next-up', 3, 'registration_open');
+    const overLately = await make('over-lately', -2, 'cancelled');
+    const aheadButOver = await make('ahead-but-over', 10, 'cancelled');
+    await create(tournamentBody(charity, { slug: 'still-a-draft', ...at(1) }));
+
+    const listed = await data<{ tournaments: PublicTournament[] }>(await listTournaments(request('GET', '/api/tournaments')));
+    expect(listed.tournaments.map((t) => t.id)).toEqual([nextUp, farAhead, aheadButOver, overLately, overLongAgo]);
+    const cancelledOnly = await data<{ tournaments: PublicTournament[] }>(await listTournaments(request('GET', '/api/tournaments?status=cancelled')));
+    expect(cancelledOnly.tournaments.map((t) => t.id)).toEqual([aheadButOver, overLately, overLongAgo]);
+  });
+
   it('serves the public detail, standings and impact for an open tournament without Purse identifiers', async () => {
     const { tournament } = await data<AdminTournament>(await create(tournamentBody(charity)));
     await patch(tournament.id, { status: 'registration_open' });

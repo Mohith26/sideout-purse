@@ -676,6 +676,9 @@ describe('draw, forfeit and standings', () => {
     expect((await draw(request('POST', '/x', { body: { stage: 'pools' }, cookie: cookieFor(player) }), params({ id: t.id }))).status).toBe(403);
     expect((await draw(request('POST', '/x', { body: { stage: 'pools' } }), params({ id: t.id }))).status).toBe(401);
     expect((await draw(request('POST', '/x', { body: { stage: 'losers' }, cookie: cookie() }), params({ id: t.id }))).status).toBe(400);
+    const spelledOut = await draw(request('POST', '/x?preview=true', { body: { stage: 'pools' }, cookie: cookie() }), params({ id: t.id }));
+    expect(spelledOut.status).toBe(400);
+    expect((await errorOf(spelledOut)).code).toBe('validation_failed');
     expect((await forfeit(request('POST', '/x', { body: { forfeitingTeamId: 'tm_x' }, cookie: cookieFor(player) }), params({ id: 'mch_x' }))).status).toBe(403);
     const missing = await forfeit(request('POST', '/x', { body: { forfeitingTeamId: 'tm_x' }, cookie: cookie() }), params({ id: 'mch_00000000-0000-7000-8000-000000000000' }));
     expect(missing.status).toBe(404);
