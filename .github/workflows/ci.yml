@@ -96,7 +96,8 @@ jobs:
           PUBLISHABLE=$(grep -o '"kind":"publishable"[^}]*"key":"pk_[A-Za-z0-9_]*"' purse-seed.log | grep -o 'pk_[A-Za-z0-9_]*' | head -1)
           test -n "$SECRET" && test -n "$PUBLISHABLE"
           echo "::add-mask::$SECRET"
-          echo "PURSE_SECRET_KEY=$SECRET" >> "$GITHUB_ENV"
+          # Named apart from PURSE_SECRET_KEY, which is Purse's own process secret.
+          echo "SIDEOUT_PURSE_SECRET_KEY=$SECRET" >> "$GITHUB_ENV"
           echo "PURSE_INTEGRATION_SECRET_KEY=$SECRET" >> "$GITHUB_ENV"
           echo "PURSE_INTEGRATION_PUBLISHABLE_KEY=$PUBLISHABLE" >> "$GITHUB_ENV"
           echo "NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY=$PUBLISHABLE" >> "$GITHUB_ENV"
@@ -113,10 +114,10 @@ jobs:
           done
 
       - name: Test
-        # PURSE_SECRET_KEY is unset here on purpose: the suites run against an in-memory Purse,
+        # SIDEOUT_PURSE_SECRET_KEY is unset here on purpose: the suites run against an in-memory Purse,
         # and only the integration walk, gated on PURSE_INTEGRATION_*, reaches the real one.
         env:
-          PURSE_SECRET_KEY: ''
+          SIDEOUT_PURSE_SECRET_KEY: ''
         run: |
           pnpm test
 

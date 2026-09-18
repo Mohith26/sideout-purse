@@ -120,7 +120,7 @@ export default async function ClosePage({ params }: { params: Promise<{ id: stri
         <Label>Close</Label>
         <div className="mt-3">
           {app.purse === null ? (
-            <Notice tone="warning" title="Purse is not configured">Set PURSE_SECRET_KEY on the server to close through Purse.</Notice>
+            <Notice tone="warning" title="Purse is not configured">Set SIDEOUT_PURSE_SECRET_KEY on the server to close through Purse.</Notice>
           ) : closable || t.status === 'settled' ? (
             <CloseFlow
               tournamentId={t.id}

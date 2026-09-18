@@ -35,7 +35,7 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   (`admin@purse.local`; `pnpm --filter @purse/api db:seed -- --print-operator-password
   --rotate-operator-password` prints a fresh password) and needs no `.env`
   (`PURSE_API_ORIGIN` defaults to :4000).
-- `PURSE_SECRET_KEY` derives every process key (`apps/purse/src/secrets.ts`); production
+- `SIDEOUT_PURSE_SECRET_KEY` derives every process key (`apps/purse/src/secrets.ts`); production
   refuses to start without it, elsewhere a stand-in is used. `EMBED_SMS_PROVIDER`,
   `PURSE_EMBED_DIR`, `WEBHOOK_DISPATCHER` and `WEBHOOK_POLL_INTERVAL_MS` are the other
   phase 4 variables (`env.ts`); `PURSE_TENANT_ORIGINS` is read by the seed only.
@@ -236,7 +236,7 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `docs/decisions.md` (phase 7) records what a score means, the `confirmed` rule and the
   prize mapping. The client never reaches a browser: `test/purse/bundle.test.ts` checks the
   client components and `scripts/check-bundle.ts` greps `.next/static` as part of `pnpm build`.
-- Purse variables (`src/env.ts`): `PURSE_API_URL`, `PURSE_SECRET_KEY`, `PURSE_WEBHOOK_SECRET`
+- Purse variables (`src/env.ts`): `PURSE_API_URL`, `SIDEOUT_PURSE_SECRET_KEY`, `PURSE_WEBHOOK_SECRET`
   on the server; `NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_PURSE_ORIGIN`,
   `NEXT_PUBLIC_PURSE_TENANT_ID` for the SDK; all required in production, and outside it a
   missing secret key means the Purse routes answer 503 `purse_unavailable`. An exported but
@@ -254,7 +254,7 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - Seed: `src/db/seed/build.ts` is pure and uses the draw engine and scoreline rules, and
   gives every played match its consensus rows; `write.ts` upserts by id, leaving the Purse
   columns and a consensus's push state alone. `pnpm db:seed` at the root seeds both apps.
-  With `PURSE_SECRET_KEY` set and the Purse API answering `PURSE_API_URL`, Sideout's seed
+  With `SIDEOUT_PURSE_SECRET_KEY` set and the Purse API answering `PURSE_API_URL`, Sideout's seed
   then mirrors the seeded events to Purse through the app's services (`src/db/seed/purse.ts`:
   links, entries, pushes, the settled event closed); otherwise it logs that the walk was
   skipped and `purse_contest_id` stays null. Rerunning replays under the same keys.

@@ -7,8 +7,10 @@ import { z } from 'zod';
  * `SIDEOUT_DATABASE_URL` and nothing about Purse's (decision D2); the env-isolation test
  * at the repository root proves `loadEnv` ignores Purse's even when both are present.
  * Purse is reached over HTTPS with a secret key, never through its database: `PURSE_API_URL`
- * and `PURSE_SECRET_KEY` are the server's (the key reaches no browser; `scripts/check-bundle.ts`
- * greps the built client bundle for `sk_`), `PURSE_WEBHOOK_SECRET` signs what Purse sends
+ * and `SIDEOUT_PURSE_SECRET_KEY` are the server's (the key reaches no browser; `scripts/check-bundle.ts`
+ * greps the built client bundle for `sk_`; the name carries the `SIDEOUT_` prefix because
+ * `PURSE_SECRET_KEY` is Purse's own process secret and the two apps share an environment in
+ * CI and on a developer's machine), `PURSE_WEBHOOK_SECRET` signs what Purse sends
  * back, and the three `NEXT_PUBLIC_PURSE_*` variables are what the SDK needs in the browser:
  * the publishable key, the Purse origin the iframe is served from, and the tenant id.
  *
@@ -62,7 +64,7 @@ const schema = z.object({
   RESERVATION_TTL_MINUTES: z.coerce.number().int().min(1).max(24 * 60).default(DEFAULT_RESERVATION_TTL_MINUTES),
   AUTH_CODE_GLOBAL_CAP: z.coerce.number().int().min(1).max(1_000_000).default(DEFAULT_AUTH_CODE_GLOBAL_CAP),
   PURSE_API_URL: httpUrl.optional(),
-  PURSE_SECRET_KEY: z.string().regex(SECRET_KEY_SHAPE, 'must be a Purse secret key (sk_sandbox_... or sk_live_...)').optional(),
+  SIDEOUT_PURSE_SECRET_KEY: z.string().regex(SECRET_KEY_SHAPE, 'must be a Purse secret key (sk_sandbox_... or sk_live_...)').optional(),
   PURSE_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
   NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: z.string().regex(PUBLISHABLE_KEY_SHAPE, 'must be a Purse publishable key (pk_sandbox_... or pk_live_...)').optional(),
   NEXT_PUBLIC_PURSE_ORIGIN: httpUrl.optional(),
@@ -148,13 +150,13 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
   const donationProvider: DonationProviderSelection = stripe !== undefined ? 'stripe' : production ? 'none' : 'dev';
 
   if (production) {
-    const missing = (['PURSE_API_URL', 'PURSE_SECRET_KEY', 'PURSE_WEBHOOK_SECRET', 'NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY', 'NEXT_PUBLIC_PURSE_TENANT_ID'] as const).filter((name) => raw[name] === undefined);
+    const missing = (['PURSE_API_URL', 'SIDEOUT_PURSE_SECRET_KEY', 'PURSE_WEBHOOK_SECRET', 'NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY', 'NEXT_PUBLIC_PURSE_TENANT_ID'] as const).filter((name) => raw[name] === undefined);
     if (missing.length > 0) throw new EnvError(`Invalid environment: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required in production`);
   }
   const apiUrl = new URL(raw.PURSE_API_URL ?? DEVELOPMENT_PURSE_API_URL).origin;
   const purse: PurseEnv = {
     apiUrl,
-    secretKey: raw.PURSE_SECRET_KEY,
+    secretKey: raw.SIDEOUT_PURSE_SECRET_KEY,
     webhookSecret: raw.PURSE_WEBHOOK_SECRET,
     publishableKey: raw.NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY,
     browserOrigin: new URL(raw.NEXT_PUBLIC_PURSE_ORIGIN ?? apiUrl).origin,

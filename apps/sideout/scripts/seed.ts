@@ -13,7 +13,7 @@ import { databaseCallRecorder, PurseClient } from '../src/purse';
  * consensus. Runs after `db:migrate`; exits non-zero on any failure. `SEED_ANCHOR` (ISO
  * timestamp) pins the live event's start time.
  *
- * Then, when `PURSE_SECRET_KEY` is set and the Purse API at `PURSE_API_URL` answers, the
+ * Then, when `SIDEOUT_PURSE_SECRET_KEY` is set and the Purse API at `PURSE_API_URL` answers, the
  * same rows are mirrored to Purse through the app's own services (`src/db/seed/purse.ts`):
  * a settled contest for the settled event, two pushed quarterfinals on the live one, and
  * `purse_calls` rows for all of it. Otherwise the contest columns stay null and the log
@@ -32,7 +32,7 @@ try {
   logger.info('seed applied', { ...summary, anchor: anchor.toISOString(), slugs: SEED_SLUGS, nodeEnv: config.nodeEnv });
 
   if (config.purse.secretKey === undefined) {
-    logger.warn('Purse walk skipped: PURSE_SECRET_KEY is not set; purse_contest_id stays null on every seeded tournament', { apiUrl: config.purse.apiUrl });
+    logger.warn('Purse walk skipped: SIDEOUT_PURSE_SECRET_KEY is not set; purse_contest_id stays null on every seeded tournament', { apiUrl: config.purse.apiUrl });
   } else if (!(await purseReachable(config.purse.apiUrl))) {
     logger.warn('Purse walk skipped: the Purse API is not reachable; purse_contest_id stays null on every seeded tournament', { apiUrl: config.purse.apiUrl });
   } else {

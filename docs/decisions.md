@@ -592,7 +592,7 @@ tenant whose key redeemed the token, so another tenant's publishable key never r
 
 ### One process secret, keys derived per purpose
 
-`PURSE_SECRET_KEY` (at least 32 characters) is the one secret the process needs beyond the
+`SIDEOUT_PURSE_SECRET_KEY` (at least 32 characters) is the one secret the process needs beyond the
 database; HKDF-SHA256 with a purpose label derives the session key, the sign-in code key and
 the webhook-secret encryption key from it (`src/secrets.ts`), so no two purposes share a
 key and rotating the one variable rotates them all (which signs everyone out and, for

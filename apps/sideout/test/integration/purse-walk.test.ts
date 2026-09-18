@@ -98,7 +98,7 @@ describe.skipIf(!configured)('Sideout on a real Purse', () => {
     await truncateAll(database);
     await receiver.start();
     // The app talks to the real Purse from the environment; the webhook secret is the endpoint's, minted here.
-    resetAppContext({ env: loadEnv({ ...process.env, NODE_ENV: 'test', PURSE_API_URL: API_URL, PURSE_SECRET_KEY: SECRET_KEY, NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: PUBLISHABLE_KEY }) });
+    resetAppContext({ env: loadEnv({ ...process.env, NODE_ENV: 'test', PURSE_API_URL: API_URL, SIDEOUT_PURSE_SECRET_KEY: SECRET_KEY, NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: PUBLISHABLE_KEY }) });
     const client = appContext().purse;
     if (client === null) throw new Error('the Purse client was not built from the environment');
     const endpoint = await client.createWebhookEndpoint(
@@ -107,7 +107,7 @@ describe.skipIf(!configured)('Sideout on a real Purse', () => {
     );
     endpointId = endpoint.data.id;
     if (endpoint.data.secret === null) throw new Error('the endpoint secret was not returned');
-    resetAppContext({ env: loadEnv({ ...process.env, NODE_ENV: 'test', PURSE_API_URL: API_URL, PURSE_SECRET_KEY: SECRET_KEY, NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: PUBLISHABLE_KEY, PURSE_WEBHOOK_SECRET: endpoint.data.secret }) });
+    resetAppContext({ env: loadEnv({ ...process.env, NODE_ENV: 'test', PURSE_API_URL: API_URL, SIDEOUT_PURSE_SECRET_KEY: SECRET_KEY, NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: PUBLISHABLE_KEY, PURSE_WEBHOOK_SECRET: endpoint.data.secret }) });
     organizer = await createUser(database, { role: 'organizer' });
     charity = await createCharity(database);
   });

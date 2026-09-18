@@ -19,7 +19,7 @@ import { SEED_SLUGS } from './build';
  * contest for the settled event, an in-progress one with two pushed quarterfinals for the
  * live event, and an open one with entries for the upcoming event, and `purse_calls`
  * shows every request. Every step is idempotent under the same keys the app uses, so a
- * reseed replays rather than repeats. Runs only when `PURSE_SECRET_KEY` is set and the
+ * reseed replays rather than repeats. Runs only when `SIDEOUT_PURSE_SECRET_KEY` is set and the
  * API answers `/health`; otherwise `scripts/seed.ts` says so and the contest columns stay
  * null.
  */

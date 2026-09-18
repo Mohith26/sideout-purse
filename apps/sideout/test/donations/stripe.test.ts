@@ -85,7 +85,7 @@ describe('donation provider selection', () => {
       SIDEOUT_DATABASE_URL: DEV_URL,
       SESSION_SECRET: 'x'.repeat(32),
       PURSE_API_URL: 'https://purse.example',
-      PURSE_SECRET_KEY: `sk_live_${'K'.repeat(32)}`,
+      SIDEOUT_PURSE_SECRET_KEY: `sk_live_${'K'.repeat(32)}`,
       PURSE_WEBHOOK_SECRET: 'whsec_' + 'w'.repeat(32),
       NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: `pk_live_${'P'.repeat(32)}`,
       NEXT_PUBLIC_PURSE_TENANT_ID: 'tnt_01a0b16a-b475-74d4-b1cb-2dbdc08845a9',

@@ -87,7 +87,7 @@ export default async function EnterPage({ params }: { params: Promise<{ slug: st
         </p>
         <div className="mt-4">
           {app.purse === null || env().purse.publishableKey === undefined ? (
-            <Notice tone="warning" title="Purse is not configured">The server needs PURSE_SECRET_KEY and NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY to open the entry flow.</Notice>
+            <Notice tone="warning" title="Purse is not configured">The server needs SIDEOUT_PURSE_SECRET_KEY and NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY to open the entry flow.</Notice>
           ) : !donationDone ? (
             <Notice title="After the donation">The contest entry opens once the donation has settled.</Notice>
           ) : !entriesOpen ? (

@@ -25,7 +25,7 @@ export type AppContext = {
   sms: SmsSender;
   donationProvider: DonationProvider | null;
   purseEntry: PurseContestEntry;
-  /** The Purse client, or null when `PURSE_SECRET_KEY` is unset (outside production only); routes answer 503 `purse_unavailable`. */
+  /** The Purse client, or null when `SIDEOUT_PURSE_SECRET_KEY` is unset (outside production only); routes answer 503 `purse_unavailable`. */
   purse: PurseClient | null;
   log: Logger;
 };
@@ -80,7 +80,7 @@ export function buildAppContext(base: Env, db: Db, overrides: AppContextOverride
       : config.purse.secretKey === undefined
         ? null
         : new PurseClient({ baseUrl: config.purse.apiUrl, secretKey: config.purse.secretKey, recorder: databaseCallRecorder(db) });
-  if (purse === null && config.nodeEnv !== 'test') log.warn('PURSE_SECRET_KEY is not set; the Purse integration answers purse_unavailable until it is');
+  if (purse === null && config.nodeEnv !== 'test') log.warn('SIDEOUT_PURSE_SECRET_KEY is not set; the Purse integration answers purse_unavailable until it is');
   const purseEntry = overrides.purseEntry ?? (purse === null ? purseContestEntryNotWired : purseContestEntryWired({ db, purse, log, env: config.purse }));
   return {
     env: config,

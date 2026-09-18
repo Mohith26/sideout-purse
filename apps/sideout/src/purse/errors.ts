@@ -61,7 +61,7 @@ export class PurseResponseError extends Error {
 export class PurseNotConfiguredError extends Error {
   override readonly name = 'PurseNotConfiguredError';
   constructor() {
-    super('Purse is not configured: PURSE_SECRET_KEY is not set.');
+    super('Purse is not configured: SIDEOUT_PURSE_SECRET_KEY is not set.');
   }
 }
 

@@ -111,7 +111,7 @@ export class PurseClient {
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(options: PurseClientOptions) {
-    if (!SECRET_KEY_SHAPE.test(options.secretKey)) throw new RangeError('PURSE_SECRET_KEY must look like sk_sandbox_... or sk_live_...');
+    if (!SECRET_KEY_SHAPE.test(options.secretKey)) throw new RangeError('SIDEOUT_PURSE_SECRET_KEY must look like sk_sandbox_... or sk_live_...');
     const base = new URL(options.baseUrl);
     if (base.protocol !== 'https:' && base.protocol !== 'http:') throw new RangeError('PURSE_API_URL must be an http(s) URL');
     this.baseUrl = base.origin;
