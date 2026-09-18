@@ -3,9 +3,10 @@
  * (4.2) and the audit log; phase 2 added contests, entries, scores, results and the
  * idempotency-key record; phase 3 adds identity (users, verification, restrictions,
  * locations), the eligibility engine's stored rulesets and decisions (4.5), the risk
- * tables (4.6: identity fingerprints and operator flags), API keys and embed tokens.
- * Later phases add plumbing in this file and generate migrations from it with
- * `pnpm db:generate`.
+ * tables (4.6: identity fingerprints and operator flags), API keys and embed tokens;
+ * phase 4 adds the embed's origin allowlist and sign-in codes (4.8) and the webhook
+ * endpoints, deliveries and attempts (4.9). Later phases add plumbing in this file and
+ * generate migrations from it with `pnpm db:generate`.
  *
  * Conventions every table follows:
  *
@@ -21,8 +22,8 @@
  * - Privileges are explicit. Tables are owned by `purse_migrator`; the runtime role
  *   `purse_app` gets exactly what it needs per table in a custom migration (see
  *   `drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`, `0006_contest_guards.sql`,
- *   `0008_identity_guards.sql` and `0010_idempotency_reservation_grants.sql`). A new
- *   table with no grant is unreadable by the runtime,
+ *   `0008_identity_guards.sql`, `0010_idempotency_reservation_grants.sql` and
+ *   `0012_embed_webhook_guards.sql`). A new table with no grant is unreadable by the runtime,
  *   which `test/ledger/roles.test.ts` turns into a failing test rather than a surprise in
  *   production. Append-only tables (the journal, the audit log, contest results, used
  *   idempotency keys) never grant UPDATE, DELETE or TRUNCATE; other tables grant UPDATE
@@ -48,7 +49,7 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import type { EligibilityReason, RequiredAction } from '@purse/types';
+import type { EligibilityReason, RequiredAction, WebhookEventType } from '@purse/types';
 import { idCheck, idPatternLiteral, nullableIdCheck, timestamps } from '@repo/db';
 
 import type { Ruleset } from '../eligibility/ruleset';
@@ -995,3 +996,201 @@ export const embedTokens = pgTable(
 );
 
 export type EmbedToken = typeof embedTokens.$inferSelect;
+
+// ---- Embed origins and sign-in (spec 4.8) --------------------------------------------
+
+/**
+ * The origins a tenant's pages may embed Purse flows from (spec 4.8 rule 3): the
+ * receiver in the embed app validates `event.origin` and the `parent` it was opened with
+ * against this list, the API's CORS answers name only these, and the embed page's
+ * `frame-ancestors` is their union. An origin is a scheme, host and optional port and
+ * nothing else. Revoking keeps the row with `revoked_at` set; re-adding clears it.
+ */
+export const tenantOrigins = pgTable(
+  'tenant_origins',
+  {
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    origin: text('origin').notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: 'tenant_origins_pkey', columns: [table.tenantId, table.origin] }),
+    check('tenant_origins_origin_shape', sql`${table.origin} ~ '^https?://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$'`),
+  ],
+);
+
+export type TenantOrigin = typeof tenantOrigins.$inferSelect;
+
+/**
+ * One-time sign-in codes for the embed's `signin` flow: six digits, ten minutes, five
+ * guesses, stored only as an HMAC keyed by the process secret and bound to the phone they
+ * were sent to. A code is consumed once; the runtime updates the guess count and the
+ * consumption and nothing else. Rows are purged with the other short-lived plumbing.
+ */
+export const embedSigninCodes = pgTable(
+  'embed_signin_codes',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    phoneE164: text('phone_e164').notNull(),
+    codeHash: text('code_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    idCheck('embed_signin_codes_id_prefix', table.id, 'sic'),
+    check('embed_signin_codes_phone_shape', sql`${table.phoneE164} ~ '^\\+[1-9][0-9]{6,14}$'`),
+    check('embed_signin_codes_hash_shape', sql`${table.codeHash} ~ '^[0-9a-f]{64}$'`),
+    check('embed_signin_codes_attempts_range', sql`${table.attempts} >= 0 and ${table.attempts} <= 100`),
+    check('embed_signin_codes_expires_after_created', sql`${table.expiresAt} > ${table.createdAt}`),
+    index('embed_signin_codes_tenant_phone_created_idx').on(table.tenantId, table.phoneE164, table.createdAt),
+  ],
+);
+
+export type EmbedSigninCode = typeof embedSigninCodes.$inferSelect;
+
+// ---- Webhooks (spec 4.1, 4.9) --------------------------------------------------------
+
+export const webhookEndpointStatus = pgEnum('webhook_endpoint_status', ['enabled', 'disabled']);
+export type WebhookEndpointStatusValue = (typeof webhookEndpointStatus.enumValues)[number];
+
+/** The spec 4.9 list, held by a CHECK on both webhook tables so a typo cannot be subscribed to or delivered. */
+export const WEBHOOK_EVENT_TYPE_LITERAL = `'{user.verification.updated,contest.opened,contest.locked,contest.settled,contest.voided,contest.entry.created,contest.entry.withdrawn,wallet.balance.changed}'::text[]`;
+
+/**
+ * Spec 4.1 `webhook_endpoints`. `signing_secret` holds the AES-256-GCM envelope of the
+ * secret (`src/webhooks/secrets.ts`, keyed from `PURSE_SECRET_KEY`), never the secret
+ * itself: the dispatcher needs it back to sign, so it cannot be a one-way hash like an
+ * API key's, and a database dump alone must not reveal it (docs/decisions.md). The
+ * plaintext is returned once, on creation and on rotation. The runtime may change the
+ * URL, the subscriptions, the status, the description and the secret (a rotation).
+ */
+export const webhookEndpoints = pgTable(
+  'webhook_endpoints',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    url: text('url').notNull(),
+    signingSecret: text('signing_secret').notNull(),
+    subscribedEvents: text('subscribed_events').array().$type<WebhookEventType[]>().notNull(),
+    status: webhookEndpointStatus('status').notNull().default('enabled'),
+    description: text('description'),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('webhook_endpoints_id_prefix', table.id, 'whe'),
+    check('webhook_endpoints_url_shape', sql`${table.url} ~ '^https?://[^[:space:]]+$' and length(${table.url}) <= 2000`),
+    check('webhook_endpoints_secret_envelope', sql`${table.signingSecret} like 'enc:v1:%'`),
+    check('webhook_endpoints_events_known', sql`${table.subscribedEvents} <@ ${sql.raw(WEBHOOK_EVENT_TYPE_LITERAL)} and cardinality(${table.subscribedEvents}) >= 1`),
+    check('webhook_endpoints_description_length', sql`${table.description} is null or length(${table.description}) <= 200`),
+    index('webhook_endpoints_tenant_id_idx').on(table.tenantId),
+  ],
+);
+
+export type WebhookEndpoint = typeof webhookEndpoints.$inferSelect;
+
+export const webhookDeliveryStatus = pgEnum('webhook_delivery_status', ['pending', 'delivered', 'failed', 'dead']);
+export type WebhookDeliveryStatusValue = (typeof webhookDeliveryStatus.enumValues)[number];
+
+/** Spec 4.9: eight attempts over roughly a day, then `dead`. The schedule itself is `src/webhooks/schedule.ts`. */
+export const WEBHOOK_MAX_ATTEMPTS = 8;
+
+/**
+ * Spec 4.1 `webhook_deliveries`: one row per event per subscribed endpoint, written in the
+ * transaction that produced the event (the outbox), so a delivery exists if and only if
+ * the change it reports committed. `payload` is the signed body as sent, event `id`
+ * included, identical on every attempt. `pending` awaits the first attempt, `failed`
+ * awaits a retry at `next_attempt_at`, `delivered` got a 2xx, `dead` exhausted the
+ * schedule. A replay is a new row for the same event naming the one it repeats. The
+ * dispatcher leases a row (`locked_until`, `locked_by`) so one process attempts it at a
+ * time and a crashed process's lease expires.
+ */
+export const webhookDeliveries = pgTable(
+  'webhook_deliveries',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    endpointId: text('endpoint_id')
+      .notNull()
+      .references(() => webhookEndpoints.id),
+    eventId: text('event_id').notNull(),
+    eventType: text('event_type').$type<WebhookEventType>().notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    attempt: integer('attempt').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(WEBHOOK_MAX_ATTEMPTS),
+    status: webhookDeliveryStatus('status').notNull().default('pending'),
+    responseStatus: integer('response_status'),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
+    lockedBy: text('locked_by'),
+    replayOf: text('replay_of'),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('webhook_deliveries_id_prefix', table.id, 'whd'),
+    idCheck('webhook_deliveries_event_id_prefix', table.eventId, 'evt'),
+    nullableIdCheck('webhook_deliveries_replay_of_prefix', table.replayOf, 'whd'),
+    foreignKey({ name: 'webhook_deliveries_replay_of_fk', columns: [table.replayOf], foreignColumns: [table.id] }),
+    check('webhook_deliveries_event_type_known', sql`${table.eventType} = any(${sql.raw(WEBHOOK_EVENT_TYPE_LITERAL)})`),
+    check('webhook_deliveries_attempt_range', sql`${table.attempt} >= 0 and ${table.attempt} <= ${table.maxAttempts} and ${table.maxAttempts} >= 1`),
+    check('webhook_deliveries_delivered_at_iff_delivered', sql`(${table.status} = 'delivered') = (${table.deliveredAt} is not null)`),
+    check('webhook_deliveries_response_status_range', sql`${table.responseStatus} is null or (${table.responseStatus} between 100 and 599)`),
+    check('webhook_deliveries_lock_pair', sql`(${table.lockedUntil} is null) = (${table.lockedBy} is null)`),
+    // One delivery per event per endpoint; a replay is a further row naming the first.
+    uniqueIndex('webhook_deliveries_endpoint_event_key')
+      .on(table.endpointId, table.eventId)
+      .where(sql`${table.replayOf} is null`),
+    index('webhook_deliveries_due_idx')
+      .on(table.nextAttemptAt)
+      .where(sql`${table.status} in ('pending', 'failed')`),
+    index('webhook_deliveries_event_id_idx').on(table.eventId),
+    index('webhook_deliveries_tenant_id_created_at_idx').on(table.tenantId, table.createdAt),
+  ],
+);
+
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
+
+/**
+ * Spec 4.9 "persist every attempt": one append-only row per HTTP attempt, with the
+ * response status or the reason none arrived (a timeout, a refused connection), never a
+ * response body. `attempt` numbers from 1 within the delivery.
+ */
+export const webhookDeliveryAttempts = pgTable(
+  'webhook_delivery_attempts',
+  {
+    id: text('id').primaryKey(),
+    deliveryId: text('delivery_id')
+      .notNull()
+      .references(() => webhookDeliveries.id),
+    attempt: integer('attempt').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }).notNull(),
+    responseStatus: integer('response_status'),
+    error: text('error'),
+    durationMs: integer('duration_ms').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    idCheck('webhook_delivery_attempts_id_prefix', table.id, 'wha'),
+    unique('webhook_delivery_attempts_delivery_id_attempt_key').on(table.deliveryId, table.attempt),
+    check('webhook_delivery_attempts_attempt_positive', sql`${table.attempt} >= 1`),
+    check('webhook_delivery_attempts_response_status_range', sql`${table.responseStatus} is null or (${table.responseStatus} between 100 and 599)`),
+    check('webhook_delivery_attempts_error_length', sql`${table.error} is null or length(${table.error}) <= 500`),
+    check('webhook_delivery_attempts_duration_range', sql`${table.durationMs} >= 0`),
+    check('webhook_delivery_attempts_finished_after_started', sql`${table.finishedAt} >= ${table.startedAt}`),
+  ],
+);
+
+export type WebhookDeliveryAttempt = typeof webhookDeliveryAttempts.$inferSelect;

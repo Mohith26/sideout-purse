@@ -9,6 +9,7 @@ import { balanceOf } from '../ledger/balance';
 import { assertEntryAmountWithinLimit } from './eligibility';
 import { ContestError } from './errors';
 import { lockContest } from './load';
+import { emitEvent } from '../webhooks/events';
 import { assertTransition, TRANSITION_ACTIONS } from './states';
 
 /**
@@ -24,7 +25,10 @@ import { assertTransition, TRANSITION_ACTIONS } from './states';
  *      ruleset its entries are judged under for `open`, nothing is held for `cancelled`,
  *      the escrow is empty for `settled` and `voided`, and every placed entrant has a
  *      result for `settled`;
- *   4. writes the row and one `audit_log` row with the contest before and after.
+ *   4. writes the row and one `audit_log` row with the contest before and after, and
+ *      queues the webhook event the arrival announces (`contest.opened`, `.locked`,
+ *      `.settled`, `.voided`; spec 4.9) in the same transaction, so a partner is told
+ *      exactly when the change commits.
  *
  * Pass the transaction of the operation the transition belongs to: `closeContest` enters
  * and leaves `settling` inside its settlement transaction, under this same lock, which is
@@ -69,9 +73,33 @@ export async function transition(db: DbOrTx, input: TransitionInput): Promise<Tr
       after: input.reason === undefined ? after : { ...after, reason: input.reason },
       ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
     });
+    const event = WEBHOOK_EVENTS[input.to];
+    if (event !== undefined) {
+      await emitEvent(tx, {
+        tenantId: input.tenantId,
+        type: event,
+        data: {
+          contestId: after.id,
+          externalId: after.externalId,
+          kind: after.kind,
+          asset: after.asset,
+          state: after.state,
+          previousState: before.state,
+          settledAt: after.settledAt?.toISOString() ?? null,
+        },
+      });
+    }
     return { before, after };
   });
 }
+
+/** The arrivals a partner is told about (spec 4.9). The intermediate states are Purse's own business. */
+const WEBHOOK_EVENTS: Partial<Record<ContestState, 'contest.opened' | 'contest.locked' | 'contest.settled' | 'contest.voided'>> = {
+  open: 'contest.opened',
+  locked: 'contest.locked',
+  settled: 'contest.settled',
+  voided: 'contest.voided',
+};
 
 /**
  * What must already be true of the contest for the destination to be honest. These run

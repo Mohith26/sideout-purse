@@ -6,6 +6,7 @@ import type { DbOrTx } from '../db/client';
 import { userVerification, type User, type UserVerification } from '../db/schema';
 import { recordAudit, SYSTEM_ACTOR, type Actor } from '../ledger/audit';
 import type { IdentityProvider, VerificationResult } from '../providers/types';
+import { emitEvent } from '../webhooks/events';
 import { UsersError } from './errors';
 import { getUser } from './users';
 
@@ -23,7 +24,9 @@ import { getUser } from './users';
  *
  * The provider is called between two short transactions rather than under the row lock:
  * a real provider is a network call, and what it says is applied only if the user is still
- * `pending` when the answer arrives.
+ * `pending` when the answer arrives. Each state change queues `user.verification.updated`
+ * (spec 4.9) in its own transaction, so a partner hears about `pending` and then about the
+ * outcome, and never about a change that rolled back.
  */
 export const REVERIFY_AFTER_DAYS = 365;
 
@@ -34,15 +37,27 @@ export type StartVerificationInput = {
   actor?: Actor;
   requestId?: string;
   now?: Date;
+  /** Mint the identity flow's embed token (the default). The embed app, already inside the flow, passes `false`. */
+  issueToken?: boolean;
 };
 
 export type StartedVerification = {
   user: User;
   before: UserVerification;
   verification: UserVerification;
-  embedToken: IssuedEmbedToken;
+  /** Absent when `issueToken` was `false`. */
+  embedToken: IssuedEmbedToken | undefined;
   result: VerificationResult;
 };
+
+function verificationEventData(user: User, previous: UserVerification, current: UserVerification) {
+  return {
+    userId: user.id,
+    externalId: user.externalId,
+    previousState: previous.state,
+    verification: { state: current.state, provider: current.provider, verifiedAt: current.verifiedAt?.toISOString() ?? null, reverifyAfter: current.reverifyAfter?.toISOString() ?? null },
+  };
+}
 
 export async function startVerification(db: DbOrTx, input: StartVerificationInput): Promise<StartedVerification> {
   const now = input.now ?? new Date();
@@ -80,8 +95,9 @@ export async function startVerification(db: DbOrTx, input: StartVerificationInpu
         after: pending,
         ...audit,
       });
+      await emitEvent(tx, { tenantId: input.tenantId, type: 'user.verification.updated', data: verificationEventData(user, before, pending), now });
     }
-    const embedToken = await issueEmbedToken(tx, { tenantId: input.tenantId, userId: user.id, flow: 'identity', now });
+    const embedToken = input.issueToken === false ? undefined : await issueEmbedToken(tx, { tenantId: input.tenantId, userId: user.id, flow: 'identity', now });
     return { user, before, pending, embedToken };
   });
 
@@ -124,6 +140,9 @@ export async function startVerification(db: DbOrTx, input: StartVerificationInpu
       after: { ...after, ...(result.note === undefined ? {} : { note: result.note }) },
       ...audit,
     });
+    if (after.state !== current.state) {
+      await emitEvent(tx, { tenantId: input.tenantId, type: 'user.verification.updated', data: verificationEventData(started.user, current, after), now });
+    }
     return after;
   });
 

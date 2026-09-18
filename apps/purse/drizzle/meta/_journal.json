@@ -78,6 +78,20 @@
       "when": 1789717920440,
       "tag": "0010_idempotency_reservation_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789735948000,
+      "tag": "0011_embed_webhooks",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789735948482,
+      "tag": "0012_embed_webhook_guards",
+      "breakpoints": true
     }
   ]
 }

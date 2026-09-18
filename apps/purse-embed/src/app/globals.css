@@ -1,0 +1,237 @@
+/*
+ * The embed's stylesheet: the shared tokens and primitives from @sideout/ui (never a copy),
+ * then what an iframe needs. The frame is sized by its parent from the height this app
+ * reports (spec 4.8 rule 6), so nothing here may scroll; the theme the partner passed at
+ * init lands as custom properties on <html> (src/embed/theme.ts) and every rule below
+ * reads them through the tokens.
+ */
+@import '@sideout/ui/tokens.css';
+@import '@sideout/ui/components.css';
+
+html,
+body {
+  overflow: hidden;
+  min-height: 0;
+  background: var(--bg-base);
+}
+
+.embed {
+  box-sizing: border-box;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.embed__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.embed__title {
+  font-size: var(--text-heading);
+  line-height: var(--leading-heading);
+}
+
+.embed__lede {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.row__label {
+  color: var(--text-secondary);
+}
+
+.row__value {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.stat__value {
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: var(--weight-display);
+  font-size: var(--text-display-l);
+  line-height: var(--leading-display);
+  letter-spacing: var(--tracking-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field__input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--target-min);
+  padding: 0 var(--space-3);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-input);
+  font: inherit;
+  font-size: var(--text-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.field__input:focus-visible {
+  border-color: var(--volt);
+}
+
+.field__hint {
+  color: var(--text-tertiary);
+  font-size: var(--text-label);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--target-min);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-input);
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition:
+    background-color var(--d-micro) var(--ease-out-expo),
+    opacity var(--d-micro) var(--ease-out-expo);
+}
+
+.button--primary {
+  background: var(--volt);
+  color: var(--on-volt);
+}
+
+.button--primary:hover {
+  background: var(--volt-dim);
+}
+
+.button--secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.button--secondary:hover {
+  background: var(--bg-overlay);
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.notice {
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border-subtle);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.notice--error {
+  border-color: color-mix(in srgb, var(--fault) 55%, var(--border-subtle));
+}
+
+.notice--positive {
+  border-color: color-mix(in srgb, var(--surf) 55%, var(--border-subtle));
+}
+
+.notice__title {
+  font-weight: var(--weight-semibold);
+}
+
+.notice--error .notice__title {
+  color: var(--fault);
+}
+
+.notice--positive .notice__title {
+  color: var(--surf);
+}
+
+.notice__body {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border-strong);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.chip--live {
+  border-color: var(--surf);
+  color: var(--surf);
+}
+
+.chip--fault {
+  border-color: var(--fault);
+  color: var(--fault);
+}
+
+.link {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.muted {
+  color: var(--text-tertiary);
+  font-size: var(--text-label);
+}

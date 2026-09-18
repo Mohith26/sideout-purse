@@ -4,7 +4,7 @@ import type { Id } from '@repo/ids';
 import { createLogger, errorFields } from '@repo/logger';
 
 import { connect } from '../src/db/client';
-import { seedApiKeys, seedContests, seedPlatformAccounts, seedRuleset, seedSideoutTenant, seedUsers } from '../src/db/seed';
+import { seedApiKeys, seedContests, seedPlatformAccounts, seedRuleset, seedSideoutTenant, seedTenantOrigins, seedUsers } from '../src/db/seed';
 import { env, requireMigratorUrl } from '../src/env';
 
 /**
@@ -79,6 +79,16 @@ try {
   } else if (minted.length > 0) {
     logger.info('api keys were created; rerun with --print-keys --rotate-keys to obtain plaintexts', { created: minted.map((each) => each.key.label) });
   }
+
+  const origins = await seedTenantOrigins(
+    database.db,
+    tenantId,
+    (process.env['PURSE_TENANT_ORIGINS'] ?? '')
+      .split(',')
+      .map((each) => each.trim())
+      .filter((each) => each !== ''),
+  );
+  logger.info('tenant origins present', { tenant: tenant.id, created: origins.created, origins: origins.origins });
 
   const seeded = await seedContests(database.db, tenantId);
   logger.info('seed contests present', {

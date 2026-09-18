@@ -11,6 +11,7 @@ import {
   contestScores,
   contests,
   eligibilityDecisions,
+  embedSigninCodes,
   embedTokens,
   idempotencyKeys,
   idempotencyReservations,
@@ -19,11 +20,15 @@ import {
   journalLines,
   operatorFlags,
   rulesets,
+  tenantOrigins,
   tenants,
   userLocations,
   userRestrictions,
   userVerification,
   users,
+  webhookDeliveries,
+  webhookDeliveryAttempts,
+  webhookEndpoints,
   type Account,
   type AccountKind,
   type Asset,
@@ -41,6 +46,11 @@ import { openAccount } from '../../src/ledger';
 
 /** Delete every ledger, contest and identity row, in foreign-key order. Owner role only. */
 export async function wipeLedger(migrator: Database): Promise<void> {
+  await migrator.db.delete(webhookDeliveryAttempts);
+  await migrator.db.delete(webhookDeliveries);
+  await migrator.db.delete(webhookEndpoints);
+  await migrator.db.delete(embedSigninCodes);
+  await migrator.db.delete(tenantOrigins);
   await migrator.db.delete(eligibilityDecisions);
   await migrator.db.delete(embedTokens);
   await migrator.db.delete(operatorFlags);

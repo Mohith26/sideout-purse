@@ -6,8 +6,10 @@ import { idempotency } from '../../http/idempotency';
 import { limitAuthFailures, rateLimit, type TokenBuckets } from '../../http/rate-limit';
 import { contestsRoutes } from './contests';
 import { embedRoutes } from './embed';
+import { originsRoutes } from './origins';
 import type { V1Deps, V1Scope } from './scope';
 import { usersRoutes } from './users';
+import { webhooksRoutes } from './webhooks';
 
 /**
  * The public API (spec 4.7), mounted at `/v1`. The middleware stack, outermost first:
@@ -18,9 +20,11 @@ import { usersRoutes } from './users';
  *   4. the JSON body, read once;
  *   5. idempotency: on a mutation, the claim on the key and its stored response.
  *
- * Every request that reaches this stack needs a key. `GET /v1/health` and
- * `GET /v1/internal/*` are answered by the routes `app.ts` mounts before it, so they never
- * arrive here; any other method on those paths is refused like any unauthenticated call.
+ * Every request that reaches this stack needs a secret key. `GET /v1/health`,
+ * `/v1/internal/*` and the embed's publishable-key routes (`/v1/embed/state` and the rest
+ * of `src/routes/embed.ts`) are answered by the routes `app.ts` mounts before it, so they
+ * never arrive here; any other method on those paths is refused like any unauthenticated
+ * call. `POST /v1/embed/tokens` is a secret-key route and lives here.
  */
 export type V1RouterDeps = V1Deps & { buckets: TokenBuckets; trustedProxyHops: number; clock?: () => number; inProgressWaitMs?: number };
 
@@ -34,5 +38,7 @@ export function v1Routes(deps: V1RouterDeps) {
   v1.route('/users', usersRoutes(deps));
   v1.route('/contests', contestsRoutes(deps));
   v1.route('/embed', embedRoutes(deps));
+  v1.route('/webhooks', webhooksRoutes(deps));
+  v1.route('/origins', originsRoutes(deps));
   return v1;
 }

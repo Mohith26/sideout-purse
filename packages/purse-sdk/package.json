@@ -2,21 +2,32 @@
   "name": "@purse/sdk",
   "version": "0.0.1",
   "private": true,
-  "description": "Thin, framework-agnostic client for embedding Purse flows in a partner page (system spec section 4.8). Phase 4 implements it; phase 0 ships only the version both /health endpoints report.",
+  "description": "Thin, framework-agnostic client for embedding Purse flows in a partner page (system spec section 4.8) and the receiver half of Purse's webhooks (4.9): verifyWebhook with the constant-time, windowed signature check.",
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./bundle": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/purse-sdk.js"
     }
   },
   "scripts": {
+    "build": "tsup",
     "test": "vitest run",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "@purse/types": "workspace:*"
+  },
   "devDependencies": {
     "@repo/config": "workspace:*",
+    "@types/jsdom": "^30.0.0",
+    "jsdom": "^30.1.0",
+    "tsup": "^8.5.1",
     "vitest": "^5.0.1"
   }
 }

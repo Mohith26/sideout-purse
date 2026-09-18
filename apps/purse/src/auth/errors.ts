@@ -10,6 +10,7 @@ export const AUTH_ERROR_CODES = {
   invalid_api_key: 'authentication_error',
   api_key_revoked: 'authentication_error',
   secret_key_required: 'authentication_error',
+  publishable_key_required: 'authentication_error',
   tenant_suspended: 'permission_error',
   operator_scope_required: 'permission_error',
   embed_token_invalid: 'authentication_error',

@@ -22,9 +22,18 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `test/setup-env.ts` falls back to `db:setup`'s default URLs (CI's or a `.env`'s values
   win). A compose volume from before phase 1 lacks `purse_migrator`;
   `pnpm db:setup --admin-url ...` upgrades it in place.
-- `pnpm dev` starts Purse on :4000 and Sideout on :3000; both expose `/health`. Sideout's
-  seeded events are under `/api/tournaments`; `POST /api/dev/login` with a seeded phone
-  (`+14155550100` is an organizer) gives a session outside production.
+- Three apps: `apps/purse` (the API, `@purse/api`), `apps/purse-embed` (the iframe flows,
+  `@purse/embed`, a Next static export the API serves under `/embed`) and `apps/sideout`.
+  `pnpm dev` starts Purse on :4000, the embed dev server on :4100 (proxies `/v1` to :4000)
+  and Sideout on :3000; both apps expose `/health`. To have :4000 serve the embed like
+  production, `pnpm --filter @purse/embed build` first (`PURSE_EMBED_DIR` overrides the
+  directory; without a build `/embed` answers 404). Sideout's seeded events are under
+  `/api/tournaments`; `POST /api/dev/login` with a seeded phone (`+14155550100` is an
+  organizer) gives a session outside production.
+- `PURSE_SECRET_KEY` derives every process key (`apps/purse/src/secrets.ts`); production
+  refuses to start without it, elsewhere a stand-in is used. `EMBED_SMS_PROVIDER`,
+  `PURSE_EMBED_DIR`, `WEBHOOK_DISPATCHER` and `WEBHOOK_POLL_INTERVAL_MS` are the other
+  phase 4 variables (`env.ts`); `PURSE_TENANT_ORIGINS` is read by the seed only.
 - CI also migrates and seeds Purse's `purse` database and runs
   `pnpm --filter @purse/api reconcile`; a failing invariant fails the build.
 
@@ -43,7 +52,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `locks_at` and the draft-editable fields; `contest_participants`: `state`, and
   `entry_journal_entry_id`, `team_ref`, `seed` only when a withdrawn entrant re-enters;
   `contest_scores`: `superseded_by`; `idempotency_reservations`: everything but the key;
-  the phase 3 tables per the header of `drizzle/0008_identity_guards.sql`).
+  the phase 3 tables per the header of `drizzle/0008_identity_guards.sql`; the phase 4
+  tables per `0012_embed_webhook_guards.sql`, `webhook_delivery_attempts` append-only).
   `test/ledger/roles.test.ts` fails on a table with
   no grant and pins the updatable columns of every contest and identity table. A wallet
   needs a `users` row (`accounts.user_id` is a foreign key), so test fixtures create users
@@ -89,6 +99,27 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   row per attempt (a refusal's after its transaction rolled back), and refuses with
   `not_eligible`, or `insufficient_funds` when a shortfall is the only reason.
 
+## Embed, SDK and webhooks
+
+- The iframe protocol is `packages/purse-types/src/protocol.ts` (zod/mini, `v: 1`,
+  `parseMessage`); the SDK (`packages/purse-sdk/src/purse.ts`, `Purse.post` is the only
+  `postMessage`, never `'*'`) and the frame (`apps/purse-embed/src/embed/bridge.ts`,
+  `receiver.ts`) both import it. `pnpm --filter @purse/sdk build` makes the partner bundle
+  (`@purse/sdk/bundle`); `verifyWebhook` / `signWebhook` in `src/webhooks.ts` are the one
+  signature implementation, used by the dispatcher and by receivers.
+- The embed's browser API is `apps/purse/src/routes/embed.ts` (`/v1/embed/*`, publishable key
+  plus the `purse_session` cookie from `src/embed/session.ts`; middleware per route so
+  `POST /v1/embed/tokens` stays on the secret-key stack); the allowlist is `tenant_origins`
+  (`src/embed/origins.ts`, also CORS and `frame-ancestors`); sign-in is `src/embed/signin.ts`
+  behind the `SmsSender` seam (`src/embed/sms.ts`). Rate limiting there is by address.
+- Webhooks live in `apps/purse/src/webhooks/`: `emitEvent` writes `webhook_deliveries` in the
+  caller's transaction (emit sites: `contests/transition.ts`, `contests/entries.ts`,
+  `users/verification.ts`, `ledger/post.ts`); `WebhookDispatcher` leases and posts;
+  `schedule.ts` is the eight-attempt table; secrets rest as AES-GCM envelopes
+  (`endpoints.ts`, `src/secrets.ts`). A new event type is a `@purse/types` change, the CHECK
+  literal in `schema.ts` and a migration. `test/webhooks/dispatcher.test.ts` is the
+  receiver-down demo with a fake clock; `test/webhooks/receiver.ts` is the sample receiver.
+
 ## Identity, eligibility and the v1 API
 
 - `apps/purse/src/eligibility/`: `evaluate.ts` is pure (no database, clock or randomness;
@@ -133,8 +164,9 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 ## The boundary, and where things go
 
 - Sideout imports from Purse only through `@purse/sdk` and `@purse/types`; Purse imports
-  nothing from Sideout. `packages/config/eslint/boundary.js` enforces it and
-  `test/boundary.test.ts` proves it. Neutral shared code lives in `@repo/*`.
+  nothing from Sideout; the embed app imports nothing of the API's source (it speaks HTTP)
+  and, alone among Purse's apps, may use `@sideout/ui`. `packages/config/eslint/boundary.js`
+  enforces it and `test/boundary.test.ts` proves it. Neutral shared code lives in `@repo/*`.
 - Each app names only its own connection string (`apps/*/src/env.ts`);
   `test/env-isolation.test.ts` proves each `loadEnv` ignores the other's. Never add a root `.env`.
 - Schema changes: edit `apps/<app>/src/db/schema.ts`, then `pnpm --filter <pkg> db:generate`

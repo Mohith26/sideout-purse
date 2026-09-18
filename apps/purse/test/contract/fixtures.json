@@ -2665,6 +2665,532 @@
     }
   },
   {
+    "name": "webhooks.endpoints.create",
+    "request": {
+      "method": "POST",
+      "path": "/v1/webhooks/endpoints",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "url": "https://sideout.example/hooks/purse",
+        "subscribedEvents": [
+          "contest.settled",
+          "wallet.balance.changed"
+        ],
+        "description": "Sideout production"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "whe_<id>",
+          "url": "https://sideout.example/hooks/purse",
+          "subscribedEvents": [
+            "contest.settled",
+            "wallet.balance.changed"
+          ],
+          "status": "enabled",
+          "description": "Sideout production",
+          "secret": "<webhook-secret>",
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.endpoints.create.replay",
+    "request": {
+      "method": "POST",
+      "path": "/v1/webhooks/endpoints",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "url": "https://sideout.example/hooks/purse",
+        "subscribedEvents": [
+          "contest.settled",
+          "wallet.balance.changed"
+        ],
+        "description": "Sideout production"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "whe_<id>",
+          "url": "https://sideout.example/hooks/purse",
+          "secret": null,
+          "status": "enabled",
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>",
+          "description": "Sideout production",
+          "subscribedEvents": [
+            "contest.settled",
+            "wallet.balance.changed"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.endpoints.create.url_not_allowed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/webhooks/endpoints",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "url": "http://sideout.example/hooks/purse",
+        "subscribedEvents": [
+          "contest.settled"
+        ]
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "url_not_allowed",
+          "message": "Webhook URLs must be https:// (plain http is allowed only on localhost)",
+          "detail": {
+            "url": "http://sideout.example/hooks/purse"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.endpoints.list",
+    "request": {
+      "method": "GET",
+      "path": "/v1/webhooks/endpoints",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "endpoints": [
+            {
+              "id": "whe_<id>",
+              "url": "https://sideout.example/hooks/purse",
+              "subscribedEvents": [
+                "contest.settled",
+                "wallet.balance.changed"
+              ],
+              "status": "enabled",
+              "description": "Sideout production",
+              "secret": null,
+              "createdAt": "<instant>",
+              "updatedAt": "<instant>"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.endpoints.get",
+    "request": {
+      "method": "GET",
+      "path": "/v1/webhooks/endpoints/whe_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "whe_<id>",
+          "url": "https://sideout.example/hooks/purse",
+          "subscribedEvents": [
+            "contest.settled",
+            "wallet.balance.changed"
+          ],
+          "status": "enabled",
+          "description": "Sideout production",
+          "secret": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.endpoints.update",
+    "request": {
+      "method": "PATCH",
+      "path": "/v1/webhooks/endpoints/whe_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "subscribedEvents": [
+          "contest.settled",
+          "contest.voided",
+          "wallet.balance.changed"
+        ]
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "whe_<id>",
+          "url": "https://sideout.example/hooks/purse",
+          "subscribedEvents": [
+            "contest.settled",
+            "contest.voided",
+            "wallet.balance.changed"
+          ],
+          "status": "enabled",
+          "description": "Sideout production",
+          "secret": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.endpoints.rotate",
+    "request": {
+      "method": "POST",
+      "path": "/v1/webhooks/endpoints/whe_<id>/rotate",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "whe_<id>",
+          "url": "https://sideout.example/hooks/purse",
+          "subscribedEvents": [
+            "contest.settled",
+            "contest.voided",
+            "wallet.balance.changed"
+          ],
+          "status": "enabled",
+          "description": "Sideout production",
+          "secret": "<webhook-secret>",
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.endpoints.get.not_found",
+    "request": {
+      "method": "GET",
+      "path": "/v1/webhooks/endpoints/whe_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "endpoint_not_found",
+          "message": "No webhook endpoint whe_<id>",
+          "detail": {
+            "endpointId": "whe_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.credits.hooked",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/credits",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "asset": "POINTS",
+        "amount": "1"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "userId": "usr_<id>",
+          "asset": "POINTS",
+          "amount": "1",
+          "journalEntryId": "je_<id>",
+          "balance": "1026"
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.deliveries.list",
+    "request": {
+      "method": "GET",
+      "path": "/v1/webhooks/endpoints/whe_<id>/deliveries",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "deliveries": [
+            {
+              "id": "whd_<id>",
+              "endpointId": "whe_<id>",
+              "eventId": "evt_<id>",
+              "eventType": "wallet.balance.changed",
+              "status": "pending",
+              "attempt": 0,
+              "maxAttempts": 8,
+              "responseStatus": null,
+              "nextAttemptAt": "<instant>",
+              "deliveredAt": null,
+              "replayOf": null,
+              "createdAt": "<instant>",
+              "updatedAt": "<instant>",
+              "attempts": []
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.deliveries.get",
+    "request": {
+      "method": "GET",
+      "path": "/v1/webhooks/deliveries/whd_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "whd_<id>",
+          "endpointId": "whe_<id>",
+          "eventId": "evt_<id>",
+          "eventType": "wallet.balance.changed",
+          "status": "pending",
+          "attempt": 0,
+          "maxAttempts": 8,
+          "responseStatus": null,
+          "nextAttemptAt": "<instant>",
+          "deliveredAt": null,
+          "replayOf": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>",
+          "attempts": []
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.deliveries.replay",
+    "request": {
+      "method": "POST",
+      "path": "/v1/webhooks/deliveries/whd_<id>/replay",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "whd_<id>",
+          "endpointId": "whe_<id>",
+          "eventId": "evt_<id>",
+          "eventType": "wallet.balance.changed",
+          "status": "pending",
+          "attempt": 0,
+          "maxAttempts": 8,
+          "responseStatus": null,
+          "nextAttemptAt": "<instant>",
+          "deliveredAt": null,
+          "replayOf": "whd_<id>",
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>",
+          "attempts": []
+        }
+      }
+    }
+  },
+  {
+    "name": "webhooks.deliveries.get.not_found",
+    "request": {
+      "method": "GET",
+      "path": "/v1/webhooks/deliveries/whd_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "delivery_not_found",
+          "message": "No webhook delivery whd_<id>",
+          "detail": {
+            "deliveryId": "whd_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "origins.add",
+    "request": {
+      "method": "POST",
+      "path": "/v1/origins",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "origin": "https://sideout.example"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "origin": "https://sideout.example",
+          "origins": [
+            "https://sideout.example"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "origins.list",
+    "request": {
+      "method": "GET",
+      "path": "/v1/origins",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "origins": [
+            "https://sideout.example"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "origins.add.invalid_input",
+    "request": {
+      "method": "POST",
+      "path": "/v1/origins",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "origin": "sideout.example/app"
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "invalid_input",
+          "message": "sideout.example/app is not an origin",
+          "detail": {
+            "field": "origin"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "origins.revoke",
+    "request": {
+      "method": "POST",
+      "path": "/v1/origins/revoke",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "origin": "https://sideout.example"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "origins": []
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.state.publishable_key_required",
+    "request": {
+      "method": "GET",
+      "path": "/v1/embed/state",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": {
+          "type": "authentication_error",
+          "code": "publishable_key_required",
+          "message": "This route takes a publishable key, never a secret key"
+        }
+      }
+    }
+  },
+  {
     "name": "users.credits.permission_error",
     "request": {
       "method": "POST",
@@ -2744,6 +3270,70 @@
     }
   },
   {
+    "name": "internal.webhooks.replay",
+    "request": {
+      "method": "POST",
+      "path": "/v1/internal/webhooks/deliveries/whd_<id>/replay",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "whd_<id>",
+          "endpointId": "whe_<id>",
+          "eventId": "evt_<id>",
+          "eventType": "wallet.balance.changed",
+          "status": "pending",
+          "attempt": 0,
+          "maxAttempts": 8,
+          "responseStatus": null,
+          "nextAttemptAt": "<instant>",
+          "deliveredAt": null,
+          "replayOf": "whd_<id>",
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>",
+          "attempts": []
+        }
+      }
+    }
+  },
+  {
+    "name": "internal.webhooks.get",
+    "request": {
+      "method": "GET",
+      "path": "/v1/internal/webhooks/deliveries/whd_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "whd_<id>",
+          "endpointId": "whe_<id>",
+          "eventId": "evt_<id>",
+          "eventType": "wallet.balance.changed",
+          "status": "pending",
+          "attempt": 0,
+          "maxAttempts": 8,
+          "responseStatus": null,
+          "nextAttemptAt": "<instant>",
+          "deliveredAt": null,
+          "replayOf": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>",
+          "attempts": []
+        }
+      }
+    }
+  },
+  {
     "name": "health",
     "request": {
       "method": "GET",
@@ -2759,8 +3349,8 @@
         "data": {
           "sha": "test-sha",
           "migrations": {
-            "applied": 11,
-            "available": 11,
+            "applied": 13,
+            "available": 13,
             "pending": 0
           },
           "rulesetVersion": "2026.09.1",
@@ -2792,14 +3382,14 @@
               "name": "journal nets to zero per asset",
               "ok": true,
               "status": "ok",
-              "detail": "nets to zero per asset (POINTS: debits 4800, credits 4800)"
+              "detail": "nets to zero per asset (POINTS: debits 4801, credits 4801)"
             },
             {
               "id": "I2",
               "name": "every entry balances",
               "ok": true,
               "status": "ok",
-              "detail": "every one of 11 entries has 2+ lines in one asset and balances"
+              "detail": "every one of 12 entries has 2+ lines in one asset and balances"
             },
             {
               "id": "I3",
@@ -2858,6 +3448,226 @@
           "type": "authentication_error",
           "code": "secret_key_required",
           "message": "A publishable key cannot call the API; use the secret key from a server"
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.state.anonymous",
+    "request": {
+      "method": "GET",
+      "path": "/v1/embed/state",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "authenticated": false,
+          "user": null
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.origins",
+    "request": {
+      "method": "GET",
+      "path": "/v1/embed/origins",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "origins": [
+            "https://sideout.example"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.session",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/session",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "embedToken": "<embed-token>",
+        "flow": "wallet",
+        "parentOrigin": "https://sideout.example"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "authenticated": true,
+          "user": {
+            "id": "usr_<id>",
+            "externalId": "sideout:ana",
+            "displayName": "Ana M. Reyes",
+            "verification": {
+              "state": "verified",
+              "provider": "dev",
+              "verifiedAt": "<instant>",
+              "reverifyAfter": "<instant>"
+            },
+            "restrictions": [],
+            "wallet": [
+              {
+                "asset": "POINTS",
+                "balance": "1026",
+                "accountId": "acct_<id>"
+              },
+              {
+                "asset": "CREDIT",
+                "balance": "0",
+                "accountId": null
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.session.embed_token_used",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/session",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "embedToken": "<embed-token>",
+        "flow": "wallet",
+        "parentOrigin": "https://sideout.example"
+      }
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": {
+          "type": "authentication_error",
+          "code": "embed_token_used",
+          "message": "The embed token was already used",
+          "detail": {
+            "tokenId": "emb_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.session.origin_not_allowed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/session",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "embedToken": "<embed-token>",
+        "flow": "wallet",
+        "parentOrigin": "https://evil.example"
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "permission_error",
+          "code": "origin_not_allowed",
+          "message": "https://evil.example is not an allowed origin for this tenant",
+          "detail": {
+            "origin": "https://evil.example"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.rewards.session_required",
+    "request": {
+      "method": "GET",
+      "path": "/v1/embed/rewards",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": {
+          "type": "authentication_error",
+          "code": "session_required",
+          "message": "Sign in to Purse first"
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.signin.start",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/signin/start",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "phoneE164": "+15125550101"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "sent": true,
+          "expiresAt": "<instant>",
+          "devCode": "<code>"
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.signin.verify.invalid_code",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/signin/verify",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "phoneE164": "+15125550101",
+        "code": "<code>"
+      }
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": {
+          "type": "authentication_error",
+          "code": "invalid_code",
+          "message": "The code is not valid",
+          "detail": {
+            "attemptsLeft": 4
+          }
         }
       }
     }

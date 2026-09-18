@@ -68,7 +68,8 @@ pnpm db:setup               # or: provision an existing Postgres (defaults to lo
 pnpm db:migrate             # applies both apps' migrations, each in its own process
 pnpm db:seed                # Purse: the Sideout tenant, its platform accounts, the active ruleset, six users,
                             # two API keys and the seed contests. Sideout: the demo events. Both safe to re-run
-pnpm dev                    # Purse on :4000, Sideout on :3000
+pnpm dev                    # Purse on :4000, the embed dev server on :4100, Sideout on :3000
+pnpm --filter @purse/embed build   # optional: lets :4000 serve the embed under /embed as production does
 ```
 
 The first seed prints nothing secret. To hold a key, ask for it:
@@ -163,9 +164,20 @@ returns a five-minute, single-use embed token), `GET /users/:id/wallet`,
 `DELETE /contests/:id/entries/:userId`, `POST /contests/:id/scores`,
 `GET /contests/:id/preview` (the frozen settlement preview with its payout hash),
 `POST /contests/:id/close` (requires that hash), `POST /contests/:id/void`,
-`GET /contests/:id/results`; `POST /embed/tokens`; `GET /internal/reconcile` and
-`GET /health` (also at the root). Every endpoint and every error type is recorded in
-`apps/purse/test/contract/fixtures.json`.
+`GET /contests/:id/results`; `POST /embed/tokens`; `/webhooks/endpoints` (create with the
+signing secret shown once, list, read, `PATCH`, `rotate`, the delivery log per endpoint) and
+`/webhooks/deliveries/:id` (read, `replay`); `/origins` (the embed allowlist);
+`GET /internal/reconcile`, `/internal/webhooks/deliveries/:id` (read, `replay`) and
+`GET /health` (also at the root). The embed's own routes, `/v1/embed/*` on a publishable key
+and the Purse session cookie, back the flows the SDK mounts. Every endpoint and every error
+type is recorded in `apps/purse/test/contract/fixtures.json`.
+
+Webhooks (spec 4.9) are signed `Purse-Signature: t=<unix>,v1=<hex>` (HMAC-SHA256 over
+`"{t}.{rawBody}"`), retried eight times over roughly a day, then `dead`, with every attempt
+in the delivery log; `verifyWebhook` from `@purse/sdk` is the receiver's check. The SDK
+(`@purse/sdk`) mounts the identity, wallet, entry-confirm, rewards and sign-in flows in an
+iframe on the Purse origin with an exact-origin, nonce-checked message protocol from
+`@purse/types`, and reads user state headlessly.
 
 Eligibility (spec 4.5) is a pure evaluator over a versioned, stored ruleset; the seeded
 version is the spec's own example, in which `POINTS` is permitted everywhere with no

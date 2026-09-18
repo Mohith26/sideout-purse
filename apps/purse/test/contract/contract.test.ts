@@ -1,6 +1,20 @@
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { API_ERROR_STATUS, API_ERROR_TYPES, type ApiErrorType, type ContestResource, type EmbedTokenResource, type EntryResource, type PreviewResource, type ResultsResource, type SettlementResource, type UserResource } from '@purse/types';
+import {
+  API_ERROR_STATUS,
+  API_ERROR_TYPES,
+  type ApiErrorType,
+  type ContestResource,
+  type EmbedTokenResource,
+  type EmbedUserState,
+  type EntryResource,
+  type PreviewResource,
+  type ResultsResource,
+  type SettlementResource,
+  type UserResource,
+  type WebhookDeliveryResource,
+  type WebhookEndpointResource,
+} from '@purse/types';
 import { type Id } from '@repo/ids';
 
 import { resetAuthCaches } from '../../src/auth';
@@ -270,6 +284,70 @@ describe('v1 contract', () => {
     const guess = new Recorder(client(h, `sk_sandbox_${'0'.repeat(32)}`));
     const invalidKey = await guess.record('auth.invalid_api_key', 'GET', `/v1/users/${anaId}`);
     expect(invalidKey.error).toMatchObject({ type: 'authentication_error', code: 'invalid_api_key' });
+
+    // ---- webhooks and origins (phase 4) ------------------------------------------------
+    const hookKey = key('hook');
+    const endpoint = await op.record<WebhookEndpointResource>('webhooks.endpoints.create', 'POST', '/v1/webhooks/endpoints', { url: 'https://sideout.example/hooks/purse', subscribedEvents: ['contest.settled', 'wallet.balance.changed'], description: 'Sideout production' }, { idempotencyKey: hookKey });
+    expect(endpoint.status).toBe(201);
+    expect(endpoint.data?.secret).toMatch(/^whsec_/);
+    const endpointId = endpoint.data?.id ?? '';
+    const endpointReplay = await op.record<WebhookEndpointResource>('webhooks.endpoints.create.replay', 'POST', '/v1/webhooks/endpoints', { url: 'https://sideout.example/hooks/purse', subscribedEvents: ['contest.settled', 'wallet.balance.changed'], description: 'Sideout production' }, { idempotencyKey: hookKey });
+    expect(endpointReplay.data?.secret).toBeNull();
+    const plainHook = await op.record('webhooks.endpoints.create.url_not_allowed', 'POST', '/v1/webhooks/endpoints', { url: 'http://sideout.example/hooks/purse', subscribedEvents: ['contest.settled'] });
+    expect(plainHook.error).toMatchObject({ type: 'invalid_request', code: 'url_not_allowed' });
+    expect((await op.record<{ endpoints: WebhookEndpointResource[] }>('webhooks.endpoints.list', 'GET', '/v1/webhooks/endpoints')).data?.endpoints).toHaveLength(1);
+    expect((await op.record<WebhookEndpointResource>('webhooks.endpoints.get', 'GET', `/v1/webhooks/endpoints/${endpointId}`)).data?.secret).toBeNull();
+    const patched = await op.record<WebhookEndpointResource>('webhooks.endpoints.update', 'PATCH', `/v1/webhooks/endpoints/${endpointId}`, { subscribedEvents: ['contest.settled', 'contest.voided', 'wallet.balance.changed'] });
+    expect(patched.data?.subscribedEvents).toEqual(['contest.settled', 'contest.voided', 'wallet.balance.changed']);
+    const rotated = await op.record<WebhookEndpointResource>('webhooks.endpoints.rotate', 'POST', `/v1/webhooks/endpoints/${endpointId}/rotate`, {});
+    expect(rotated.data?.secret).toMatch(/^whsec_/);
+    const missingEndpoint = await op.record('webhooks.endpoints.get.not_found', 'GET', `/v1/webhooks/endpoints/whe_01a0b493-1a5e-7549-afe4-01a4eee87a8d`);
+    expect(missingEndpoint.error).toMatchObject({ type: 'invalid_request', code: 'endpoint_not_found' });
+    // The credit below is subscribed: it queues one delivery in the same transaction.
+    await op.record('users.credits.hooked', 'POST', `/v1/users/${anaId}/credits`, { asset: 'POINTS', amount: '1' });
+    const deliveries = await op.record<{ deliveries: WebhookDeliveryResource[] }>('webhooks.deliveries.list', 'GET', `/v1/webhooks/endpoints/${endpointId}/deliveries`);
+    expect(deliveries.data?.deliveries).toHaveLength(1);
+    expect(deliveries.data?.deliveries[0]).toMatchObject({ eventType: 'wallet.balance.changed', status: 'pending', attempt: 0, attempts: [] });
+    const deliveryId = deliveries.data?.deliveries[0]?.id ?? '';
+    expect((await op.record<WebhookDeliveryResource>('webhooks.deliveries.get', 'GET', `/v1/webhooks/deliveries/${deliveryId}`)).data?.id).toBe(deliveryId);
+    const replayedDelivery = await op.record<WebhookDeliveryResource>('webhooks.deliveries.replay', 'POST', `/v1/webhooks/deliveries/${deliveryId}/replay`, {});
+    expect(replayedDelivery.data).toMatchObject({ replayOf: deliveryId, status: 'pending' });
+    const missingDelivery = await op.record('webhooks.deliveries.get.not_found', 'GET', `/v1/webhooks/deliveries/whd_01a0b493-1a5e-7549-afe4-01a4eee87a8d`);
+    expect(missingDelivery.error).toMatchObject({ type: 'invalid_request', code: 'delivery_not_found' });
+    const internalReplay = await anonymous.record<WebhookDeliveryResource>('internal.webhooks.replay', 'POST', `/v1/internal/webhooks/deliveries/${deliveryId}/replay`, {}, { idempotencyKey: null });
+    expect(internalReplay.status).toBe(201);
+    expect(internalReplay.data?.replayOf).toBe(deliveryId);
+    expect((await anonymous.record<WebhookDeliveryResource>('internal.webhooks.get', 'GET', `/v1/internal/webhooks/deliveries/${deliveryId}`)).data?.id).toBe(deliveryId);
+
+    const origin = await op.record<{ origin: string; origins: string[] }>('origins.add', 'POST', '/v1/origins', { origin: 'https://sideout.example' });
+    expect(origin.data).toEqual({ origin: 'https://sideout.example', origins: ['https://sideout.example'] });
+    expect((await op.record<{ origins: string[] }>('origins.list', 'GET', '/v1/origins')).data?.origins).toEqual(['https://sideout.example']);
+    const badOrigin = await op.record('origins.add.invalid_input', 'POST', '/v1/origins', { origin: 'sideout.example/app' });
+    expect(badOrigin.error).toMatchObject({ type: 'invalid_request', code: 'invalid_input' });
+    expect((await op.record<{ origins: string[] }>('origins.revoke', 'POST', '/v1/origins/revoke', { origin: 'https://sideout.example' })).data?.origins).toEqual([]);
+
+    // ---- the embed's publishable-key routes ---------------------------------------------
+    await op.client.post('/v1/origins', { origin: 'https://sideout.example' });
+    const embedState = await browserKey.record<EmbedUserState>('embed.state.anonymous', 'GET', '/v1/embed/state');
+    expect(embedState.data).toEqual({ authenticated: false, user: null });
+    const embedOrigins = await browserKey.record<{ origins: string[] }>('embed.origins', 'GET', '/v1/embed/origins');
+    expect(embedOrigins.data).toEqual({ origins: ['https://sideout.example'] });
+    const walletToken = (await op.client.post<EmbedTokenResource>('/v1/embed/tokens', { userId: anaId, flow: 'wallet' })).data?.token ?? '';
+    const session = await browserKey.record<EmbedUserState>('embed.session', 'POST', '/v1/embed/session', { embedToken: walletToken, flow: 'wallet', parentOrigin: 'https://sideout.example' });
+    expect(session.status).toBe(201);
+    expect(session.data?.authenticated).toBe(true);
+    const usedToken = await browserKey.record('embed.session.embed_token_used', 'POST', '/v1/embed/session', { embedToken: walletToken, flow: 'wallet', parentOrigin: 'https://sideout.example' });
+    expect(usedToken.error).toMatchObject({ type: 'authentication_error', code: 'embed_token_used' });
+    const badParent = await browserKey.record('embed.session.origin_not_allowed', 'POST', '/v1/embed/session', { embedToken: `embt_${'a'.repeat(43)}`, flow: 'wallet', parentOrigin: 'https://evil.example' });
+    expect(badParent.error).toMatchObject({ type: 'permission_error', code: 'origin_not_allowed' });
+    const noSession = await browserKey.record('embed.rewards.session_required', 'GET', '/v1/embed/rewards');
+    expect(noSession.error).toMatchObject({ type: 'authentication_error', code: 'session_required' });
+    const signin = await browserKey.record<{ sent: boolean; devCode: string | null }>('embed.signin.start', 'POST', '/v1/embed/signin/start', { phoneE164: '+15125550101' });
+    expect(signin.data?.sent).toBe(true);
+    const badCode = await browserKey.record('embed.signin.verify.invalid_code', 'POST', '/v1/embed/signin/verify', { phoneE164: '+15125550101', code: signin.data?.devCode === '000000' ? '000001' : '000000' });
+    expect(badCode.error).toMatchObject({ type: 'authentication_error', code: 'invalid_code' });
+    const secretOnEmbed = await op.record('embed.state.publishable_key_required', 'GET', '/v1/embed/state');
+    expect(secretOnEmbed.error).toMatchObject({ type: 'authentication_error', code: 'publishable_key_required' });
 
     const health = await anonymous.record<{ rulesetVersion: string }>('health', 'GET', '/v1/health');
     expect(health.status).toBe(200);

@@ -175,3 +175,18 @@ export function rateLimit(buckets: TokenBuckets, clock: () => number = Date.now)
     await next();
   };
 }
+
+/**
+ * The embed's routes (`/v1/embed/*`) are called by every visitor's browser on one shared
+ * publishable key, so a per-key bucket would let one visitor exhaust everyone's. They
+ * spend from the address's bucket instead, the same one a failed authentication charges.
+ */
+export function rateLimitByAddress(buckets: TokenBuckets, options: AddressOptions, clock: () => number = Date.now): MiddlewareHandler {
+  return async (c, next) => {
+    const taken = buckets.take(`address:${clientAddress(c, options)}`, clock());
+    if (!taken.allowed) throw limited(c, buckets, taken);
+    c.header(RATE_LIMIT_LIMIT_HEADER, String(buckets.config.burst));
+    c.header(RATE_LIMIT_REMAINING_HEADER, String(taken.remaining));
+    await next();
+  };
+}

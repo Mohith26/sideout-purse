@@ -529,6 +529,135 @@ scheduled job. `apps/purse/.env.example` lags `src/env.ts` for the phase 3 varia
 because writes to env templates are denied by policy in the automated pipeline;
 `src/env.ts` and `docs/providers.md` are the canonical variable list.
 
+## Phase 4 decisions (SDK, embed, webhooks)
+
+### The embed app is a static export the API serves under `/embed`
+
+Spec 4.8 rule 1 puts the frame on the Purse origin. `apps/purse-embed` is a Next.js app
+whose `next build` is a static export (`output: 'export'`, `basePath: '/embed'`); the API
+serves that directory under `/embed` (`src/routes/embed-static.ts`, `PURSE_EMBED_DIR` or the
+sibling app's `out` by default), so in every environment the frame is `purse.<domain>/embed/`
+and its calls to `/v1/embed/*` are same-origin: no CORS between the frame and the API, one
+cookie jar, one deploy (the spec's hosting table already puts "Purse API + embed" on one
+service). A separate subdomain would have needed cross-origin cookies between the frame and
+its own API on top of the ones the partner page already forces. Locally, `pnpm dev` runs
+`next dev` on :4100 with `/v1` proxied to :4000 for hot reload (point the SDK at
+`purseOrigin: 'http://localhost:4100'`), and a `pnpm --filter @purse/embed build` makes the
+API on :4000 serve the export like production does. An API process with no build answers
+`/embed/*` 404 with a hint, never an empty page. Every embed response carries
+`Content-Security-Policy: frame-ancestors` naming the union of every tenant's active origins,
+so a page that is not a partner's cannot even frame the flow.
+
+### The origin allowlist is a `tenant_origins` table
+
+Rule 3's allowlist is per tenant and read three times: by the frame (which refuses to say a
+word to a `parent` that is not listed), by `POST /v1/embed/session` (which refuses to redeem a
+token for one), and by the API's CORS layer (which names an origin in
+`Access-Control-Allow-Origin` only if the presented key's tenant lists it; the preflight, which
+carries no key, only if some tenant does). An origin is a scheme, host and optional port,
+lower case, nothing else; a revoked origin keeps its row with `revoked_at` set so the audit
+trail and a later restore are both plain. The seed registers `http://localhost:3000` and
+`http://127.0.0.1:3000` plus whatever `PURSE_TENANT_ORIGINS` names, so a hosted deploy
+registers `https://sideout.<domain>` by seeding; `/v1/origins` (secret key) manages the list,
+and the console (phase 5) gets a screen for it.
+
+### The handshake, and where the embed token travels
+
+The frame is opened with the flow, the parent origin and the publishable key in its URL, all
+three public. Nothing secret is in a URL: the embed token goes in `hello`, after the frame has
+checked the parent against the allowlist and announced `ready` to that exact origin. The SDK
+mints the nonce and sends it in `hello`; the frame redeems the token on the Purse origin and
+answers `hello_ack` with the nonce and the user state. Both sides drop and count anything
+that fails origin, source window, schema or nonce (`drops` on the SDK, `Bridge.drops` in the
+frame; the counters share one `DropReason` vocabulary). A second `hello` after the handshake
+is `unexpected`; a `ready` after it is ignored. The protocol schemas are `zod/mini` so the
+SDK's browser bundle (`@purse/sdk/bundle`, 38 KB) carries the checks it uses rather than the
+library; `themeSchema` is applied by the embed as CSS custom properties over the shared
+tokens (`--volt`, `--bg-base`, the radii, `--font-ui`), with `--on-volt` picked by the
+accent's luminance so text on a partner's colour stays readable.
+
+### The session cookie, and the local-dev exception to `Secure`
+
+`purse_session` is a signed, stateless cookie (HMAC-SHA256 under a key derived from the
+process secret, tenant and user inside, 24 hours) set `HttpOnly; Secure; SameSite=None;
+Partitioned` as rule 1 requires: `None` because the frame that sets and reads it is
+cross-site, `Secure` because `None` requires it, `Partitioned` (CHIPS) so the browser keys it
+by the embedding site and third-party cookie blocking does not discard it. The same cookie
+serves the headless read: a partner page's `fetch` to `GET /v1/embed/state` with
+`credentials: 'include'` is in the same partition as the frame, so it sees the session. The
+local-dev exception: Chrome and Firefox treat `localhost` as a secure context and accept a
+`Secure` cookie over plain HTTP there, which is why `pnpm dev` works without TLS; Safari
+does not, and a partner testing in Safari needs an HTTPS tunnel. A session is bound to the
+tenant whose key redeemed the token, so another tenant's publishable key never reads it.
+
+### One process secret, keys derived per purpose
+
+`PURSE_SECRET_KEY` (at least 32 characters) is the one secret the process needs beyond the
+database; HKDF-SHA256 with a purpose label derives the session key, the sign-in code key and
+the webhook-secret encryption key from it (`src/secrets.ts`), so no two purposes share a
+key and rotating the one variable rotates them all (which signs everyone out and, for
+webhook secrets, needs a re-encryption pass the console can run in phase 5; until then a
+rotation is a re-create of the endpoints). Production refuses to start without it; outside
+production a documented stand-in is used and the boot log says so, the same shape as
+Sideout's `SESSION_SECRET`.
+
+### Webhook signing secrets are encrypted at rest, not hashed
+
+An API key can be stored as a hash because Purse only ever checks one; a webhook signing
+secret must come back in the clear because Purse signs with it. So `webhook_endpoints.
+signing_secret` holds an AES-256-GCM envelope (`enc:v1:<iv>:<tag>:<ciphertext>`) under the
+derived `webhook-secrets` key with the endpoint id as associated data, and a database dump
+alone reveals nothing. The plaintext (`whsec_` and 32 random bytes) is returned once, on
+creation and on rotation; the idempotent replay of either request carries `secret: null`,
+and no read ever returns it. `verifyWebhook` accepts several `v1` signatures in one header,
+so a receiver mid-rotation can be given both secrets by a future "rotate with overlap";
+today a rotation replaces the secret at once.
+
+### The dispatcher is an in-process worker over the delivery table
+
+Emitting an event is an insert into `webhook_deliveries`, one row per enabled endpoint that
+subscribes to the type, in the transaction that made the change (`transition`,
+`enterContest`, `withdrawEntry`, `startVerification`, `postEntry`); the table is the outbox,
+so nothing is announced that did not commit and nothing that committed goes unannounced.
+There is no separate events table: a tenant with no subscribed endpoint produces no row and
+no event id, and an endpoint created later does not receive history. The dispatcher runs
+inside the API process (`WEBHOOK_DISPATCHER=off` for a process that should only serve),
+polls every `WEBHOOK_POLL_INTERVAL_MS`, and leases due rows with `FOR UPDATE SKIP LOCKED`
+plus a `locked_until` that outlives the ten-second request timeout, so several replicas or a
+restart mid-flight never attempt one delivery twice and a crashed process's lease expires.
+`wallet.balance.changed` fires from `postEntry` for every wallet an entry touches, with the
+balance after the entry as read under the lock; a tenant with no subscriber pays one indexed
+lookup per post. `contest.settled` is emitted by the settling transaction, so it reaches the
+partner only once the payouts are committed.
+
+### The retry schedule, `dead`, and replay as a new delivery
+
+Eight attempts: the first at once, then 1 m, 5 m, 15 m, 1 h, 3 h, 6 h and 12 h after each
+failure with ±20 % uniform jitter, 22 h 21 m nominal (17.9 to 26.8 hours with the jitter);
+the table is `src/webhooks/schedule.ts` and a property test holds its bounds. A 2xx is
+`delivered`; anything else, a refused connection or a timeout is a recorded attempt and
+`failed` until the next; the eighth failure is `dead`, which is final. Every attempt is an
+append-only `webhook_delivery_attempts` row with the response status or the reason none
+arrived, never a response body. A replay (`POST /v1/webhooks/deliveries/:id/replay` for the
+tenant, `POST /internal/webhooks/deliveries/:id/replay` for the operator) is a new delivery of
+the same event to the same endpoint, `replay_of` naming the original, with its own attempts
+and its own schedule; the original's history stays as it was, the payload and the event id
+are identical, and the receiver dedupes on the id. A disabled endpoint's deliveries wait,
+untouched, until it is enabled again.
+
+### Sign-in codes never reveal whether a phone belongs to anyone
+
+The embed's `signin` flow is the phone-and-code sign-in Sideout has, run on the Purse origin
+against `users.phone_e164` within the tenant the publishable key names. Because that key is
+public, `POST /v1/embed/signin/start` answers "sent" whether or not the phone belongs to a
+user and issues a code only when it does, so nobody can use the key to enumerate a partner's
+phone numbers; only `verifySignin` refuses, with `invalid_code` in every case that would
+otherwise say so. Five codes per phone per ten minutes, five guesses per code, ten minutes'
+life, and the count of wrong guesses is committed on its own so it survives the refusal.
+The `log` SMS sender echoes the code to the browser outside production (the flow shows it in
+the hint) and is refused by the env loader in production, where `none` is the default until
+a provider is configured.
+
 ## Phase 6 decisions (Sideout domain)
 
 Two of these need the captain before the public deploy, one is a follow-up, and the rest record how phase 6

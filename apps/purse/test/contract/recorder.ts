@@ -36,6 +36,8 @@ const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const EMBED = /^embt_[A-Za-z0-9_-]{43}$/;
 const API_KEY = /^(sk|pk)_(sandbox|live)_[A-Za-z0-9]{32}$/;
+const WEBHOOK_SECRET = /^whsec_[A-Za-z0-9_-]{43}$/;
+const SIGNIN_CODE = /^\d{6}$/;
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function normaliseString(value: string): string {
@@ -45,6 +47,7 @@ function normaliseString(value: string): string {
   if (HEX64.test(value)) return '<sha256>';
   if (EMBED.test(value)) return '<embed-token>';
   if (API_KEY.test(value)) return '<api-key>';
+  if (WEBHOOK_SECRET.test(value)) return '<webhook-secret>';
   if (REQUEST_ID.test(value)) return '<request-id>';
   return value
     .replace(/\b[a-z]+-\d+-[a-z0-9]+-\d+\b/g, '<idempotency-key>')
@@ -57,6 +60,7 @@ function normaliseString(value: string): string {
 function normaliseField(key: string, value: unknown): unknown {
   if (key === 'idempotencyKey' && typeof value === 'string') return '<idempotency-key>';
   if (key === 'durationMs' && typeof value === 'number') return '<ms>';
+  if ((key === 'devCode' || key === 'code') && typeof value === 'string' && SIGNIN_CODE.test(value)) return '<code>';
   return value;
 }
 

@@ -42,6 +42,31 @@ export function bearerAuth(deps: BearerAuthDeps): MiddlewareHandler<RequestScope
   };
 }
 
+/**
+ * Bearer authentication for the embed's own routes (`/v1/embed/*`, spec 4.8): a
+ * publishable key, `Authorization: Bearer pk_...`, which names the tenant and nothing
+ * more; who the user is comes from the session cookie or the embed token. A secret key
+ * is refused here so a partner's server key never travels through a browser.
+ */
+export function publishableAuth(deps: BearerAuthDeps): MiddlewareHandler<RequestScope & AuthScope> {
+  return async (c, next) => {
+    const token = presentedToken(c.req.header('Authorization'));
+    if (token === undefined) {
+      throw new AuthError('missing_api_key', 'Authorization: Bearer <publishable key> is required');
+    }
+    if (!token.startsWith('pk_')) {
+      throw new AuthError('publishable_key_required', 'This route takes a publishable key, never a secret key');
+    }
+    const auth = await authenticateApiKey(deps.db, token);
+    if (auth.key.kind !== 'publishable') {
+      throw new AuthError('publishable_key_required', 'A publishable key is required');
+    }
+    c.set('auth', auth);
+    c.set('logger', c.get('logger').child({ tenantId: auth.tenant.id, apiKeyId: auth.key.id, environment: auth.key.environment }));
+    await next();
+  };
+}
+
 /** Routes an operator-scoped key may call (`POST /users/:id/credits`; docs/decisions.md). */
 export function requireOperator(): MiddlewareHandler<AuthScope> {
   return async (c, next) => {
