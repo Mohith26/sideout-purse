@@ -28,6 +28,9 @@ export const ID_PREFIXES = {
   journalEntry: 'je',
   journalLine: 'jl',
   audit: 'aud',
+  // Purse contests (system spec 4.1). A participant row is the spec's "entry" (`ent`, above).
+  contestScore: 'sco',
+  contestResult: 'res',
   // Sideout (system spec 5.1)
   charity: 'chr',
 } as const;

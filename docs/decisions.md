@@ -162,3 +162,164 @@ leaves to the builder, recorded so later phases do not relitigate them.
   (`apps/purse/scripts/seed.ts`), which is idempotent and safe on every deploy. The Sideout
   tenant is keyed on its unique name and created with the stable id `SIDEOUT_TENANT_ID`
   from `apps/purse/src/db/seed.ts`, so every environment agrees on it.
+
+## Phase 2 decisions
+
+### "All expected results present"
+
+Spec 4.3 defines `awaiting_settlement` as "all expected results present" without defining
+"expected". Phase 2 defines it as: **every participant in state `entered` has a counting
+score (the one not superseded) whose `attempt_finished` is true.** Withdrawn participants
+hold no stake and are not expected to score; disqualified participants are not expected to
+score either (they are placed last, unscored, at settlement, whatever was submitted for
+them, so a disqualification cannot be undone by a score). The check runs inside
+`submitScores`, under the contest row lock, after every batch: when it first holds, the
+platform (system actor) moves `in_progress` to `awaiting_settlement` and, for
+`settlement_policy = auto`, settles in the same transaction. An operator may also move a
+contest to `awaiting_settlement` explicitly with attempts still unfinished (a no-show that
+will never score), which is why the check is a trigger for the automatic path and not a
+precondition of the state.
+
+### A finished attempt is final
+
+Spec 4.1 makes `contest_scores` append-only with a `superseded_by` chain but does not say
+when a new score may supersede an old one. Phase 2's rule: a new submission for a user
+supersedes their counting score **unless that score has `attempt_finished = true`, in which
+case the whole batch is refused** (`attempt_already_finished`). This mirrors the overwrite
+rule the product relies on: Sideout pushes a score only once its consensus machine reaches
+`agreed`, and an agreed result is not silently replaced by a later push. An unfinished
+attempt (a live, in-progress score) may be superseded as often as needed. The database
+holds the rule too: `contest_scores_supersede_once` refuses to supersede a finished
+attempt, to supersede a row twice, to un-supersede, or to change anything but
+`superseded_by`, for every role.
+
+### Scores are accepted in `awaiting_settlement` as well as `in_progress`
+
+Spec 4.3 says `in_progress` is where "scores being accepted"; phase 2 also accepts them
+in `awaiting_settlement`. The preview hash (spec 4.7) exists to freeze a close against
+inputs that change between the preview and the close; if nothing could change once a
+contest was awaiting settlement, the hash would be ceremonial. The realistic case is an
+operator who moved a contest on with an attempt unfinished and then receives that
+player's finishing score: it must be able to land, and a close computed before it must be
+refused. `test/contests/concurrency.test.ts` fires exactly that race. Nothing is accepted
+once a contest is `settling`, `settled`, `cancelled` or `voided`, and nothing before
+`in_progress`. Confirmed at review, including its consequence: on an `auto` contest an
+operator moved on early, a late finishing score settles the contest with no hash to check.
+
+### The payout hash canonical form
+
+`payoutHash(payouts)` (`apps/purse/src/settlement/hash.ts`) is SHA-256, lowercase hex, over
+the string `{"v":1,"payouts":[...]}` with no whitespace, where the array holds one
+`[placement, userId, payout]` triple per entrant, sorted by placement then `userId`, and
+`payout` is a decimal string. The version field lets a later change to the form be told
+apart from a stale preview. The preview returns it, the close requires it, and a close
+whose recomputation differs is refused with `preview_hash_mismatch` before anything moves.
+A replay of a close under its idempotency key presents the same hash, so it is a replay;
+the same key with a different hash is a different request and a conflict.
+
+### The rounding rule, and what a structure means
+
+Spec 4.4 rule 3 is implemented exactly as written (`apps/purse/src/settlement/settle.ts`,
+`apps/purse/src/settlement/README.md`): floor division, then the remainder one unit at a
+time to the best placement first, then the next; within a tie group by ascending `userId`.
+"Descending placement order" is read as best first, which is what makes 100 three ways
+34/33/33. Phase 2 also fixes what the spec leaves open about the structures themselves:
+
+- **Every structure is a weight vector over placements, truncated to the scored
+  placements.** A `placement_table` of explicit amounts pays exactly its amounts when the
+  pool equals their total and shares the pool in the same proportions otherwise; a table
+  whose amounts exceed the pool cannot pay more than the pool holds, and one whose amounts
+  fall short must not leave value in escrow (conservation is a MUST). Weights beyond the
+  last scored placement are not used, so a `[50, 30, 20]` split over two scored entrants
+  pays them 5/8 and 3/8.
+- **Percentages are whole percents summing to 100, non-increasing by placement.** A
+  non-increasing vector is what makes placement monotonicity (spec 4.4, "a strictly higher
+  score never receives strictly less") provable rather than incidental; a structure that
+  needs finer shares uses amounts.
+- **A contest in which nobody scored splits the pool evenly.** Nobody can be ranked, so
+  nobody can be paid by rank; voiding is the operator's alternative, but the engine
+  defines an outcome rather than throwing on a valid contest.
+- **`guaranteed_minimum` honours floors best placement first when the pool cannot cover
+  them all**, then shares the remainder by percentage when it can.
+- **`participationFloor`** is an optional field on every structure: a per-entrant amount
+  paid to everyone, scored or not, before the placements (spec 4.4 rule 5's "participation
+  floor"). A pool that cannot cover it is split evenly.
+- **Tie-break keys**: `higher_seed_wins` prefers the lower seed number (seed 1 is the top
+  seed; unseeded entrants lose to seeded ones), `earliest_submission_wins` prefers the
+  earlier counting score; a tie the rule cannot separate is shared like `split_evenly`.
+  Seeds are set at entry (`contest_participants.seed`), which is the one column added
+  beyond spec 4.1's list, along with `contests.tie_break`, because the engine's signature
+  in 4.4 takes a `tieBreak` that has to be stored somewhere.
+
+### `voided` is reachable from `open`
+
+The spec 4.3 diagram draws `voided` from `locked`, `in_progress` and `awaiting_settlement`.
+Phase 2 allows it from `open` too. An open contest with entries has no other honest exit:
+`cancelled` is for a contest holding nothing, and locking a contest only to void it is
+ceremony that changes no money. `cancelled` remains reachable from every non-terminal
+state but `settling` and refuses a contest holding any entry. Confirmed at review.
+
+### A withdrawn entrant may re-enter while the contest is open
+
+Spec 4.1 gives `contest_participants` one row per user per contest and 4.2.5 refunds a
+withdrawal before lock; neither says whether the user may come back. Phase 2's rule: **yes,
+while the contest is `open` and before `locks_at`, under the same conditions as a first
+entry** (capacity, eligibility, funds). `enterContest` reactivates the withdrawn row rather
+than inserting a second one: the state returns to `entered` and `entry_journal_entry_id`
+is pointed at a fresh escrow entry keyed by the new request, so the row always names the
+entry that currently holds the stake, which is what I7 checks and what a void reverses.
+The re-entry carries the new request's `team_ref` and `seed`: a player who withdrew because
+a partner dropped out comes back with another, and a re-seeding at that point is the
+tenant's call. Those two columns change on that move and on no other; there is no
+separate "edit my entry" operation. The database admits exactly this and nothing more:
+`purse_app` may update `state`, `entry_journal_entry_id`, `team_ref`, `seed` and
+`updated_at`, and the `contest_participants_guard` trigger lets the entry link change only
+on `withdrawn -> entered` (and requires it to change then) and lets `team_ref` and `seed`
+change only on that same move, for every role. The audit row for a re-entry is
+`contest.entry.reentered`, with the withdrawn row as `before`.
+
+The lock time is the same for leaving as for joining: `withdrawEntry` refuses once
+`locks_at` has passed (`invalid_contest_state`), whether or not the operator has issued
+the `locked` transition, so no stake can leave escrow after the moment entries close.
+
+### Entry amounts are strictly positive
+
+`contests.entry_amount > 0` at the database. Every entry escrows something, so every
+participant has an escrow entry to link to and I7 holds for every row; a free contest is
+a contest whose entry fee is paid in promo points the platform issued, which is exactly the
+`POINTS` model. Sponsor-funded prize pools with no entry fee are a later phase's addition
+to the ledger, not a zero here.
+
+### Service-level idempotency: the `idempotency_keys` record
+
+Spec section 2 rule 4 says every mutation is idempotent. The journal already replays an
+entry by key; the contest mutations may create several rows or, on an empty contest, no
+entry at all, so they need their own record. Phase 2 lands spec 4.1's `idempotency_keys`
+table keyed on (`tenant_id`, `key`) with the operation, a hash of the request and a small
+JSON record of the ids the operation produced; a replay reloads the original result from
+those ids rather than storing a response body, so the replay is exact and typed and the
+table is append-only for the runtime. Phase 3's HTTP idempotency middleware can add the
+response columns the spec lists or wrap these same services; either way partner keys are
+per tenant, as the ledger's already are. The 30-day TTL purge is a phase 9 job running as
+the owner. Request keys are at most 200 characters so the ledger keys derived from them
+(`contest-entry:<key>`, `contest-withdraw:<key>`) fit the journal's 255.
+
+### Money moved by settlement and void is keyed by the contest, not the request
+
+A contest settles once and is voided once, so the settle entry's idempotency key is
+`contest:<id>:settle` and each void reversal's is `contest:<id>:void:<participant>`. The
+auto-settle path has no request key to derive from, and a contest-scoped key means a
+second attempt by any route finds the entry rather than posting another. Entries and
+withdrawals, which happen many times per contest, derive their ledger key from the
+request's key.
+
+### The phase 3 hooks left in place
+
+`apps/purse/src/contests/eligibility.ts` is the one named hook `enterContest` calls; it
+always allows and is marked as phase 3's to replace. `contest_not_open`, `contest_full`
+and `insufficient_balance` (as the ledger's `insufficient_funds`) are already enforced at
+entry without it. `contest_participants.user_id` is a typed id with no foreign key until
+`users` exists; the seed's six users have stable ids so phase 3 can give them rows. The
+public routes, `GET /contests/:id/preview` included, are phase 3's and mount on
+`previewSettlement` and `closeContest`, which already exercise the preview-hash mechanism
+end to end at the service level; phase 2 adds no HTTP surface for it.

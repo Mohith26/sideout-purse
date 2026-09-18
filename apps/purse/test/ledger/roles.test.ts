@@ -3,6 +3,7 @@ import { newId } from '@repo/ids';
 
 import type { Database } from '../../src/db/client';
 import { assertRuntimeRole, issuePromoPoints, runtimeRolePrivileges } from '../../src/ledger';
+import { APPEND_ONLY_TABLES } from '../../src/ledger/role-check';
 import { connectMigrator, connectRuntime, rejection } from '../helpers';
 import { buildWorld, key, wipeLedger, type World } from './fixtures';
 
@@ -110,10 +111,54 @@ describe('append-only enforcement at the role level', () => {
     const privileges = await runtimeRolePrivileges(runtime.sql);
     expect(privileges.role).toBe('purse_app');
     expect(privileges.ownedTables).toBe(0);
-    for (const table of APPEND_ONLY) {
-      expect(privileges.tables[table]).toEqual({ present: true, select: true, insert: true, update: false, delete: false, truncate: false });
+    expect(APPEND_ONLY_TABLES).toEqual(['journal_entries', 'journal_lines', 'audit_log', 'contest_results', 'idempotency_keys']);
+    for (const table of APPEND_ONLY_TABLES) {
+      expect(privileges.tables[table], table).toEqual({ present: true, select: true, insert: true, update: false, delete: false, truncate: false });
     }
     await expect(assertRuntimeRole(runtime.sql)).resolves.toMatchObject({ role: 'purse_app' });
+  });
+
+  it('the contest tables follow the same model: results and used keys are append-only, and only the columns that legitimately change are updatable', async () => {
+    for (const [table, column] of [
+      ['contest_results', 'computed_at'],
+      ['idempotency_keys', 'created_at'],
+    ] as const) {
+      for (const statement of [
+        () => runtime.sql.unsafe(`update ${table} set ${column} = now()`),
+        () => runtime.sql.unsafe(`delete from ${table}`),
+        () => runtime.sql.unsafe(`truncate ${table}`),
+      ]) {
+        expect(String(await rejection(statement())), table).toMatch(new RegExp(`permission denied for table ${table}`));
+      }
+    }
+    const columns = await runtime.sql<Array<{ table: string; column: string; update: boolean }>>`
+      select c.table_name as "table", c.column_name as "column",
+        has_column_privilege('purse_app', format('public.%I', c.table_name), c.column_name, 'UPDATE') as "update"
+      from information_schema.columns c
+      where c.table_schema = 'public' and c.table_name in ('contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys')
+      order by 1, 2
+    `;
+    const updatable = Object.fromEntries(
+      ['contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys'].map((table) => [
+        table,
+        columns.filter((row) => row.table === table && row.update).map((row) => row.column),
+      ]),
+    );
+    expect(updatable).toEqual({
+      contests: ['eligibility_ruleset_version', 'entry_amount', 'kind', 'locks_at', 'max_participants', 'opens_at', 'prize_structure', 'settled_at', 'settlement_policy', 'state', 'tie_break', 'title', 'updated_at'],
+      contest_participants: ['entry_journal_entry_id', 'seed', 'state', 'team_ref', 'updated_at'],
+      contest_scores: ['superseded_by'],
+      contest_results: [],
+      idempotency_keys: [],
+    });
+    // Never the identity of a contest or of an entry.
+    for (const column of ['id', 'tenant_id', 'external_id', 'asset', 'escrow_account_id', 'created_at']) {
+      expect(updatable['contests'], column).not.toContain(column);
+    }
+    for (const column of ['id', 'contest_id', 'user_id', 'joined_at']) {
+      expect(updatable['contest_participants'], column).not.toContain(column);
+    }
+    expect(updatable['contest_scores']).not.toContain('score');
   });
 
   it('the owner role fails the runtime check, so an API started on the migrator URL refuses to serve', async () => {

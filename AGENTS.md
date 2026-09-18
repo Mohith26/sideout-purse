@@ -26,15 +26,19 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - Two Purse roles (`docs/decisions.md`): `purse_migrator` owns the databases and runs
   `db:migrate`, `db:seed`, `db:setup` and the test reset (`PURSE_MIGRATOR_DATABASE_URL`);
   `purse_app` is the runtime (`PURSE_DATABASE_URL`), owns nothing, and holds only what
-  `apps/purse/drizzle/0002_ledger_roles.sql` and `0004_ledger_guards.sql` grant. Every new
-  table needs an explicit `GRANT ... TO purse_app` in a custom migration
-  (`db:generate:custom`); an append-only table (journal, audit log) gets `SELECT, INSERT`
-  only, and a table whose columns a balance depends on gets column-level `UPDATE`
-  (`accounts`, `tenants`: `status, updated_at`). `test/ledger/roles.test.ts` fails on a
-  table with no grant. Tests take the runtime connection from `test/helpers.ts`
-  (`connectRuntime`) and the owner connection only for fixtures and teardown
-  (`connectMigrator`). The API refuses to boot on a role that can `UPDATE` the journal or
-  the audit log (`src/ledger/role-check.ts`).
+  `apps/purse/drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql` and
+  `0006_contest_guards.sql` grant. Every new table needs an explicit
+  `GRANT ... TO purse_app` in a custom migration (`db:generate:custom`); an append-only
+  table (journal, audit log, `contest_results`, `idempotency_keys`) gets `SELECT, INSERT`
+  only, and a table with columns that legitimately change gets column-level `UPDATE`
+  (`accounts`, `tenants`: `status, updated_at`; `contests`: `state`, `settled_at`,
+  `locks_at` and the draft-editable fields; `contest_participants`: `state`, and
+  `entry_journal_entry_id`, `team_ref`, `seed` only when a withdrawn entrant re-enters;
+  `contest_scores`: `superseded_by`). `test/ledger/roles.test.ts` fails on a table with
+  no grant and pins the updatable columns of every contest table. Tests take the runtime
+  connection from `test/helpers.ts` (`connectRuntime`) and the owner connection only for
+  fixtures and teardown (`connectMigrator`). The API refuses to boot on a role that can
+  `UPDATE` any append-only table (`src/ledger/role-check.ts`).
 - The ledger lives in `apps/purse/src/ledger/`. `postEntry` is the only way value moves
   (rules 1-7 of spec 4.2.2, the wallet and escrow non-negative guard, sorted `FOR UPDATE`
   locks, idempotent replay by (tenant, key) with a request-hash conflict check); the 4.2.5
@@ -43,12 +47,31 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   A deferred constraint trigger (`journal_lines_entry_balanced`) re-checks rules 1-3 at
   commit for any writer; a test that needs to commit a broken entry as the owner disables
   it for that one transaction (see `test/ledger/reconcile.test.ts`). `reconcile()`
-  (`reconcile.ts`) is the invariant registry; I4, I5 and I7 are `not_applicable` entries
-  phase 2 replaces.
+  (`reconcile.ts`) is the registry of all seven invariants.
 - Money is `bigint` end to end; raw SQL sums are cast `::text` and parsed with `BigInt`.
 - The randomized ledger test (`apps/purse/test/ledger/random-ops.test.ts`) runs 10,000
-  operations by default and refuses fewer under `CI`. Locally:
-  `LEDGER_RANDOM_OPS=500 LEDGER_RANDOM_SEED=1 pnpm --filter @purse/api test test/ledger/random-ops`.
+  operations (ledger and contest operations mixed) by default and refuses fewer under `CI`.
+  Locally: `LEDGER_RANDOM_OPS=500 LEDGER_RANDOM_SEED=1 pnpm --filter @purse/api test test/ledger/random-ops`.
+
+## Contests and settlement
+
+- `apps/purse/src/contests/transition.ts` is the only writer of `contests.state`; the
+  state table is `states.ts` and the database holds the same table in the
+  `contests_state_machine` trigger (`drizzle/0006_contest_guards.sql`), so change both
+  together. `settling` is entered and left inside `executeSettlement`'s transaction under
+  the contest row lock (`lockContest`, `SELECT ... FOR UPDATE`), which every contest write
+  starts with. Account row locks come after it, sorted by id, in one statement per
+  operation (`voidContest` locks every wallet it will refund up front for that reason).
+- `apps/purse/src/settlement/` is pure: no database, clock or randomness may be imported
+  there, and `previewSettlement` and `closeContest` must keep calling the same `settle` and
+  `payoutHash`. The rounding rule and each structure's meaning are documented in
+  `settle.ts` and `settlement/README.md`; `docs/decisions.md` (phase 2) records the rules
+  the spec left open (expected results, finished attempts, the hash's canonical form).
+- Every contest mutation takes an `idempotencyKey` and goes through `idempotent()`
+  (`contests/idempotency.ts`, backed by `idempotency_keys`); money moves only through the
+  ledger's typed flows inside the same transaction. New mutations follow the same shape:
+  lock the contest first, post through `postEntry`'s helpers, record with `idempotent`.
+- The eligibility hook `contests/eligibility.ts` always allows and is phase 3's to replace.
 
 ## The boundary, and where things go
 
