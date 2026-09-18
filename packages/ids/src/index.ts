@@ -24,6 +24,10 @@ export const ID_PREFIXES = {
   account: 'acct',
   entry: 'ent',
   transaction: 'txn',
+  // Purse ledger and plumbing (system spec 4.1, 4.2)
+  journalEntry: 'je',
+  journalLine: 'jl',
+  audit: 'aud',
   // Sideout (system spec 5.1)
   charity: 'chr',
 } as const;

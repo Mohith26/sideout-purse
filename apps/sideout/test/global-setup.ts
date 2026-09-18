@@ -11,6 +11,7 @@ import { migrationsFolder } from '../src/paths';
 export default async function globalSetup(): Promise<void> {
   const envFile = path.resolve(import.meta.dirname, '../.env');
   if (existsSync(envFile)) process.loadEnvFile(envFile);
+  process.env['SIDEOUT_DATABASE_URL_TEST'] ??= 'postgres://sideout_app:sideout_app@localhost:5432/sideout_test';
 
   const config = loadEnv({ ...process.env, NODE_ENV: 'test' });
   const database = connect(config.databaseUrl, { max: 1 });

@@ -1,6 +1,8 @@
 # One Postgres 16 instance, two logical databases (decision D2). The init script creates
-# the `purse` and `sideout` databases (plus their `_test` twins) and the `purse_app` /
-# `sideout_app` roles, each able to connect only to its own database.
+# the `purse` and `sideout` databases (plus their `_test` twins) and three roles:
+# `purse_migrator` (owns Purse's databases; migrations and seeds), `purse_app` (Purse's
+# runtime, no ownership, no UPDATE/DELETE on the journal) and `sideout_app`. Each role can
+# connect only to its own app's databases.
 #
 #   docker compose up -d
 #   cp apps/purse/.env.example apps/purse/.env && cp apps/sideout/.env.example apps/sideout/.env
@@ -19,6 +21,7 @@ services:
       POSTGRES_DB: postgres
       # Application role passwords; local defaults, override in a shell for anything shared.
       PURSE_DB_PASSWORD: ${PURSE_DB_PASSWORD:-purse_app}
+      PURSE_MIGRATOR_DB_PASSWORD: ${PURSE_MIGRATOR_DB_PASSWORD:-purse_migrator}
       SIDEOUT_DB_PASSWORD: ${SIDEOUT_DB_PASSWORD:-sideout_app}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"

@@ -35,6 +35,103 @@ lightest surface, and 5.4:1 on `--bg-base`, so every tier passes on every surfac
 contrast unit test in `@sideout/ui` asserts this for every text tier on every background
 tier and would fail against the original value.
 
+## Phase 1 decisions
+
+### Two Purse database roles: `purse_migrator` owns, `purse_app` runs
+
+Spec 4.2.2 rule 5 requires `UPDATE` and `DELETE` on the journal tables to be revoked from
+the application role "at the database level so this is not merely a convention". Phase 0
+had one Purse role, `purse_app`, which owned the databases. In Postgres an owner holds
+every privilege on what it owns and can re-grant anything that was revoked, so a `REVOKE`
+against an owner is exactly the convention the spec rules out: it documents an intent
+without enforcing it.
+
+Phase 1 therefore splits the role. `purse_migrator` owns the `purse` and `purse_test`
+databases and every object in them and is used only by `pnpm db:migrate`, `pnpm db:seed`,
+`pnpm db:setup` and the test reset. `purse_app` is the API's runtime role: it owns nothing,
+holds no grant option, and receives exactly the privileges the runtime needs from the
+custom migration `apps/purse/drizzle/0002_ledger_roles.sql`, which runs as the owner. On
+`journal_entries`, `journal_lines` and `audit_log` that is `SELECT` and `INSERT` only. A
+non-owner's `GRANT` is a no-op in Postgres and `ALTER TABLE ... OWNER TO` is refused, so
+the runtime cannot widen its own privileges; `test/ledger/roles.test.ts` proves all of
+this, including that the same `UPDATE` and `DELETE` statements succeed as the owner, so
+it is the role and not the SQL that is refused. The API also checks at boot that the role
+it connected as cannot rewrite the journal and refuses to serve otherwise.
+
+Sideout keeps one role. It has no append-only requirement, and a second role there would
+be ceremony without a guarantee behind it.
+
+### The audit log is append-only from day one
+
+`audit_log` (spec 4.1) lands in phase 1 with one writer, `account.opened`; phase 2's
+contest `transition()` is its next. It is held to the journal's rule from the start:
+`purse_app` holds `SELECT` and `INSERT` on it and nothing else, the boot-time role check
+covers it, and `test/ledger/roles.test.ts` expects its `UPDATE`, `DELETE` and `TRUNCATE`
+to fail. A record of who changed what is worth nothing if the runtime can edit it.
+
+### Column-level UPDATE on `accounts` and `tenants`
+
+A derived balance depends on an account's `kind`, `normal_side`, `tenant_id`, `owner_ref`
+and `asset`. A runtime that could rewrite those could flip a wallet's sign or move it to
+another tenant without touching the journal, and `reconcile()` would stay clean. The only
+runtime update is to `status` (freezing or closing), so `purse_app` holds `UPDATE` on
+`status` and `updated_at` only, on both `accounts` and `tenants`
+(`apps/purse/drizzle/0004_ledger_guards.sql`). Postgres checks `FOR UPDATE` row locks
+against column privileges, so `postEntry`'s account locks are unaffected.
+
+### The database checks every entry at commit
+
+Spec 4.2.2 rule 2 says an entry's balance is "checked in the same transaction that inserts
+the lines, before commit". `postEntry` checks rules 1 to 4 before it opens a transaction,
+which is the same thing for every caller of `postEntry`, but says nothing about a writer
+that bypasses it. A deferred constraint trigger on `journal_lines`
+(`journal_lines_entry_balanced`, initially deferred, so it runs at commit and sees every
+line of the transaction) verifies that each entry touched has at least two lines, one
+asset, and debits equal to credits, whoever is writing and however many statements they
+used. The service keeps its own checks for their error codes; the trigger is the floor.
+Only the owner can disable it, which the reconcile tests do for one transaction at a time
+to inject the corruption `reconcile()` exists to find.
+
+### Idempotency keys are unique per tenant
+
+Spec 4.2.2 reads `idempotency_key (unique, not null)`. The unique index is on
+(`tenant_id`, `idempotency_key`) rather than on the key alone, and `postEntry` looks a
+key up within the caller's tenant. Tenancy is real from day one, and partner-chosen keys
+(`Idempotency-Key` headers, phase 3) would otherwise collide across partners: the second
+partner to use a key would be refused a legitimate operation and handed the first
+partner's entry id in the conflict detail. Within a tenant the rule is the spec's: the
+same key with the same payload returns the original entry, a different payload is a
+conflict, and no other tenant's use of the key is visible. `reverseEntry` and `voidEscrow`
+take the acting tenant for the same reason and refuse another tenant's entry with
+`entry_wrong_tenant` at the ledger boundary, not in each caller.
+
+### The last reconcile result is not on `/health` yet
+
+Spec section 10 lists "last reconcile result" among what `GET /health` reports. It
+arrives in phase 9 with the scheduled reconcile job and a persisted record of each run;
+until then there is nothing durable to report (an in-process memory of the last
+`GET /internal/reconcile` call would read `null` after every restart and differ per
+replica), so the field is absent rather than misleading. `/health` reports sha, migration
+state, ruleset version and SDK version, as spec 4.7 lists.
+
+### Journal timestamps at millisecond precision
+
+`posted_at` and `created_at` on `journal_entries` are `timestamptz(3)`. A JavaScript
+`Date` carries milliseconds; at Postgres's default microsecond precision an entry's
+`posted_at` read back and passed to `balanceOf(asOf)` would fall a fraction of a
+millisecond before the entry itself and exclude it. At millisecond precision the value
+round-trips exactly, so "the balance as of this entry" means what it says. `posted_at` is
+`clock_timestamp()` taken after every lock is held, so for any one account it follows
+commit order; `created_at` keeps the transaction start.
+
+### `contest_escrow` may not go negative either
+
+Spec I3 protects `user_wallet`. `postEntry` applies the same write-time guard to
+`contest_escrow`: funds held for a contest cannot be less than nothing, and refusing it in
+the ledger means phase 2 cannot refund or settle more than was escrowed by construction.
+The debit-normal source accounts and the liability accounts run negative by design
+(issuing points debits `promo_liability`).
+
 ## Phase 0 implementation choices worth knowing
 
 These are not spec decisions; they are the answers phase 0 gave to questions the spec

@@ -34,7 +34,12 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorType, number>> = {
   internal_error: 500,
 };
 
-export type ApiError = { type: ApiErrorType; code: string; message: string };
+/**
+ * `detail` is optional structured context a partner can act on: `not_eligible` carries
+ * `reasons[]` and `requiredAction`, an invariant failure carries the reconcile report.
+ * It never contains a connection string, a key, or a stack.
+ */
+export type ApiError = { type: ApiErrorType; code: string; message: string; detail?: Record<string, unknown> };
 
 export type ApiErrorEnvelope = { error: ApiError };
 export type ApiDataEnvelope<T> = { data: T };

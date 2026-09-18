@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { EnvError, loadEnv } from '../src/env';
+import { EnvError, loadEnv, requireMigratorUrl } from '../src/env';
 
 const DEV_URL = 'postgres://purse_app:secret@localhost:5432/purse';
 const TEST_URL = 'postgres://purse_app:secret@localhost:5432/purse_test';
@@ -29,5 +29,33 @@ describe('env', () => {
     const env = loadEnv({ PURSE_DATABASE_URL: DEV_URL, PORT: '8080', BUILD_SHA: 'deadbeef' });
     expect(env.port).toBe(8080);
     expect(env.buildSha).toBe('deadbeef');
+  });
+
+  it('resolves the migrator URL per NODE_ENV and only the scripts require it', () => {
+    const MIGRATOR = 'postgres://purse_migrator:secret@localhost:5432/purse';
+    const MIGRATOR_TEST = 'postgres://purse_migrator:secret@localhost:5432/purse_test';
+    const dev = loadEnv({ PURSE_DATABASE_URL: DEV_URL, PURSE_MIGRATOR_DATABASE_URL: MIGRATOR, PURSE_MIGRATOR_DATABASE_URL_TEST: MIGRATOR_TEST });
+    expect(dev.migratorDatabaseUrl).toBe(MIGRATOR);
+    expect(requireMigratorUrl(dev)).toBe(MIGRATOR);
+
+    const test = loadEnv({ NODE_ENV: 'test', PURSE_DATABASE_URL_TEST: TEST_URL, PURSE_MIGRATOR_DATABASE_URL: MIGRATOR, PURSE_MIGRATOR_DATABASE_URL_TEST: MIGRATOR_TEST });
+    expect(test.migratorDatabaseUrl).toBe(MIGRATOR_TEST);
+
+    // The API process runs without it; a migrate/seed/reset asks for it by name.
+    const runtimeOnly = loadEnv({ PURSE_DATABASE_URL: DEV_URL });
+    expect(runtimeOnly.migratorDatabaseUrl).toBeUndefined();
+    expect(() => requireMigratorUrl(runtimeOnly)).toThrow(/PURSE_MIGRATOR_DATABASE_URL is required/);
+    expect(() => requireMigratorUrl(loadEnv({ NODE_ENV: 'test', PURSE_DATABASE_URL_TEST: TEST_URL }))).toThrow(
+      /PURSE_MIGRATOR_DATABASE_URL_TEST is required/,
+    );
+    expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, PURSE_MIGRATOR_DATABASE_URL: 'mysql://x/y' })).toThrow(EnvError);
+  });
+
+  it('accepts an internal API token only when it is long enough', () => {
+    expect(loadEnv({ PURSE_DATABASE_URL: DEV_URL }).internalApiToken).toBeUndefined();
+    expect(loadEnv({ PURSE_DATABASE_URL: DEV_URL, INTERNAL_API_TOKEN: 'a-token-of-sixteen-chars' }).internalApiToken).toBe(
+      'a-token-of-sixteen-chars',
+    );
+    expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, INTERNAL_API_TOKEN: 'short' })).toThrow(EnvError);
   });
 });

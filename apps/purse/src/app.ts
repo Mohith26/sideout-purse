@@ -2,15 +2,20 @@ import { Hono } from 'hono';
 import type { Sql } from '@repo/db';
 import { errorFields, type Logger } from '@repo/logger';
 
+import type { Db } from './db/client';
 import { ApiFailure, fail } from './http/envelope';
 import { requestId, type RequestScope } from './http/request-id';
 import { healthRoutes } from './routes/health';
+import { internalRoutes } from './routes/internal';
 
 export type AppDeps = {
   sql: Sql;
+  db: Db;
   logger: Logger;
   migrationsFolder: string;
   sha: string;
+  nodeEnv: 'development' | 'test' | 'production';
+  internalApiToken: string | undefined;
 };
 
 /**
@@ -46,6 +51,7 @@ export function createApp(deps: AppDeps) {
   });
 
   app.route('/', healthRoutes({ sql: deps.sql, migrationsFolder: deps.migrationsFolder, sha: deps.sha }));
+  app.route('/', internalRoutes({ db: deps.db, internalApiToken: deps.internalApiToken, nodeEnv: deps.nodeEnv }));
 
   return app;
 }

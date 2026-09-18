@@ -29,7 +29,6 @@ describe('GET /health', () => {
         migrations: { applied: journal.entries.length, available: journal.entries.length, pending: 0 },
         rulesetVersion: null,
         sdkVersion: SDK_VERSION,
-        lastReconcile: null,
       },
     });
   });
