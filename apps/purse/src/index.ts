@@ -51,6 +51,7 @@ const { app } = createApp({
   internalApiToken: config.internalApiToken,
   providers,
   rateLimit: config.rateLimit,
+  trustedProxyHops: config.trustedProxyHops,
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

@@ -2,7 +2,6 @@ import type { HttpBindings } from '@hono/node-server';
 import type { Context, MiddlewareHandler } from 'hono';
 import { RATE_LIMIT_LIMIT_HEADER, RATE_LIMIT_REMAINING_HEADER, RATE_LIMIT_RESET_HEADER, RETRY_AFTER_HEADER } from '@purse/types';
 
-import type { AuthenticatedKey } from '../auth/api-keys';
 import { isAuthError } from '../auth/errors';
 import type { AuthScope } from './auth';
 import { ApiFailure } from './envelope';
@@ -16,9 +15,11 @@ import { ApiFailure } from './envelope';
  * its key's, keyed by the key's id, which only the key itself can reach: a stranger who
  * knows a partner's visible prefix (it is shown in the console and in error details)
  * cannot spend the partner's tokens. A request that fails authentication spends from its
- * address's, so guessing is throttled where it comes from; once an address has spent its
- * bucket on failures, its next request is refused before the argon2 verification it would
- * cost. Nothing is ever keyed by the prefix.
+ * address's, and once that bucket is empty a failure is answered 429 instead of 401, so
+ * guessing is told to back off where it comes from. A request that authenticates is never
+ * refused on its address, whatever else came from it: behind a proxy every partner shares
+ * one, and nobody may lock a partner out with a stream of bad keys. Nothing is ever keyed
+ * by the prefix.
  *
  * Buckets live in process memory, at most `MAX_BUCKETS` of them, the least recently used
  * evicted first: one replica, one view. A shared store is a phase 9 concern
@@ -55,12 +56,6 @@ export class TokenBuckets {
       return { allowed: true, remaining: Math.floor(bucket.tokens), retryAfterMs: 0 };
     }
     return { allowed: false, remaining: 0, retryAfterMs: Math.ceil(((1 - bucket.tokens) / this.config.perSecond) * 1000) };
-  }
-
-  /** The tokens `key` holds at `now` without spending one; a key never seen holds a full bucket. */
-  available(key: string, now: number): number {
-    const bucket = this.buckets.get(key);
-    return bucket === undefined ? this.config.burst : Math.floor(this.refilled(bucket, now));
   }
 
   get size(): number {
@@ -102,9 +97,26 @@ export class TokenBuckets {
   }
 }
 
-/** The peer's address as the Node server saw it; a request with no socket (a test, an in-process call) shares one bucket. */
-export function remoteAddress(env: unknown): string {
-  return (env as Partial<HttpBindings> | undefined)?.incoming?.socket.remoteAddress ?? 'unknown';
+export type AddressOptions = {
+  /**
+   * How many proxies in front of Purse append to `X-Forwarded-For` (`TRUSTED_PROXY_HOPS`).
+   * The client address is the entry that many from the header's right, which only a
+   * trusted proxy could have written; 0 ignores the header and uses the socket's address.
+   */
+  trustedProxyHops: number;
+};
+
+/** The address a request came from, as far as the trusted proxies can tell; a request with no socket (a test, an in-process call) shares one bucket. */
+export function clientAddress(c: Context, options: AddressOptions): string {
+  if (options.trustedProxyHops > 0) {
+    const forwarded = (c.req.header('x-forwarded-for') ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== '');
+    const hop = forwarded.at(-options.trustedProxyHops);
+    if (hop !== undefined) return hop;
+  }
+  return (c.env as Partial<HttpBindings> | undefined)?.incoming?.socket.remoteAddress ?? 'unknown';
 }
 
 function limited(c: Context, buckets: TokenBuckets, taken: Taken): ApiFailure {
@@ -120,26 +132,25 @@ function limited(c: Context, buckets: TokenBuckets, taken: Taken): ApiFailure {
 }
 
 /**
- * Before authentication: an address whose failed attempts have spent its bucket is refused
- * outright, and a failure it lets through spends one more token. A request that
- * authenticates costs the address nothing. Hono renders an error where it is thrown, so by
- * the time `next()` returns the refusal is the response and `c.error` says what it was.
+ * Around authentication: a request that fails it spends one token from its address's
+ * bucket, and when the bucket is empty the answer is 429 rather than 401. A request that
+ * authenticates costs the address nothing and is never refused here. Hono renders an error
+ * where it is thrown, so by the time `next()` returns the refusal is the response and
+ * `c.error` says what it was.
  */
-export function limitAuthFailures(buckets: TokenBuckets, clock: () => number = Date.now): MiddlewareHandler {
+export function limitAuthFailures(buckets: TokenBuckets, address: AddressOptions, clock: () => number = Date.now): MiddlewareHandler {
   return async (c, next) => {
-    const key = `address:${remoteAddress(c.env)}`;
-    if (buckets.available(key, clock()) < 1) throw limited(c, buckets, buckets.take(key, clock()));
     await next();
-    if (isAuthError(c.error) && c.error.apiType === 'authentication_error') buckets.take(key, clock());
+    if (!isAuthError(c.error) || c.error.apiType !== 'authentication_error') return;
+    const taken = buckets.take(`address:${clientAddress(c, address)}`, clock());
+    if (!taken.allowed) throw limited(c, buckets, taken);
   };
 }
 
 /** After authentication: the key's own bucket, reported in the `RateLimit-*` headers. */
 export function rateLimit(buckets: TokenBuckets, clock: () => number = Date.now): MiddlewareHandler<AuthScope> {
   return async (c, next) => {
-    const auth = c.get('auth') as AuthenticatedKey | undefined;
-    const key = auth === undefined ? `address:${remoteAddress(c.env)}` : `key:${auth.key.id}`;
-    const taken = buckets.take(key, clock());
+    const taken = buckets.take(`key:${c.get('auth').key.id}`, clock());
     if (!taken.allowed) throw limited(c, buckets, taken);
     c.header(RATE_LIMIT_LIMIT_HEADER, String(buckets.config.burst));
     c.header(RATE_LIMIT_REMAINING_HEADER, String(taken.remaining));

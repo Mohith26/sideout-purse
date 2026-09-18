@@ -31,6 +31,7 @@ export type HarnessOptions = {
   sha?: string;
   internalApiToken?: string;
   rateLimit?: RateLimitConfig;
+  trustedProxyHops?: number;
   clock?: () => number;
   inProgressWaitMs?: number;
   devIdentity?: DevIdentityLists;
@@ -68,6 +69,7 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     internalApiToken: overrides.internalApiToken,
     providers,
     rateLimit: overrides.rateLimit ?? TEST_RATE_LIMIT,
+    ...(overrides.trustedProxyHops === undefined ? {} : { trustedProxyHops: overrides.trustedProxyHops }),
     ...(overrides.clock === undefined ? {} : { clock: overrides.clock }),
     ...(overrides.inProgressWaitMs === undefined ? {} : { inProgressWaitMs: overrides.inProgressWaitMs }),
   });

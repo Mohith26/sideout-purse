@@ -12,7 +12,9 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `.github/workflows/ci.yml` run the same four; keep them in step.
 - `apps/purse/src/env.ts` is the authoritative list of Purse's variables (`.env.example` is
   the template); the provider seams and the dev identity lists are explained in
-  `docs/providers.md`, the rate limit is `RATE_LIMIT_BURST` / `RATE_LIMIT_PER_SECOND`.
+  `docs/providers.md`, the rate limit is `RATE_LIMIT_BURST` / `RATE_LIMIT_PER_SECOND`, and
+  `TRUSTED_PROXY_HOPS` (0 locally, 1 behind the hosted load balancer) picks the client
+  address out of `X-Forwarded-For`.
 - Local Postgres: `pnpm db:setup` (any reachable Postgres; writes `apps/*/.env`) or
   `docker compose up -d` plus `cp apps/<app>/.env.example apps/<app>/.env` for both apps (the
   examples match compose), then `pnpm db:migrate` and `pnpm db:seed`. Tests use the `*_test`
@@ -105,8 +107,9 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - `apps/purse/src/auth/`: API keys (argon2id hash only, lookup by prefix, `scopes` holds the
   `operator` flag) and embed tokens (SHA-256, single use, five minutes).
 - `apps/purse/src/http/` is the v1 middleware, outermost first: `rate-limit.ts`
-  (`limitAuthFailures` per address before `auth.ts`, `rateLimit` per key id after it; in
-  memory, never keyed by a key's prefix), `auth.ts` (bearer secret key; `requireOperator()`),
+  (`limitAuthFailures` charges an address only for a failed authentication and never
+  refuses a request that authenticates; `rateLimit` per key id after `auth.ts`; in memory,
+  never keyed by a key's prefix), `auth.ts` (bearer secret key; `requireOperator()`),
   `body.ts` (JSON read once with a streamed size cap, `parseBody` with Zod),
   `idempotency.ts` (claims the key in `idempotency_reservations`, runs the handler on the
   pool as `c.get('db')` so no transaction or lock spans a provider call, then stores the

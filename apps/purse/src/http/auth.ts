@@ -15,8 +15,6 @@ export type AuthScope = { Variables: { auth: AuthenticatedKey } };
 
 export type BearerAuthDeps = {
   db: DbOrTx;
-  /** Paths served without a key: `/v1/health`, and the internal routes with their own token. */
-  isPublic?: (path: string) => boolean;
 };
 
 export function presentedToken(header: string | undefined): string | undefined {
@@ -27,10 +25,6 @@ export function presentedToken(header: string | undefined): string | undefined {
 
 export function bearerAuth(deps: BearerAuthDeps): MiddlewareHandler<RequestScope & AuthScope> {
   return async (c, next) => {
-    if (deps.isPublic?.(c.req.path) === true) {
-      await next();
-      return;
-    }
     const token = presentedToken(c.req.header('Authorization'));
     if (token === undefined) {
       throw new AuthError('missing_api_key', 'Authorization: Bearer <secret key> is required');

@@ -81,9 +81,15 @@ describe('bearer authentication', () => {
     const revoked = await client(h, boot.plainKey).get('/v1/users/usr_x');
     expect(revoked.status).toBe(401);
     expect(revoked.error).toMatchObject({ type: 'authentication_error', code: 'api_key_revoked' });
-    // The health and internal routes under /v1 take no API key.
+    // The health and internal routes under /v1 take no API key; any other method on their paths is an ordinary unauthenticated call.
     expect((await anonymous.get('/v1/health')).status).toBe(200);
     expect((await anonymous.get('/v1/internal/reconcile')).status).toBe(200);
+    for (const path of ['/v1/health', '/v1/internal/reconcile', '/v1/internal/anything']) {
+      const posted = await anonymous.post(path, {});
+      expect(posted.status, path).toBe(401);
+      expect(posted.error, path).toMatchObject({ type: 'authentication_error', code: 'missing_api_key' });
+    }
+    expect(h.lines.filter((line) => line['msg'] === 'unhandled error')).toEqual([]);
   });
 
   it('a plain secret key is a tenant actor and cannot issue credits; an operator key can', async () => {
@@ -356,15 +362,12 @@ describe('idempotency middleware', () => {
 describe('rate limiting', () => {
   it('a token bucket refills at the configured rate and reports how long to wait', () => {
     const buckets = new TokenBuckets({ burst: 3, perSecond: 2 });
-    expect(buckets.available('a', 0)).toBe(3);
     expect(buckets.take('a', 0)).toEqual({ allowed: true, remaining: 2, retryAfterMs: 0 });
     expect(buckets.take('a', 0)).toEqual({ allowed: true, remaining: 1, retryAfterMs: 0 });
     expect(buckets.take('a', 0)).toEqual({ allowed: true, remaining: 0, retryAfterMs: 0 });
-    expect(buckets.available('a', 0)).toBe(0);
     expect(buckets.take('a', 0)).toEqual({ allowed: false, remaining: 0, retryAfterMs: 500 });
     expect(buckets.take('b', 0).allowed).toBe(true);
     expect(buckets.take('a', 250)).toEqual({ allowed: false, remaining: 0, retryAfterMs: 250 });
-    expect(buckets.available('a', 500)).toBe(1);
     expect(buckets.take('a', 500)).toEqual({ allowed: true, remaining: 0, retryAfterMs: 0 });
     expect(buckets.take('a', 10_000)).toEqual({ allowed: true, remaining: 2, retryAfterMs: 0 });
     expect(() => new TokenBuckets({ burst: 0, perSecond: 1 })).toThrow(RangeError);
@@ -387,7 +390,7 @@ describe('rate limiting', () => {
     expect(buckets.size).toBe(MAX_BUCKETS);
   });
 
-  it('answers 429 with Retry-After and the sealed error once a key’s burst is spent, per key, and never charges a key for someone else’s guesses', async () => {
+  it('answers 429 with Retry-After and the sealed error once a key’s burst is spent, per key, and never refuses a genuine key for its address’s guesses', async () => {
     const migrator = connectMigrator();
     let now = 0;
     const h = harness({ rateLimit: { burst: 2, perSecond: 1 }, clock: () => now });
@@ -410,16 +413,20 @@ describe('rate limiting', () => {
       // Another key has its own bucket.
       expect((await client(h, boot.operatorKey).get('/v1/users/usr_x', { address: partner })).status).toBe(400);
 
-      // A stranger who knows the key's visible prefix spends their own address's bucket, not the key's:
-      // the genuine key is back to one token a second later, whatever the stranger sent.
+      // A stranger who knows the key's visible prefix spends their own address's failure
+      // bucket, not the key's: once it is empty their guesses are told to back off.
       now = 1_000;
       const stranger = '203.0.113.7';
       const lookalike = client(h, `${boot.plainKey.slice(0, 19)}${'Q'.repeat(13)}`);
       for (let i = 0; i < 5; i += 1) {
         const guess = await lookalike.get('/v1/users/usr_x', { address: stranger });
         expect(guess.status, `guess ${i}`).toBe(i < 2 ? 401 : 429);
-        if (i >= 2) expect(guess.error).toMatchObject({ type: 'rate_limited', code: 'too_many_requests' });
+        if (i >= 2) {
+          expect(guess.error).toMatchObject({ type: 'rate_limited', code: 'too_many_requests' });
+          expect(guess.headers.get(RETRY_AFTER_HEADER)).toBe('1');
+        }
       }
+      // The genuine key is back to one token a second later, whatever the stranger sent.
       const write = await api.post('/v1/users', { externalId: 'u1' }, { idempotencyKey: 'rl-1', address: partner });
       expect(write.status).toBe(201);
       const again = await api.post('/v1/users', { externalId: 'u2' }, { idempotencyKey: 'rl-2', address: partner });
@@ -427,8 +434,10 @@ describe('rate limiting', () => {
       expect(await h.database.db.select().from(idempotencyKeys).where(eq(idempotencyKeys.key, 'rl-2'))).toEqual([]);
       expect(await h.database.db.select().from(idempotencyReservations).where(eq(idempotencyReservations.key, 'rl-2'))).toEqual([]);
       expect(again.headers.get(IDEMPOTENCY_KEY_HEADER)).toBeNull();
-      // The stranger's address is refused before any key is looked at, even a genuine one.
-      expect((await client(h, boot.operatorKey).get('/v1/users/usr_x', { address: stranger })).status).toBe(429);
+      // A genuine key from the poisoned address is served: behind a proxy that address is everyone's.
+      const fromPoisoned = await client(h, boot.operatorKey).get('/v1/users/usr_x', { address: stranger });
+      expect(fromPoisoned.status).toBe(400);
+      expect(fromPoisoned.headers.get(RATE_LIMIT_REMAINING_HEADER)).toBe('1');
 
       // Requests that authenticate cost their address nothing: after the operator key's own bucket
       // is spent from a fresh address, that address still has its full allowance for failures.
@@ -446,6 +455,35 @@ describe('rate limiting', () => {
       await wipeLedger(migrator);
       await migrator.close();
       await h.close();
+    }
+  });
+
+  it('takes the client address from X-Forwarded-For only as many hops as TRUSTED_PROXY_HOPS trusts', async () => {
+    const migrator = connectMigrator();
+    const direct = harness({ rateLimit: { burst: 1, perSecond: 0.001 } });
+    const proxied = harness({ rateLimit: { burst: 1, perSecond: 0.001 }, trustedProxyHops: 1 });
+    try {
+      await wipeLedger(migrator);
+      resetAuthCaches();
+      const balancer = '10.0.0.2';
+      const guess = (h: TestHarness, forwardedFor: string) => client(h, undefined).get('/v1/users/usr_x', { address: balancer, headers: { 'x-forwarded-for': forwardedFor } });
+      // With no trusted proxy the header is ignored: every failure behind the balancer's socket shares one bucket.
+      expect((await guess(direct, '203.0.113.1')).status).toBe(401);
+      expect((await guess(direct, '203.0.113.2')).status).toBe(429);
+      // With one trusted hop the rightmost entry is the client; what a client writes further left is not believed.
+      expect((await guess(proxied, '203.0.113.1')).status).toBe(401);
+      expect((await guess(proxied, '203.0.113.1')).status).toBe(429);
+      expect((await guess(proxied, '203.0.113.2')).status).toBe(401);
+      expect((await guess(proxied, '198.51.100.9, 203.0.113.2')).status).toBe(429);
+      expect((await guess(proxied, '203.0.113.2, 203.0.113.3')).status).toBe(401);
+      // A request that arrives with no header at all falls back to the socket.
+      expect((await client(proxied, undefined).get('/v1/users/usr_x', { address: balancer })).status).toBe(401);
+      expect((await client(proxied, undefined).get('/v1/users/usr_x', { address: balancer })).status).toBe(429);
+    } finally {
+      await wipeLedger(migrator);
+      await migrator.close();
+      await direct.close();
+      await proxied.close();
     }
   });
 });

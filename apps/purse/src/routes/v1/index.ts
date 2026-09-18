@@ -12,27 +12,22 @@ import { usersRoutes } from './users';
 /**
  * The public API (spec 4.7), mounted at `/v1`. The middleware stack, outermost first:
  *
- *   1. the failed-authentication limit, per address, so guessing is throttled;
+ *   1. the failed-authentication limit, per address, so guessing is told to back off;
  *   2. bearer authentication, resolving the tenant and the actor from the secret key;
  *   3. rate limiting per key;
  *   4. the JSON body, read once;
  *   5. idempotency: on a mutation, the claim on the key and its stored response.
  *
- * `/v1/health` and `/v1/internal/*` are mounted by `app.ts` outside this stack: the first
- * is public and the second is gated by its own token, not by an API key.
+ * Every request that reaches this stack needs a key. `GET /v1/health` and
+ * `GET /v1/internal/*` are answered by the routes `app.ts` mounts before it, so they never
+ * arrive here; any other method on those paths is refused like any unauthenticated call.
  */
-export const PUBLIC_V1_PATHS: ReadonlySet<string> = new Set(['/v1/health']);
-
-export function isPublicV1Path(path: string): boolean {
-  return PUBLIC_V1_PATHS.has(path) || path.startsWith('/v1/internal/');
-}
-
-export type V1RouterDeps = V1Deps & { buckets: TokenBuckets; clock?: () => number; inProgressWaitMs?: number };
+export type V1RouterDeps = V1Deps & { buckets: TokenBuckets; trustedProxyHops: number; clock?: () => number; inProgressWaitMs?: number };
 
 export function v1Routes(deps: V1RouterDeps) {
   const v1 = new Hono<V1Scope>();
-  v1.use('*', limitAuthFailures(deps.buckets, deps.clock));
-  v1.use('*', bearerAuth({ db: deps.db, isPublic: isPublicV1Path }));
+  v1.use('*', limitAuthFailures(deps.buckets, { trustedProxyHops: deps.trustedProxyHops }, deps.clock));
+  v1.use('*', bearerAuth({ db: deps.db }));
   v1.use('*', rateLimit(deps.buckets, deps.clock));
   v1.use('*', readBody());
   v1.use('*', idempotency({ db: deps.db, ...(deps.inProgressWaitMs === undefined ? {} : { inProgressWaitMs: deps.inProgressWaitMs }) }));

@@ -59,6 +59,10 @@ const schema = z.object({
   // Per-key token bucket for /v1 (spec 4.7 `rate_limited`).
   RATE_LIMIT_BURST: z.coerce.number().int().min(1).max(100_000).default(100),
   RATE_LIMIT_PER_SECOND: z.coerce.number().positive().max(100_000).default(20),
+  // How many proxies in front of Purse append to X-Forwarded-For; the client address the
+  // failed-authentication limit counts is taken that many entries from the header's right.
+  // 0 (the default) trusts no header and uses the socket's address; the hosted deploy sets 1.
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
 });
 
 export type Env = {
@@ -83,6 +87,8 @@ export type Env = {
     devIdentity: { allow: string[]; deny: string[]; pending: string[] };
   };
   rateLimit: { burst: number; perSecond: number };
+  /** Proxies whose `X-Forwarded-For` entry is trusted for the client address; 0 means the socket's address. */
+  trustedProxyHops: number;
 };
 
 export class EnvError extends Error {
@@ -123,6 +129,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
       devIdentity: { allow: raw.DEV_IDENTITY_ALLOW, deny: raw.DEV_IDENTITY_DENY, pending: raw.DEV_IDENTITY_PENDING },
     },
     rateLimit: { burst: raw.RATE_LIMIT_BURST, perSecond: raw.RATE_LIMIT_PER_SECOND },
+    trustedProxyHops: raw.TRUSTED_PROXY_HOPS,
   };
 }
 

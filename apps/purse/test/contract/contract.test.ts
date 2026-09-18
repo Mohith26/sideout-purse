@@ -157,6 +157,11 @@ describe('v1 contract', () => {
     expect(blocked.data?.restrictions[0]).toMatchObject({ kind: 'platform_block' });
     expect(blocked.data?.restrictions[0]).not.toHaveProperty('reason');
     expect(JSON.stringify(blocked.raw)).not.toContain('chargeback');
+    // The same holds for a kind a user could have placed but an operator did (a cool-off taken by phone).
+    await addRestriction(h.database.db, { tenantId: boot.tenantId, userId: poor?.id ?? '', kind: 'cool_off', reason: 'risk desk: by phone', endsAt: new Date(Date.now() + 3_600_000), actor: { kind: 'operator', ref: 'ops-1' } });
+    const coolingOff = await plain.get<UserResource>(`/v1/users/${poor?.id ?? ''}`);
+    expect(coolingOff.data?.restrictions.map((each) => each.kind)).toEqual(['platform_block', 'cool_off']);
+    expect(coolingOff.data?.restrictions.every((each) => !('reason' in each))).toBe(true);
     const twice = await op.record('contests.entries.conflict', 'POST', `/v1/contests/${contestId}/entries`, { userId: anaId });
     expect(twice.status).toBe(409);
     expect(twice.error).toMatchObject({ type: 'conflict', code: 'already_entered' });

@@ -22,6 +22,8 @@ export type AppDeps = {
   internalApiToken: string | undefined;
   providers: Providers;
   rateLimit?: RateLimitConfig;
+  /** Proxies whose `X-Forwarded-For` entry names the client (`TRUSTED_PROXY_HOPS`); defaults to none. */
+  trustedProxyHops?: number;
   /** The rate limiter's clock, for tests. */
   clock?: () => number;
   /** How long a replay waits for a request in flight under its key, for tests. */
@@ -34,7 +36,7 @@ export type AppDeps = {
  *
  * `/health` and `/internal/reconcile` answer at the root and under `/v1` (spec 4.7 lists
  * them with the versioned base). They are registered before the `/v1` router, so its
- * authentication never sees them; the router also names them public.
+ * authentication never sees a `GET` to them; every other request under `/v1` needs a key.
  */
 export function createApp(deps: AppDeps) {
   const app = new Hono<RequestScope>();
@@ -71,6 +73,7 @@ export function createApp(deps: AppDeps) {
       db: deps.db,
       providers: deps.providers,
       buckets,
+      trustedProxyHops: deps.trustedProxyHops ?? 0,
       ...(deps.clock === undefined ? {} : { clock: deps.clock }),
       ...(deps.inProgressWaitMs === undefined ? {} : { inProgressWaitMs: deps.inProgressWaitMs }),
     }),

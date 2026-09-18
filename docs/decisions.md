@@ -460,10 +460,10 @@ written at once with one identity serialise on the fingerprint so the pair is st
 flagged. The head-to-head collusion signal is checked inside every head-to-head
 settlement for the pair it involved, and nowhere else; a meeting is a settled head-to-head
 contest with a strict winner, and a qualifying pair is flagged once. A restriction's
-`reason` reaches the partner only for the kinds a user places on themself
-(`self_exclusion`, `cool_off`); an operator's or the platform's reason stays in Purse. A
-`location` sent with an entry is recorded before the entry is attempted, so it stands
-whether or not the entry is refused.
+`reason` reaches the partner only when the user placed the restriction on themself
+(`created_by` is `user:<id>`, whatever the kind); an operator's or the platform's reason
+stays in Purse. A `location` sent with an entry is recorded before the entry is attempted,
+so it stands whether or not the entry is refused.
 
 ### Routes beyond the 4.7 list
 
@@ -491,9 +491,13 @@ The token buckets live in process memory (`RATE_LIMIT_BURST`, `RATE_LIMIT_PER_SE
 at most ten thousand buckets). An authenticated request spends from its key's bucket,
 keyed by the key's id, so nobody who merely knows a partner's visible prefix can spend
 the partner's allowance; a request that fails authentication spends from its address's
-bucket, and an address that has spent it on failures is refused before the next
-verification it would cost. The address is the socket's; a forwarded address behind a
-proxy and a shared store for several replicas are phase 9 hosting concerns. `/health` now
+bucket, and once that is empty a failure is answered 429 instead of 401. A request that
+authenticates is never refused on its address: behind a proxy every partner shares one,
+and a stream of bad keys must not lock the partners out. The address is the socket's
+unless `TRUSTED_PROXY_HOPS` says how many proxies append to `X-Forwarded-For`, in which
+case it is the entry that many from the header's right (the hosted deploy, behind one
+load balancer, sets it to 1; a bare process leaves it 0 so a client cannot choose its own
+bucket). A shared store for several replicas is a phase 9 hosting concern. `/health` now
 reports the active ruleset version; the last reconcile result still waits for phase 9's
 scheduled job.
 
