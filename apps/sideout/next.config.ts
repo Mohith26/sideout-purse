@@ -1,8 +1,19 @@
 import type { NextConfig } from 'next';
 
+/**
+ * Route files Next recognises. `route.dev.ts` files (today: `POST /api/dev/login`) are
+ * routes only when `dev.ts` is listed, and it is listed only outside production, so a
+ * production build has no such route at all rather than a disabled one.
+ * `test/auth/dev-login.test.ts` proves both halves.
+ */
+export function pageExtensionsFor(nodeEnv: string | undefined): string[] {
+  return nodeEnv === 'production' ? ['ts', 'tsx'] : ['dev.ts', 'ts', 'tsx'];
+}
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  pageExtensions: pageExtensionsFor(process.env.NODE_ENV),
   // Lint runs once at the repository root (`pnpm lint`), against the shared config.
   eslint: { ignoreDuringBuilds: true },
   // Workspace packages ship TypeScript source; Next compiles them alongside the app.

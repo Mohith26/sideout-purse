@@ -323,3 +323,92 @@ entry without it. `contest_participants.user_id` is a typed id with no foreign k
 public routes, `GET /contests/:id/preview` included, are phase 3's and mount on
 `previewSettlement` and `closeContest`, which already exercise the preview-hash mechanism
 end to end at the service level; phase 2 adds no HTTP surface for it.
+
+## Phase 6 decisions (Sideout domain)
+
+Two of these need the captain before the public deploy, one is a follow-up, and the rest record how phase 6
+answered questions the spec leaves to the builder.
+
+### SMS provider — needs the captain's choice before public deploy
+
+Phone sign-in (`POST /api/auth/request-code`, `POST /api/auth/verify`) sends its one-time
+code through the `SmsSender` seam in `apps/sideout/src/server/auth/sms.ts`. Two
+implementations exist: `log`, which writes the code to the structured log and is refused by
+the env loader in production, and `unavailable`, which is what production gets with no
+provider configured: request-code answers `sms_unavailable` (503) and issues no code. No real
+provider is wired. **Before the public deploy the captain chooses one (Twilio, Telnyx, ...)**
+and phase 9 adds the implementation behind the same interface plus its credentials to the
+Railway variables. Until then, production sign-in does not work by design rather than
+pretending to.
+
+### Stripe account — needs the captain's account before public deploy
+
+Donations go through `DonationProvider` (`apps/sideout/src/server/donations/`). The `stripe`
+implementation talks to Stripe's REST API with test-mode keys from `STRIPE_SECRET_KEY` and
+`STRIPE_WEBHOOK_SECRET`, one PaymentIntent per registration with the donation id as the
+idempotency key, and `POST /api/webhooks/stripe` verifies the signature over the raw body and
+applies events idempotently on their id. The `dev` implementation is selected automatically
+outside production when no key is set and marks a donation succeeded after a short
+clock-driven delay. In production with no key, registration refuses with
+`donation_provider_unavailable` (503). **The public deploy needs the captain's Stripe
+account**: its test-mode (then live-mode) keys and a webhook endpoint pointed at
+`/api/webhooks/stripe`. Tests never reach Stripe's network; the provider takes an injected
+`fetch` and the webhook tests use recorded fixtures.
+
+### Double elimination — follow-up, not built
+
+`double_elim` stays in the `tournament_format` enum so an organizer can create the event,
+but the draw engine refuses it at draw time with `double_elim_unsupported` (409) and writes
+nothing (`assertDrawableFormat` in `apps/sideout/src/domain/draw.ts`). A losers bracket with
+its crossover rounds and grand-final reset is a separate piece of engine work with its own
+property tests; it is a follow-up after phase 8.
+
+### The `forming` team status
+
+The brief's team enum was `registered | checked_in | withdrawn`. A team exists before it is
+registered: the captain creates it and names a partner by phone, the partner joins, and only
+then does the captain register (make the donation). That gap needed a state, so `forming` was
+added ahead of `registered`. Only `registered` and `checked_in` teams count toward capacity,
+appear in public responses, or enter a draw. A donation that fails with no other live payment
+returns the team to `forming`; a refund withdraws it.
+
+### Registration reserves the spot, the provider confirms it
+
+`POST /api/tournaments/:slug/register` runs two transactions: the first validates and marks
+the team `registered` with a `pending` donation, the second records the provider's
+reference. No database lock is held across the provider's network call. A provider failure
+marks the donation `failed`, which releases the spot, and the captain can register again. The
+Purse contest entry is not part of this route yet: `PurseContestEntry` in
+`apps/sideout/src/server/registration.ts` is the documented hook phase 7 fills, its default
+does nothing, and the response says `purseEntry: { status: 'not_wired' }`.
+
+### Cents are decimal strings on the wire
+
+Every `*Cents` field in Sideout's API is a decimal string (`"5000"`), and request bodies
+accept a string or an integer. Inside the server every amount is a `bigint`; the JSON
+encoder (`server/http/respond.ts`) renders any stray `bigint` as a string so no response can
+fail on one. This keeps floating point out of the money path on both sides of the boundary.
+
+### The dev-only login route is absent from production builds
+
+`POST /api/dev/login` signs in as a seeded user without a code. Its file is
+`route.dev.ts`, and `next.config.ts` lists the `dev.ts` page extension only when
+`NODE_ENV !== 'production'`, so a production build has no such route rather than a disabled
+one. `test/auth/dev-login.test.ts` asserts the extension list and the file naming, and the
+production build's route table confirms it.
+
+### Client address behind proxies
+
+Route handlers never see the socket. Next's server sets `X-Forwarded-For` from the socket
+when the header is absent; each trusted proxy appends the address it saw. `TRUSTED_PROXY_HOPS`
+says how many entries to count back (Railway: 1). With no proxy the last entry is used, which
+a direct client could supply themselves, so the per-address limit is backed by a per-phone
+limit and a global limit in `server/context.ts`.
+
+### Dev donations settle when their status is read
+
+The `dev` provider has no webhook. Instead, the endpoints that report donation status
+(`/api/tournaments/:slug/impact`, `/api/me`) first settle any pending dev donation older than
+`DEV_SETTLE_DELAY_MS` as of the request's clock. This is the same "reconcile against the
+provider before reporting" step a production deploy performs against Stripe's records, and it
+never runs in production because the dev provider is never selected there.

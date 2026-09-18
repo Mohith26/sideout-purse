@@ -1,18 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newId } from '@repo/ids';
 
-import { connect, type Database } from '../src/db/client';
 import { charities } from '../src/db/schema';
-import { env } from '../src/env';
 import { homeSnapshot } from '../src/home/snapshot';
+import { testDatabase, truncateAll, type Database } from './helpers';
 
 describe('home snapshot', () => {
   let database: Database;
-  beforeAll(() => {
-    database = connect(env().databaseUrl, { max: 1 });
+  beforeAll(async () => {
+    database = testDatabase();
+    await truncateAll(database);
   });
   afterAll(async () => {
-    await database.db.delete(charities);
+    await truncateAll(database);
     await database.close();
   });
 
