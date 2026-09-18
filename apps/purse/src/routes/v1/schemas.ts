@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { isId } from '@repo/ids';
 
+import { RequestValidationError } from '../../http/errors';
+
 /**
  * Zod on every body and path parameter (spec 4). Money arrives as a decimal string of minor
  * units, or as an integer that is exact in JSON; it leaves as a `bigint`. Ids are checked
@@ -21,8 +23,6 @@ export const contestIdSchema = z.string().refine((value) => isId(value, 'cnt'), 
 
 export function param<S extends z.ZodType>(schema: S, name: string, value: string | undefined): z.output<S> {
   const result = schema.safeParse(value);
-  if (!result.success) {
-    throw new z.ZodError(result.error.issues.map((issue) => ({ ...issue, path: [name, ...issue.path] })));
-  }
+  if (!result.success) throw new RequestValidationError(result.error, [name]);
   return result.data;
 }

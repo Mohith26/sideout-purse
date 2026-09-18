@@ -1,0 +1,2916 @@
+[
+  {
+    "name": "users.create",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:ana",
+        "displayName": "Ana Reyes",
+        "dateOfBirth": "1994-03-12",
+        "phoneE164": "+15125550101",
+        "location": {
+          "declaredRegion": "US-TX"
+        }
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:ana",
+          "displayName": "Ana Reyes",
+          "phoneE164": "+15125550101",
+          "dateOfBirth": "1994-03-12",
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          },
+          "restrictions": [],
+          "location": {
+            "regionCode": "US-TX",
+            "source": "declared",
+            "resolvedAt": "<instant>",
+            "confidence": 0.6
+          },
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.upsert",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:ana",
+        "displayName": "Ana M. Reyes"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:ana",
+          "displayName": "Ana M. Reyes",
+          "phoneE164": "+15125550101",
+          "dateOfBirth": "1994-03-12",
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          },
+          "restrictions": [],
+          "location": {
+            "regionCode": "US-TX",
+            "source": "declared",
+            "resolvedAt": "<instant>",
+            "confidence": 0.6
+          },
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.create.validation_failed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "",
+        "dateOfBirth": "yesterday"
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "validation_failed",
+          "message": "Invalid request: externalId: Too small: expected string to have >=1 characters; dateOfBirth: must be YYYY-MM-DD; dateOfBirth: must be a real calendar date; dateOfBirth: must not be in the future",
+          "detail": {
+            "issues": [
+              {
+                "path": "externalId",
+                "message": "Too small: expected string to have >=1 characters"
+              },
+              {
+                "path": "dateOfBirth",
+                "message": "must be YYYY-MM-DD"
+              },
+              {
+                "path": "dateOfBirth",
+                "message": "must be a real calendar date"
+              },
+              {
+                "path": "dateOfBirth",
+                "message": "must not be in the future"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.create.second",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:marcus",
+        "displayName": "Marcus Lee",
+        "dateOfBirth": "1991-07-30"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:marcus",
+          "displayName": "Marcus Lee",
+          "phoneE164": null,
+          "dateOfBirth": "1991-07-30",
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          },
+          "restrictions": [],
+          "location": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.create.third",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:priya",
+        "displayName": "Priya N",
+        "dateOfBirth": "1998-11-05"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:priya",
+          "displayName": "Priya N",
+          "phoneE164": null,
+          "dateOfBirth": "1998-11-05",
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          },
+          "restrictions": [],
+          "location": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.create.fourth",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:diego",
+        "displayName": "Diego A",
+        "dateOfBirth": "1989-01-22"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:diego",
+          "displayName": "Diego A",
+          "phoneE164": null,
+          "dateOfBirth": "1989-01-22",
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          },
+          "restrictions": [],
+          "location": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.get",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:ana",
+          "displayName": "Ana M. Reyes",
+          "phoneE164": "+15125550101",
+          "dateOfBirth": "1994-03-12",
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          },
+          "restrictions": [],
+          "location": {
+            "regionCode": "US-TX",
+            "source": "declared",
+            "resolvedAt": "<instant>",
+            "confidence": 0.6
+          },
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.get.not_found",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "user_not_found",
+          "message": "No user usr_<id>",
+          "detail": {
+            "userId": "usr_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.get.validation_failed",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/not-an-id",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "validation_failed",
+          "message": "Invalid request: id: must be a usr_ id",
+          "detail": {
+            "issues": [
+              {
+                "path": "id",
+                "message": "must be a usr_ id"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.get.permission_error",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "permission_error",
+          "code": "user_wrong_tenant",
+          "message": "User usr_<id> belongs to another tenant",
+          "detail": {
+            "userId": "usr_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.verification.start",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/verification",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "user": {
+            "id": "usr_<id>",
+            "externalId": "sideout:ana",
+            "displayName": "Ana M. Reyes",
+            "phoneE164": "+15125550101",
+            "dateOfBirth": "1994-03-12",
+            "verification": {
+              "state": "verified",
+              "provider": "dev",
+              "verifiedAt": "<instant>",
+              "reverifyAfter": "<instant>"
+            },
+            "restrictions": [],
+            "location": {
+              "regionCode": "US-TX",
+              "source": "declared",
+              "resolvedAt": "<instant>",
+              "confidence": 0.6
+            },
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "verification": {
+            "state": "verified",
+            "provider": "dev",
+            "verifiedAt": "<instant>",
+            "reverifyAfter": "<instant>"
+          },
+          "embedToken": {
+            "token": "<embed-token>",
+            "flow": "identity",
+            "userId": "usr_<id>",
+            "expiresAt": "<instant>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.verification.invalid_state",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/verification",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "invalid_state",
+          "code": "already_verified",
+          "message": "User usr_<id> is verified until <instant>",
+          "detail": {
+            "userId": "usr_<id>",
+            "verifiedAt": "<instant>",
+            "reverifyAfter": "<instant>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.tokens.create",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/tokens",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "flow": "wallet"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "token": "<embed-token>",
+          "flow": "wallet",
+          "userId": "usr_<id>",
+          "expiresAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.tokens.validation_failed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/tokens",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "flow": "admin"
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "validation_failed",
+          "message": "Invalid request: flow: Invalid option: expected one of \"identity\"|\"wallet\"|\"entry\"|\"rewards\"",
+          "detail": {
+            "issues": [
+              {
+                "path": "flow",
+                "message": "Invalid option: expected one of \"identity\"|\"wallet\"|\"entry\"|\"rewards\""
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.wallet.empty",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>/wallet",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "userId": "usr_<id>",
+          "balances": [
+            {
+              "asset": "POINTS",
+              "balance": "0",
+              "accountId": null
+            },
+            {
+              "asset": "CREDIT",
+              "balance": "0",
+              "accountId": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "users.credits.ana",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/credits",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "asset": "POINTS",
+        "amount": "1000",
+        "description": "welcome points"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "userId": "usr_<id>",
+          "asset": "POINTS",
+          "amount": "1000",
+          "journalEntryId": "je_<id>",
+          "balance": "1000"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.credits.marcus",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/credits",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "asset": "POINTS",
+        "amount": "1000",
+        "description": "welcome points"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "userId": "usr_<id>",
+          "asset": "POINTS",
+          "amount": "1000",
+          "journalEntryId": "je_<id>",
+          "balance": "1000"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.credits.priya",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/credits",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "asset": "POINTS",
+        "amount": "1000",
+        "description": "welcome points"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "userId": "usr_<id>",
+          "asset": "POINTS",
+          "amount": "1000",
+          "journalEntryId": "je_<id>",
+          "balance": "1000"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.credits.diego",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/credits",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "asset": "POINTS",
+        "amount": "1000",
+        "description": "welcome points"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "userId": "usr_<id>",
+          "asset": "POINTS",
+          "amount": "1000",
+          "journalEntryId": "je_<id>",
+          "balance": "1000"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.wallet",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>/wallet",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "userId": "usr_<id>",
+          "balances": [
+            {
+              "asset": "POINTS",
+              "balance": "1000",
+              "accountId": "acct_<id>"
+            },
+            {
+              "asset": "CREDIT",
+              "balance": "0",
+              "accountId": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "users.credits.validation_failed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/credits",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "asset": "POINTS",
+        "amount": "-5"
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "validation_failed",
+          "message": "Invalid request: amount: must be a decimal string of minor units",
+          "detail": {
+            "issues": [
+              {
+                "path": "amount",
+                "message": "must be a decimal string of minor units"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.create",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:doubles-1",
+        "kind": "tournament",
+        "title": "Saturday doubles",
+        "asset": "POINTS",
+        "entryAmount": "100",
+        "maxParticipants": 8,
+        "prizeStructure": {
+          "type": "percentage_split",
+          "percentages": [
+            50,
+            30,
+            20
+          ]
+        }
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-1",
+          "kind": "tournament",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "percentage_split",
+            "percentages": [
+              50,
+              30,
+              20
+            ]
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "draft",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "0",
+          "participantCount": 0,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.create.conflict",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:doubles-1",
+        "kind": "tournament",
+        "title": "Saturday doubles",
+        "asset": "POINTS",
+        "entryAmount": "100",
+        "maxParticipants": 8,
+        "prizeStructure": {
+          "type": "percentage_split",
+          "percentages": [
+            50,
+            30,
+            20
+          ]
+        }
+      }
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "conflict",
+          "code": "external_id_taken",
+          "message": "A contest with external_id sideout:doubles-1 already exists",
+          "detail": {
+            "externalId": "sideout:doubles-1",
+            "contestId": "cnt_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.create.validation_failed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "x2",
+        "kind": "tournament",
+        "title": "Saturday doubles",
+        "asset": "POINTS",
+        "entryAmount": "100",
+        "maxParticipants": 8,
+        "prizeStructure": {
+          "type": "percentage_split",
+          "percentages": [
+            60,
+            60
+          ]
+        }
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "invalid_prize_structure",
+          "message": "Invalid prizeStructure.percentages: percentages must sum to exactly 100",
+          "detail": {
+            "path": "prizeStructure.percentages",
+            "issues": [
+              {
+                "path": "prizeStructure.percentages",
+                "message": "percentages must sum to exactly 100"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.get",
+    "request": {
+      "method": "GET",
+      "path": "/v1/contests/cnt_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-1",
+          "kind": "tournament",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "percentage_split",
+            "percentages": [
+              50,
+              30,
+              20
+            ]
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "draft",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "0",
+          "participantCount": 0,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.open",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/open",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-1",
+          "kind": "tournament",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "percentage_split",
+            "percentages": [
+              50,
+              30,
+              20
+            ]
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "open",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "0",
+          "participantCount": 0,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.open.invalid_state",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/open",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "invalid_state",
+          "code": "invalid_transition",
+          "message": "Contest cnt_<id> is open and cannot move to open",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "from": "open",
+            "to": "open",
+            "allowed": [
+              "locked",
+              "cancelled",
+              "voided"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.create",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/entries",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "teamRef": "team-a",
+        "seed": 1
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "contest": {
+            "id": "cnt_<id>",
+            "externalId": "sideout:doubles-1",
+            "kind": "tournament",
+            "title": "Saturday doubles",
+            "asset": "POINTS",
+            "entryAmount": "100",
+            "maxParticipants": 8,
+            "prizeStructure": {
+              "type": "percentage_split",
+              "percentages": [
+                50,
+                30,
+                20
+              ]
+            },
+            "tieBreak": "split_evenly",
+            "settlementPolicy": "operator_close",
+            "eligibilityRulesetVersion": "2026.09.1",
+            "state": "open",
+            "opensAt": null,
+            "locksAt": null,
+            "escrowAccountId": "acct_<id>",
+            "escrowBalance": "100",
+            "participantCount": 1,
+            "settledAt": null,
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "participant": {
+            "id": "ent_<id>",
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "teamRef": "team-a",
+            "seed": 1,
+            "state": "entered",
+            "joinedAt": "<instant>",
+            "entryJournalEntryId": "je_<id>"
+          },
+          "eligibility": {
+            "allowed": true,
+            "rulesetVersion": "2026.09.1"
+          },
+          "journalEntryId": "je_<id>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.not_eligible",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/entries",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>"
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "not_eligible",
+          "code": "not_eligible",
+          "message": "User usr_<id> is not eligible to enter contest cnt_<id>: self_excluded",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "reasons": [
+              "self_excluded"
+            ],
+            "rulesetVersion": "2026.09.1"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.insufficient_funds",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/entries",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "seed": 2,
+        "location": {
+          "ip": "203.0.113.9"
+        }
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "contest": {
+            "id": "cnt_<id>",
+            "externalId": "sideout:doubles-1",
+            "kind": "tournament",
+            "title": "Saturday doubles",
+            "asset": "POINTS",
+            "entryAmount": "100",
+            "maxParticipants": 8,
+            "prizeStructure": {
+              "type": "percentage_split",
+              "percentages": [
+                50,
+                30,
+                20
+              ]
+            },
+            "tieBreak": "split_evenly",
+            "settlementPolicy": "operator_close",
+            "eligibilityRulesetVersion": "2026.09.1",
+            "state": "open",
+            "opensAt": null,
+            "locksAt": null,
+            "escrowAccountId": "acct_<id>",
+            "escrowBalance": "200",
+            "participantCount": 2,
+            "settledAt": null,
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "participant": {
+            "id": "ent_<id>",
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "teamRef": null,
+            "seed": 2,
+            "state": "entered",
+            "joinedAt": "<instant>",
+            "entryJournalEntryId": "je_<id>"
+          },
+          "eligibility": {
+            "allowed": true,
+            "rulesetVersion": "2026.09.1"
+          },
+          "journalEntryId": "je_<id>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.insufficient_funds.refused",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/entries",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>"
+      }
+    },
+    "response": {
+      "status": 402,
+      "body": {
+        "error": {
+          "type": "insufficient_funds",
+          "code": "insufficient_funds",
+          "message": "User usr_<id> holds 0 POINTS; entering contest cnt_<id> takes 100",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "reasons": [
+              "insufficient_balance"
+            ],
+            "requiredAction": "add_funds",
+            "rulesetVersion": "2026.09.1",
+            "balance": "0",
+            "requested": "100",
+            "shortfall": "100"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.conflict",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/entries",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>"
+      }
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "conflict",
+          "code": "already_entered",
+          "message": "User usr_<id> has already entered contest cnt_<id> (entered)",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "participantId": "ent_<id>",
+            "participantState": "entered"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.create.third",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/entries",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "seed": 3
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "contest": {
+            "id": "cnt_<id>",
+            "externalId": "sideout:doubles-1",
+            "kind": "tournament",
+            "title": "Saturday doubles",
+            "asset": "POINTS",
+            "entryAmount": "100",
+            "maxParticipants": 8,
+            "prizeStructure": {
+              "type": "percentage_split",
+              "percentages": [
+                50,
+                30,
+                20
+              ]
+            },
+            "tieBreak": "split_evenly",
+            "settlementPolicy": "operator_close",
+            "eligibilityRulesetVersion": "2026.09.1",
+            "state": "open",
+            "opensAt": null,
+            "locksAt": null,
+            "escrowAccountId": "acct_<id>",
+            "escrowBalance": "300",
+            "participantCount": 3,
+            "settledAt": null,
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "participant": {
+            "id": "ent_<id>",
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "teamRef": null,
+            "seed": 3,
+            "state": "entered",
+            "joinedAt": "<instant>",
+            "entryJournalEntryId": "je_<id>"
+          },
+          "eligibility": {
+            "allowed": true,
+            "rulesetVersion": "2026.09.1"
+          },
+          "journalEntryId": "je_<id>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.withdraw",
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/contests/cnt_<id>/entries/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "contest": {
+            "id": "cnt_<id>",
+            "externalId": "sideout:doubles-1",
+            "kind": "tournament",
+            "title": "Saturday doubles",
+            "asset": "POINTS",
+            "entryAmount": "100",
+            "maxParticipants": 8,
+            "prizeStructure": {
+              "type": "percentage_split",
+              "percentages": [
+                50,
+                30,
+                20
+              ]
+            },
+            "tieBreak": "split_evenly",
+            "settlementPolicy": "operator_close",
+            "eligibilityRulesetVersion": "2026.09.1",
+            "state": "open",
+            "opensAt": null,
+            "locksAt": null,
+            "escrowAccountId": "acct_<id>",
+            "escrowBalance": "200",
+            "participantCount": 2,
+            "settledAt": null,
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "participant": {
+            "id": "ent_<id>",
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "teamRef": null,
+            "seed": 3,
+            "state": "withdrawn",
+            "joinedAt": "<instant>",
+            "entryJournalEntryId": "je_<id>"
+          },
+          "refundJournalEntryId": "je_<id>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.withdraw.invalid_request",
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/contests/cnt_<id>/entries/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "not_a_participant",
+          "message": "User usr_<id> has not entered contest cnt_<id>",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.scores.invalid_state",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/scores",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "scores": [
+          {
+            "userId": "usr_<id>",
+            "score": 21,
+            "attemptFinished": true
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "invalid_state",
+          "code": "scores_not_accepted",
+          "message": "Contest cnt_<id> is open; scores are accepted while it is in progress or awaiting settlement",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "state": "open",
+            "expected": [
+              "in_progress",
+              "awaiting_settlement"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.lock",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/lock",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-1",
+          "kind": "tournament",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "percentage_split",
+            "percentages": [
+              50,
+              30,
+              20
+            ]
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "locked",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "200",
+          "participantCount": 2,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.not_eligible.closed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/entries",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>"
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "not_eligible",
+          "code": "contest_not_open",
+          "message": "Contest cnt_<id> is locked, not open for entries",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "state": "locked",
+            "reasons": [
+              "contest_not_open"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.start",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/start",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-1",
+          "kind": "tournament",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "percentage_split",
+            "percentages": [
+              50,
+              30,
+              20
+            ]
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "in_progress",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "200",
+          "participantCount": 2,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.scores.create",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/scores",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "scores": [
+          {
+            "userId": "usr_<id>",
+            "score": 21,
+            "attemptFinished": true,
+            "sourceRef": "match-1"
+          },
+          {
+            "userId": "usr_<id>",
+            "score": 18,
+            "attemptFinished": true,
+            "sourceRef": "match-1"
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "contest": {
+            "id": "cnt_<id>",
+            "externalId": "sideout:doubles-1",
+            "kind": "tournament",
+            "title": "Saturday doubles",
+            "asset": "POINTS",
+            "entryAmount": "100",
+            "maxParticipants": 8,
+            "prizeStructure": {
+              "type": "percentage_split",
+              "percentages": [
+                50,
+                30,
+                20
+              ]
+            },
+            "tieBreak": "split_evenly",
+            "settlementPolicy": "operator_close",
+            "eligibilityRulesetVersion": "2026.09.1",
+            "state": "awaiting_settlement",
+            "opensAt": null,
+            "locksAt": null,
+            "escrowAccountId": "acct_<id>",
+            "escrowBalance": "200",
+            "participantCount": 2,
+            "settledAt": null,
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "scores": [
+            {
+              "id": "sco_<id>",
+              "contestId": "cnt_<id>",
+              "userId": "usr_<id>",
+              "score": 21,
+              "attemptFinished": true,
+              "submittedAt": "<instant>",
+              "sourceRef": "match-1"
+            },
+            {
+              "id": "sco_<id>",
+              "contestId": "cnt_<id>",
+              "userId": "usr_<id>",
+              "score": 18,
+              "attemptFinished": true,
+              "submittedAt": "<instant>",
+              "sourceRef": "match-1"
+            }
+          ],
+          "settlement": null
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.scores.validation_failed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/scores",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "scores": [
+          {
+            "userId": "usr_<id>",
+            "score": "twenty"
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "validation_failed",
+          "message": "Invalid request: scores.0.score: Invalid input: expected number, received string; scores.0.attemptFinished: Invalid input: expected boolean, received undefined",
+          "detail": {
+            "issues": [
+              {
+                "path": "scores.0.score",
+                "message": "Invalid input: expected number, received string"
+              },
+              {
+                "path": "scores.0.attemptFinished",
+                "message": "Invalid input: expected boolean, received undefined"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.preview",
+    "request": {
+      "method": "GET",
+      "path": "/v1/contests/cnt_<id>/preview",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "contestId": "cnt_<id>",
+          "state": "awaiting_settlement",
+          "escrowTotal": "200",
+          "entries": [
+            {
+              "userId": "usr_<id>",
+              "participantId": "ent_<id>",
+              "participantState": "entered",
+              "score": 21,
+              "seed": 1,
+              "attemptFinished": true
+            },
+            {
+              "userId": "usr_<id>",
+              "participantId": "ent_<id>",
+              "participantState": "entered",
+              "score": 18,
+              "seed": 2,
+              "attemptFinished": true
+            }
+          ],
+          "payouts": [
+            {
+              "userId": "usr_<id>",
+              "placement": 1,
+              "payout": "125"
+            },
+            {
+              "userId": "usr_<id>",
+              "placement": 2,
+              "payout": "75"
+            }
+          ],
+          "payoutHash": "<sha256>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.close.conflict",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/close",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "payoutHash": "<sha256>"
+      }
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "conflict",
+          "code": "preview_hash_mismatch",
+          "message": "The payout preview is stale: the contest's inputs changed since it was computed. Fetch a new preview and close with its hash.",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "presented": "<sha256>",
+            "computed": "<sha256>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.close.validation_failed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/close",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "payoutHash": "nope"
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "validation_failed",
+          "message": "Invalid request: payoutHash: must be the 64-character hex digest from the preview",
+          "detail": {
+            "issues": [
+              {
+                "path": "payoutHash",
+                "message": "must be the 64-character hex digest from the preview"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.close",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/close",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "payoutHash": "<sha256>"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "contest": {
+            "id": "cnt_<id>",
+            "externalId": "sideout:doubles-1",
+            "kind": "tournament",
+            "title": "Saturday doubles",
+            "asset": "POINTS",
+            "entryAmount": "100",
+            "maxParticipants": 8,
+            "prizeStructure": {
+              "type": "percentage_split",
+              "percentages": [
+                50,
+                30,
+                20
+              ]
+            },
+            "tieBreak": "split_evenly",
+            "settlementPolicy": "operator_close",
+            "eligibilityRulesetVersion": "2026.09.1",
+            "state": "settled",
+            "opensAt": null,
+            "locksAt": null,
+            "escrowAccountId": "acct_<id>",
+            "escrowBalance": "0",
+            "participantCount": 2,
+            "settledAt": "<instant>",
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "results": [
+            {
+              "id": "res_<id>",
+              "contestId": "cnt_<id>",
+              "userId": "usr_<id>",
+              "placement": 1,
+              "score": 21,
+              "payoutAmount": "125",
+              "payoutJournalEntryId": "je_<id>",
+              "computedAt": "<instant>"
+            },
+            {
+              "id": "res_<id>",
+              "contestId": "cnt_<id>",
+              "userId": "usr_<id>",
+              "placement": 2,
+              "score": 18,
+              "payoutAmount": "75",
+              "payoutJournalEntryId": "je_<id>",
+              "computedAt": "<instant>"
+            }
+          ],
+          "payoutHash": "<sha256>",
+          "journalEntryId": "je_<id>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.results",
+    "request": {
+      "method": "GET",
+      "path": "/v1/contests/cnt_<id>/results",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "contestId": "cnt_<id>",
+          "state": "settled",
+          "settledAt": "<instant>",
+          "results": [
+            {
+              "id": "res_<id>",
+              "contestId": "cnt_<id>",
+              "userId": "usr_<id>",
+              "placement": 1,
+              "score": 21,
+              "payoutAmount": "125",
+              "payoutJournalEntryId": "je_<id>",
+              "computedAt": "<instant>"
+            },
+            {
+              "id": "res_<id>",
+              "contestId": "cnt_<id>",
+              "userId": "usr_<id>",
+              "placement": 2,
+              "score": 18,
+              "payoutAmount": "75",
+              "payoutJournalEntryId": "je_<id>",
+              "computedAt": "<instant>"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "users.wallet.paid",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>/wallet",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "userId": "usr_<id>",
+          "balances": [
+            {
+              "asset": "POINTS",
+              "balance": "1025",
+              "accountId": "acct_<id>"
+            },
+            {
+              "asset": "CREDIT",
+              "balance": "0",
+              "accountId": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.preview.settled",
+    "request": {
+      "method": "GET",
+      "path": "/v1/contests/cnt_<id>/preview",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "contestId": "cnt_<id>",
+          "state": "settled",
+          "escrowTotal": "200",
+          "entries": [
+            {
+              "userId": "usr_<id>",
+              "participantId": "ent_<id>",
+              "participantState": "entered",
+              "score": 21,
+              "seed": 1,
+              "attemptFinished": true
+            },
+            {
+              "userId": "usr_<id>",
+              "participantId": "ent_<id>",
+              "participantState": "entered",
+              "score": 18,
+              "seed": 2,
+              "attemptFinished": true
+            }
+          ],
+          "payouts": [
+            {
+              "userId": "usr_<id>",
+              "placement": 1,
+              "payout": "125"
+            },
+            {
+              "userId": "usr_<id>",
+              "placement": 2,
+              "payout": "75"
+            }
+          ],
+          "payoutHash": "<sha256>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.create.second",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:doubles-2",
+        "kind": "head_to_head",
+        "title": "Saturday doubles",
+        "asset": "POINTS",
+        "entryAmount": "100",
+        "maxParticipants": 8,
+        "prizeStructure": {
+          "type": "winner_take_all"
+        }
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-2",
+          "kind": "head_to_head",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "winner_take_all"
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "draft",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "0",
+          "participantCount": 0,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.open.second",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/open",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-2",
+          "kind": "head_to_head",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "winner_take_all"
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "open",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "0",
+          "participantCount": 0,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.entries.create.second",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/entries",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "contest": {
+            "id": "cnt_<id>",
+            "externalId": "sideout:doubles-2",
+            "kind": "head_to_head",
+            "title": "Saturday doubles",
+            "asset": "POINTS",
+            "entryAmount": "100",
+            "maxParticipants": 8,
+            "prizeStructure": {
+              "type": "winner_take_all"
+            },
+            "tieBreak": "split_evenly",
+            "settlementPolicy": "operator_close",
+            "eligibilityRulesetVersion": "2026.09.1",
+            "state": "open",
+            "opensAt": null,
+            "locksAt": null,
+            "escrowAccountId": "acct_<id>",
+            "escrowBalance": "100",
+            "participantCount": 1,
+            "settledAt": null,
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "participant": {
+            "id": "ent_<id>",
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "teamRef": null,
+            "seed": null,
+            "state": "entered",
+            "joinedAt": "<instant>",
+            "entryJournalEntryId": "je_<id>"
+          },
+          "eligibility": {
+            "allowed": true,
+            "rulesetVersion": "2026.09.1"
+          },
+          "journalEntryId": "je_<id>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.lock.second",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/lock",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-2",
+          "kind": "head_to_head",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "winner_take_all"
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "locked",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "100",
+          "participantCount": 1,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.start.second",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/start",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-2",
+          "kind": "head_to_head",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "winner_take_all"
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "in_progress",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "100",
+          "participantCount": 1,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.finish",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/finish",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "reason": "the other player never showed"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-2",
+          "kind": "head_to_head",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "winner_take_all"
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "awaiting_settlement",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "100",
+          "participantCount": 1,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.void",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/void",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "reason": "rained out"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "contest": {
+            "id": "cnt_<id>",
+            "externalId": "sideout:doubles-2",
+            "kind": "head_to_head",
+            "title": "Saturday doubles",
+            "asset": "POINTS",
+            "entryAmount": "100",
+            "maxParticipants": 8,
+            "prizeStructure": {
+              "type": "winner_take_all"
+            },
+            "tieBreak": "split_evenly",
+            "settlementPolicy": "operator_close",
+            "eligibilityRulesetVersion": "2026.09.1",
+            "state": "voided",
+            "opensAt": null,
+            "locksAt": null,
+            "escrowAccountId": "acct_<id>",
+            "escrowBalance": "0",
+            "participantCount": 1,
+            "settledAt": null,
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "refundJournalEntryIds": [
+            "je_<id>"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.void.invalid_state",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/void",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "invalid_state",
+          "code": "already_voided",
+          "message": "Contest cnt_<id> was already voided",
+          "detail": {
+            "contestId": "cnt_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.results.unsettled",
+    "request": {
+      "method": "GET",
+      "path": "/v1/contests/cnt_<id>/results",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "contestId": "cnt_<id>",
+          "state": "voided",
+          "settledAt": null,
+          "results": []
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.create.third",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:doubles-3",
+        "kind": "tournament",
+        "title": "Saturday doubles",
+        "asset": "POINTS",
+        "entryAmount": "100",
+        "maxParticipants": 8,
+        "prizeStructure": {
+          "type": "percentage_split",
+          "percentages": [
+            50,
+            30,
+            20
+          ]
+        }
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-3",
+          "kind": "tournament",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "percentage_split",
+            "percentages": [
+              50,
+              30,
+              20
+            ]
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "draft",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "0",
+          "participantCount": 0,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.cancel",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/cancel",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-3",
+          "kind": "tournament",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "percentage_split",
+            "percentages": [
+              50,
+              30,
+              20
+            ]
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "cancelled",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "0",
+          "participantCount": 0,
+          "settledAt": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.get.not_found",
+    "request": {
+      "method": "GET",
+      "path": "/v1/contests/cnt_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "contest_not_found",
+          "message": "No contest cnt_<id>",
+          "detail": {
+            "contestId": "cnt_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "idempotency.first",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:idem"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:idem",
+          "displayName": null,
+          "phoneE164": null,
+          "dateOfBirth": null,
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          },
+          "restrictions": [],
+          "location": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "idempotency.replay",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:idem"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "location": null,
+          "createdAt": "<instant>",
+          "phoneE164": null,
+          "updatedAt": "<instant>",
+          "externalId": "sideout:idem",
+          "dateOfBirth": null,
+          "displayName": null,
+          "restrictions": [],
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "idempotency.conflict",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "sideout:idem-2"
+      }
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "conflict",
+          "code": "idempotency_key_reused",
+          "message": "Idempotency-Key <idempotency-key> was already used for a different request",
+          "detail": {
+            "idempotencyKey": "<idempotency-key>",
+            "endpoint": "POST /v1/users"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "idempotency.missing",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": {
+        "externalId": "sideout:idem-3"
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "missing_idempotency_key",
+          "message": "Idempotency-Key is required on POST requests"
+        }
+      }
+    }
+  },
+  {
+    "name": "routing.not_found",
+    "request": {
+      "method": "GET",
+      "path": "/v1/nope",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 404,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "not_found",
+          "message": "No route for GET /v1/nope"
+        }
+      }
+    }
+  },
+  {
+    "name": "users.credits.permission_error",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/credits",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "asset": "POINTS",
+        "amount": "1"
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "permission_error",
+          "code": "operator_scope_required",
+          "message": "This route needs a secret key with the operator scope",
+          "detail": {
+            "keyPrefix": "<api-key>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.close.permission_error",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/close",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "payoutHash": "<sha256>"
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "permission_error",
+          "code": "operator_required",
+          "message": "Contest cnt_<id> settles on operator close; only an operator can move it out of awaiting_settlement",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "from": "awaiting_settlement",
+            "to": "settling",
+            "actorKind": "tenant"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "auth.missing_api_key",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": {
+          "type": "authentication_error",
+          "code": "missing_api_key",
+          "message": "Authorization: Bearer <secret key> is required"
+        }
+      }
+    }
+  },
+  {
+    "name": "health",
+    "request": {
+      "method": "GET",
+      "path": "/v1/health",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "sha": "test-sha",
+          "migrations": {
+            "applied": 9,
+            "available": 9,
+            "pending": 0
+          },
+          "rulesetVersion": "2026.09.1",
+          "sdkVersion": "0.0.1"
+        }
+      }
+    }
+  },
+  {
+    "name": "internal.reconcile",
+    "request": {
+      "method": "GET",
+      "path": "/v1/internal/reconcile",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "ok": true,
+          "ranAt": "<instant>",
+          "durationMs": "<ms>",
+          "invariants": [
+            {
+              "id": "I1",
+              "name": "journal nets to zero per asset",
+              "ok": true,
+              "status": "ok",
+              "detail": "nets to zero per asset (POINTS: debits 4800, credits 4800)"
+            },
+            {
+              "id": "I2",
+              "name": "every entry balances",
+              "ok": true,
+              "status": "ok",
+              "detail": "every one of 11 entries has 2+ lines in one asset and balances"
+            },
+            {
+              "id": "I3",
+              "name": "no user wallet is negative",
+              "ok": true,
+              "status": "ok",
+              "detail": "none of 4 user wallets is negative"
+            },
+            {
+              "id": "I4",
+              "name": "settled contests have zero escrow",
+              "ok": true,
+              "status": "ok",
+              "detail": "every one of 2 settled or voided contests has an empty escrow"
+            },
+            {
+              "id": "I5",
+              "name": "settled payouts equal escrowed total",
+              "ok": true,
+              "status": "ok",
+              "detail": "results of every one of 1 settled contests sum to what it escrowed"
+            },
+            {
+              "id": "I6",
+              "name": "every snapshot equals its derived balance",
+              "ok": true,
+              "status": "ok",
+              "detail": "no account_balance_snapshots table; balances are derived only"
+            },
+            {
+              "id": "I7",
+              "name": "every entry ledger link is a matching escrow entry",
+              "ok": true,
+              "status": "ok",
+              "detail": "every one of 4 participants links to a matching escrow entry"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "auth.secret_key_required",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": {
+          "type": "authentication_error",
+          "code": "secret_key_required",
+          "message": "A publishable key cannot call the API; use the secret key from a server"
+        }
+      }
+    }
+  },
+  {
+    "name": "auth.invalid_api_key",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": {
+          "type": "authentication_error",
+          "code": "invalid_api_key",
+          "message": "Invalid API key"
+        }
+      }
+    }
+  },
+  {
+    "name": "rate.first",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:ana",
+          "displayName": "Ana M. Reyes",
+          "phoneE164": "+15125550101",
+          "dateOfBirth": "1994-03-12",
+          "verification": {
+            "state": "verified",
+            "provider": "dev",
+            "verifiedAt": "<instant>",
+            "reverifyAfter": "<instant>"
+          },
+          "restrictions": [],
+          "location": {
+            "regionCode": "US-TX",
+            "source": "declared",
+            "resolvedAt": "<instant>",
+            "confidence": 0.6
+          },
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "rate_limited",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 429,
+      "body": {
+        "error": {
+          "type": "rate_limited",
+          "code": "too_many_requests",
+          "message": "Rate limit exceeded; retry in 1000s",
+          "detail": {
+            "retryAfterSeconds": 1000,
+            "limit": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "internal_error",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/verification",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 500,
+      "body": {
+        "error": {
+          "type": "internal_error",
+          "code": "provider_unavailable",
+          "message": "The identity provider dev could not complete the check"
+        }
+      }
+    }
+  }
+]

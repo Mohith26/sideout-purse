@@ -96,7 +96,8 @@ export async function startVerification(db: DbOrTx, input: StartVerificationInpu
       phoneE164: started.user.phoneE164,
     });
   } catch (error) {
-    throw new UsersError('provider_unavailable', `The identity provider ${input.identity.name} could not complete the check`, { provider: input.identity.name, cause: error instanceof Error ? error.message : String(error) });
+    // The vendor's error goes to the log as the cause, never to the client.
+    throw new UsersError('provider_unavailable', `The identity provider ${input.identity.name} could not complete the check`, { provider: input.identity.name }, { cause: error });
   }
 
   const verification = await db.transaction(async (tx) => {

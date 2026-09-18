@@ -1,7 +1,7 @@
 import { createHash, randomInt } from 'node:crypto';
 
 import { hash as argon2Hash, verify as argon2Verify } from '@node-rs/argon2';
-import { and, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, lte, or, sql } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
@@ -231,7 +231,7 @@ async function touchLastUsed(db: DbOrTx, key: ApiKey, now: Date): Promise<void> 
   await db
     .update(apiKeys)
     .set({ lastUsedAt: now, updatedAt: sql`now()` })
-    .where(and(eq(apiKeys.id, key.id), or(isNull(apiKeys.lastUsedAt), lt(apiKeys.lastUsedAt, threshold))));
+    .where(and(eq(apiKeys.id, key.id), or(isNull(apiKeys.lastUsedAt), lte(apiKeys.lastUsedAt, threshold))));
 }
 
 /** Every key of a tenant, hash omitted, newest first. */

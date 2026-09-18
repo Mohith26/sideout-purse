@@ -28,8 +28,9 @@ export class UsersError extends Error {
     readonly code: UsersErrorCode,
     message: string,
     readonly detail: Record<string, unknown> = {},
+    options: { cause?: unknown } = {},
   ) {
-    super(message);
+    super(message, options);
     this.apiType = USERS_ERROR_CODES[code];
   }
 }

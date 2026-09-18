@@ -187,18 +187,20 @@ describe('enterContest()', () => {
     expect(late.detail).toMatchObject({ locksAt: '2026-09-17T12:00:00.000Z' });
 
     // Funds: 250 minus two entries of 100 leaves 50, not enough for a third. The evaluator
-    // sees the shortfall first and refuses as `not_eligible` / `insufficient_balance`
-    // (spec 4.5), recording the refusal; the ledger's own guard stands behind it.
+    // sees the shortfall first and, it being the only reason, refuses as
+    // `insufficient_funds` with the spec 4.5 reason and action; the decision is recorded and
+    // the ledger's own guard stands behind it.
     const third = await makeContest(runtime.db, arena);
     await advance(runtime.db, arena, third.id, 'open');
     const broke = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: third.id, userId: user(0), idempotencyKey: key() }));
-    expect(broke.code).toBe('not_eligible');
-    expect(broke.detail).toMatchObject({ reasons: ['insufficient_balance'], requiredAction: 'add_funds', rulesetVersion: '2026.09.1' });
+    expect(broke.code).toBe('insufficient_funds');
+    expect(broke.apiType).toBe('insufficient_funds');
+    expect(broke.detail).toMatchObject({ reasons: ['insufficient_balance'], requiredAction: 'add_funds', rulesetVersion: '2026.09.1', balance: '50', requested: '100', shortfall: '50' });
     // A user with no wallet at all is refused the same way, and no wallet or participant row is left behind.
     const stranger = await eligibleUser(runtime.db, arena.tenantId);
     const nothing = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: third.id, userId: stranger, idempotencyKey: key() }));
-    expect(nothing.code).toBe('not_eligible');
-    expect(nothing.detail).toMatchObject({ reasons: ['insufficient_balance'] });
+    expect(nothing.code).toBe('insufficient_funds');
+    expect(nothing.detail).toMatchObject({ reasons: ['insufficient_balance'], balance: '0' });
     expect(await walletBalance(runtime.db, arena, stranger)).toBe(0n);
     expect(await listParticipants(runtime.db, third.id)).toEqual([]);
     expect(await escrowOf(runtime.db, third)).toBe(0n);

@@ -29,6 +29,10 @@ export async function collusionPairs(db: DbOrTx, input: { tenantId: Id<'tnt'>; r
   const { minMeetings, oneSidedShare } = input.ruleset.collusion;
   const users = [...(input.users ?? [])];
   const scoped = users.length > 0;
+  const list = sql.join(
+    users.map((userId) => sql`${userId}`),
+    sql`, `,
+  );
   const rows = await db.execute<{ a: string; b: string; meetings: number; a_wins: number }>(sql`
     select pair.a, pair.b, count(*)::int as meetings, sum(case when pair.winner = pair.a then 1 else 0 end)::int as a_wins
     from (
@@ -41,7 +45,7 @@ export async function collusionPairs(db: DbOrTx, input: { tenantId: Id<'tnt'>; r
         and c.state = 'settled'
         and (select count(*) from contest_results r where r.contest_id = c.id) = 2
     ) pair
-    ${scoped ? sql`where pair.a = any(${users}::text[]) or pair.b = any(${users}::text[])` : sql``}
+    ${scoped ? sql`where pair.a in (${list}) or pair.b in (${list})` : sql``}
     group by pair.a, pair.b
     having count(*) >= ${minMeetings}
     order by pair.a, pair.b

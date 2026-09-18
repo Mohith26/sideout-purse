@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { ZodError } from 'zod';
+import type { z } from 'zod';
 import { API_ERROR_STATUS, type ApiError, type ApiErrorEnvelope, type ApiErrorType } from '@purse/types';
 import { errorFields, type Logger } from '@repo/logger';
 
@@ -28,6 +28,24 @@ function isDomainError(error: unknown): error is DomainError {
   );
 }
 
+export type ValidationIssue = { path: string; message: string };
+
+/**
+ * A request that failed Zod validation. Zod 4's `ZodError` is deliberately not an `Error`,
+ * and Hono rethrows anything that is not one past `onError`, so the routes throw this
+ * instead (`parseBody`, `param`).
+ */
+export class RequestValidationError extends Error {
+  override readonly name = 'RequestValidationError';
+  readonly issues: ValidationIssue[];
+
+  constructor(error: z.ZodError, prefix: readonly string[] = []) {
+    const issues = error.issues.map((issue) => ({ path: [...prefix, ...issue.path.map(String)].join('.'), message: issue.message }));
+    super(`Invalid request: ${issues.map((issue) => `${issue.path || '(body)'}: ${issue.message}`).join('; ')}`);
+    this.issues = issues;
+  }
+}
+
 export type MappedError = { error: ApiError; status: ContentfulStatusCode; unexpected: boolean };
 
 export function toApiError(error: unknown): MappedError {
@@ -35,21 +53,17 @@ export function toApiError(error: unknown): MappedError {
     return { error: error.error, status: error.status ?? (API_ERROR_STATUS[error.error.type] as ContentfulStatusCode), unexpected: false };
   }
   if (isDomainError(error)) {
-    const detail = jsonSafe(error.detail);
+    // An internal error names its code and nothing of its cause; the log gets the rest.
+    const detail = error.apiType === 'internal_error' ? {} : jsonSafe(error.detail);
     return {
       error: { type: error.apiType, code: error.code, message: error.message, ...(Object.keys(detail).length === 0 ? {} : { detail }) },
       status: API_ERROR_STATUS[error.apiType] as ContentfulStatusCode,
       unexpected: error.apiType === 'internal_error',
     };
   }
-  if (error instanceof ZodError) {
+  if (error instanceof RequestValidationError) {
     return {
-      error: {
-        type: 'invalid_request',
-        code: 'validation_failed',
-        message: `Invalid request: ${error.issues.map((issue) => `${issue.path.map(String).join('.') || '(body)'}: ${issue.message}`).join('; ')}`,
-        detail: { issues: error.issues.map((issue) => ({ path: issue.path.map(String).join('.'), message: issue.message })) },
-      },
+      error: { type: 'invalid_request', code: 'validation_failed', message: error.message, detail: { issues: error.issues } },
       status: 400,
       unexpected: false,
     };

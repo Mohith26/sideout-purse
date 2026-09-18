@@ -49,13 +49,27 @@ export async function evaluateEntryEligibility(tx: DbOrTx, input: EntryEligibili
   });
 }
 
-/** The refusal an entry reports: `not_eligible` with the sealed reasons and required action in its detail (spec 4.7). */
-export function notEligible(contest: Contest, userId: string, decision: EligibilityDecision & { allowed: false }): ContestError {
-  return new ContestError('not_eligible', `User ${userId} is not eligible to enter contest ${contest.id}: ${decision.reasons.join(', ')}`, {
+/**
+ * The refusal an entry reports, with the sealed reasons and required action in its detail
+ * (spec 4.7): `insufficient_funds` when a shortfall is the only thing in the way, the money
+ * type a partner routes to funding; `not_eligible` for everything else, including a
+ * shortfall alongside a compliance reason (docs/decisions.md).
+ */
+export function notEligible(contest: Contest, userId: string, decision: EligibilityDecision & { allowed: false }, walletBalance: bigint): ContestError {
+  const detail = {
     contestId: contest.id,
     userId,
     reasons: decision.reasons,
     ...(decision.requiredAction === undefined ? {} : { requiredAction: decision.requiredAction }),
     rulesetVersion: decision.rulesetVersion,
-  });
+  };
+  if (decision.reasons.length === 1 && decision.reasons[0] === 'insufficient_balance') {
+    return new ContestError('insufficient_funds', `User ${userId} holds ${walletBalance} ${contest.asset}; entering contest ${contest.id} takes ${contest.entryAmount}`, {
+      ...detail,
+      balance: walletBalance.toString(),
+      requested: contest.entryAmount.toString(),
+      shortfall: (contest.entryAmount - walletBalance).toString(),
+    });
+  }
+  return new ContestError('not_eligible', `User ${userId} is not eligible to enter contest ${contest.id}: ${decision.reasons.join(', ')}`, detail);
 }

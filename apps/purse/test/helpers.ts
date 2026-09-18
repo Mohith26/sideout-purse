@@ -33,6 +33,8 @@ export type HarnessOptions = {
   rateLimit?: RateLimitConfig;
   clock?: () => number;
   devIdentity?: DevIdentityLists;
+  /** Replace one or more seams, for a test that needs a provider to misbehave. */
+  providers?: Partial<Providers>;
   /** Pool size; the HTTP tests that fire concurrent requests raise it. */
   max?: number;
 };
@@ -51,7 +53,10 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     },
   });
   const database = connectRuntime(overrides.max === undefined ? {} : { max: overrides.max });
-  const providers = createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', nodeEnv: 'test', allowDevProviders: false, ...(overrides.devIdentity === undefined ? {} : { devIdentity: overrides.devIdentity }) });
+  const providers: Providers = {
+    ...createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', nodeEnv: 'test', allowDevProviders: false, ...(overrides.devIdentity === undefined ? {} : { devIdentity: overrides.devIdentity }) }),
+    ...overrides.providers,
+  };
   const { app, buckets } = createApp({
     sql: database.sql,
     db: database.db,

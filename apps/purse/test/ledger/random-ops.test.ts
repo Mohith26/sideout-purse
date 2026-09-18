@@ -415,8 +415,8 @@ describe(`randomized operation sequence (${OPS} ops, seed ${SEED})`, () => {
     };
     const allowedContest: Partial<Record<Op['kind'], ContestErrorCode[]>> = {
       c_transition: ['invalid_transition', 'contest_has_entries', 'operator_required'],
-      // The evaluator refuses an unfunded entry as `not_eligible` (`insufficient_balance`) before the ledger would.
-      c_enter: ['contest_not_open', 'already_entered', 'contest_full', 'not_eligible'],
+      // The evaluator refuses an unfunded entry (`insufficient_funds`, or `not_eligible` with the shortfall among other reasons) before the ledger would.
+      c_enter: ['contest_not_open', 'already_entered', 'contest_full', 'not_eligible', 'insufficient_funds'],
       c_withdraw: ['invalid_contest_state', 'not_a_participant', 'participant_not_active'],
       c_score: ['scores_not_accepted', 'attempt_already_finished', 'participant_not_active', 'not_a_participant'],
       c_close: ['invalid_transition', 'preview_hash_mismatch', 'already_settled'],

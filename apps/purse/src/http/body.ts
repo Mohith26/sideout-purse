@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { z } from 'zod';
 
 import { ApiFailure } from './envelope';
+import { RequestValidationError } from './errors';
 
 /**
  * Every mutation's body is read once, as JSON, into `c.get('body')`: the idempotency
@@ -53,6 +54,6 @@ export function readBody(): MiddlewareHandler<BodyScope> {
 /** Validate the parsed body against a schema; a failure is `invalid_request` / `validation_failed` with every issue listed. */
 export function parseBody<S extends z.ZodType>(c: Pick<Context<BodyScope>, 'get'>, schema: S): z.output<S> {
   const result = schema.safeParse(c.get('body'));
-  if (!result.success) throw result.error;
+  if (!result.success) throw new RequestValidationError(result.error);
   return result.data;
 }

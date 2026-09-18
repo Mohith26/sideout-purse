@@ -77,7 +77,7 @@ export function idempotency(deps: IdempotencyDeps): MiddlewareHandler<Scope> {
 
     const tenantId = c.get('auth').tenant.id as Id<'tnt'>;
     const logger = c.get('logger');
-    const endpoint = `${c.req.method} ${c.req.routePath}`;
+    const endpoint = `${c.req.method} ${c.req.matchedRoutes.at(-1)?.path ?? c.req.path}`;
     const hash = httpRequestHash(c.req.method, c.req.path, c.get('body'));
 
     let response: Response;

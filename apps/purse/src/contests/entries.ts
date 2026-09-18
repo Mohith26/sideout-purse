@@ -158,7 +158,7 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
           const toRecord: RecordDecisionInput = { tenantId: input.tenantId, userId: user.id, contestId: contest.id, decision: eligibility, context: evaluated.context, ...requestId };
           if (!eligibility.allowed) {
             refusal = toRecord;
-            throw notEligible(contest, user.id, eligibility);
+            throw notEligible(contest, user.id, eligibility, walletBalance);
           }
           const decision = await recordDecision(tx, toRecord);
           if (evaluated.risk !== null && input.providers?.risk !== undefined) {
