@@ -24,16 +24,21 @@ export type AppContext = {
   purseEntry: PurseContestEntry;
 };
 
+/** Five per address per ten minutes, for code requests and, on its own counter, for verify attempts. */
+const PER_ADDRESS = { limit: 5, windowMs: 10 * 60_000, maxKeys: 10_000 } as const;
+
 /**
  * Sign-in limits over a ten-minute window: code requests per address, per phone and for
  * the whole process (the SMS budget, from `AUTH_CODE_GLOBAL_CAP`), and verify attempts per
- * address. The per-phone cap also bounds how many codes can be live for one number.
+ * address. The per-phone cap also bounds how many codes can be live for one number. The
+ * verify counter is separate from the request counter on purpose, so one sign-in (a
+ * request and a verify) costs one slot of each rather than two of one (docs/decisions.md).
  */
 export const AUTH_RATE_LIMITS = {
-  perAddress: { limit: 5, windowMs: 10 * 60_000, maxKeys: 10_000 },
+  perAddress: PER_ADDRESS,
   perPhone: { limit: 3, windowMs: 10 * 60_000, maxKeys: 10_000 },
   global: { windowMs: 10 * 60_000, maxKeys: 1 },
-  verifyPerAddress: { limit: 5, windowMs: 10 * 60_000, maxKeys: 10_000 },
+  verifyPerAddress: PER_ADDRESS,
 } as const;
 
 export type AppContextOverrides = Partial<Pick<AppContext, 'sms' | 'donationProvider' | 'purseEntry' | 'env'>>;

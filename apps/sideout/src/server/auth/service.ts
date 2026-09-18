@@ -37,12 +37,15 @@ export type AuthServiceDeps = {
   sms: SmsSender;
   sessionSecret: string;
   limiters: AuthLimiters;
-  /** Outside production the issued code is echoed in the response for tests and local use. */
+  /** Outside production the issued code is echoed in the response for tests and local use, with the contract spelled out. */
   echoCodes: boolean;
 };
 
+/** What the non-production echo says about the contract the sign-in screen must keep. */
+export const ECHO_HINT = 'Verify with this codeId and the code from the most recent message; keep the latest codeId when a code is requested again.';
+
 export type RequestCodeInput = { phoneE164: string; address: string; now: Date };
-export type RequestCodeResult = { codeId: string; expiresAt: Date; code?: string };
+export type RequestCodeResult = { codeId: string; expiresAt: Date; code?: string; hint?: string };
 
 export type VerifyCodeInput = { phoneE164: string; codeId: string; code: string; address: string; displayName?: string | undefined; now: Date };
 export type VerifyCodeResult = { user: User; created: boolean };
@@ -99,7 +102,7 @@ export function createAuthService(deps: AuthServiceDeps) {
         throw error;
       }
 
-      return deps.echoCodes ? { codeId: id, expiresAt, code } : { codeId: id, expiresAt };
+      return deps.echoCodes ? { codeId: id, expiresAt, code, hint: ECHO_HINT } : { codeId: id, expiresAt };
     },
 
     async verifyCode(input: VerifyCodeInput): Promise<VerifyCodeResult> {

@@ -8,12 +8,13 @@ import { GET as me } from '../../src/app/api/me/route';
 import { auditLog, authCodes, users } from '../../src/db/schema';
 import { env } from '../../src/env';
 import { CODE_MAX_ATTEMPTS } from '../../src/server/auth/codes';
+import { ECHO_HINT } from '../../src/server/auth/service';
 import { issueSession, sessionCookieHeader } from '../../src/server/auth/session';
 import { unavailableSmsSender, type SmsSender } from '../../src/server/auth/sms';
 import { AUTH_RATE_LIMITS, resetAppContext } from '../../src/server/context';
 import { cookieFor, createUser, data, errorOf, nextPhone, request, testDatabase, truncateAll, type Database } from '../helpers';
 
-type CodeResponse = { codeId: string; expiresAt: string; code?: string };
+type CodeResponse = { codeId: string; expiresAt: string; code?: string; hint?: string };
 type VerifyResponse = { user: { id: string; displayName: string; displayNameIsDefault: boolean; phoneE164: string | null; role: string }; created: boolean };
 
 describe('phone sign-in', () => {
@@ -32,6 +33,7 @@ describe('phone sign-in', () => {
     const phone = nextPhone();
     const issued = await data<CodeResponse>(await requestCode(request('POST', '/api/auth/request-code', { body: { phone } })));
     expect(issued.code).toMatch(/^\d{6}$/);
+    expect(issued.hint).toBe(ECHO_HINT);
     expect(new Date(issued.expiresAt).getTime()).toBeGreaterThan(Date.now());
 
     const [stored] = await database.db.select().from(authCodes).where(eq(authCodes.phoneE164, phone));
@@ -96,6 +98,18 @@ describe('phone sign-in', () => {
     expect((await errorOf(otherPhone)).code).toBe('code_invalid');
     const unknown = await verify(request('POST', '/api/auth/verify', { body: { phone, codeId: 'otp_00000000-0000-7000-8000-000000000000', code: '123456' }, headers: from(9) }));
     expect((await errorOf(unknown)).code).toBe('code_invalid');
+  });
+
+  it('answers only to the code whose id is named: an earlier message costs a guess against the latest id', async () => {
+    const phone = nextPhone();
+    const first = await data<CodeResponse>(await requestCode(request('POST', '/api/auth/request-code', { body: { phone } })));
+    const second = await data<CodeResponse>(await requestCode(request('POST', '/api/auth/request-code', { body: { phone } })));
+    const mixed = await verify(request('POST', '/api/auth/verify', { body: { phone, codeId: second.codeId, code: first.code } }));
+    expect((await errorOf(mixed)).code).toBe(first.code === second.code ? 'never' : 'code_invalid');
+    const [charged] = await database.db.select().from(authCodes).where(eq(authCodes.id, second.codeId));
+    expect(charged?.attempts).toBe(first.code === second.code ? 0 : 1);
+    // Both messages stay live for their own ids; the most recent one, answered properly, signs in.
+    expect((await verify(request('POST', '/api/auth/verify', { body: { phone, codeId: second.codeId, code: second.code } }))).status).toBe(200);
   });
 
   it("a stranger's requests and guesses for the same number lock only their own codes; the owner's still signs in", async () => {

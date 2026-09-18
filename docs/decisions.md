@@ -560,6 +560,15 @@ its name, and `POST /api/auth/verify` is unauthenticated by nature. What is guar
   is charged to a cap only after every cap (phone, address, instance) has allowed it, so a
   refused request never spends the number's window or the SMS budget.
 
+The contract this puts on the sign-in screen (phase 8), confirmed: `verify` checks only the
+code whose id it names, so a screen that lets the player request again must keep the latest
+`codeId` and tell them to use the most recent message; a code from an earlier message is live
+but answers only to its own id, and a guess against the wrong id costs one of that code's
+five. Outside production the `request-code` response echoes the code together with a `hint`
+that states this. The verify limit is a separate counter from the request limit, sharing the
+same five-per-address setting, also confirmed: one sign-in is one request and one verify, and
+sharing a single counter would have halved the sign-ins possible behind one address.
+
 What a stranger can still do is spend the number's three requests per ten minutes, which the
 owner sees as `too_many_requests` when asking for another code; the code they already have
 keeps working.
