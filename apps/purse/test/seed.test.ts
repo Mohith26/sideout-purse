@@ -5,7 +5,7 @@ import { newId, type Id } from '@repo/ids';
 import { authenticateApiKey, resetAuthCaches } from '../src/auth';
 import { listParticipants, listResults } from '../src/contests';
 import type { Database } from '../src/db/client';
-import { accounts, apiKeys, auditLog, contests, operatorFlags, rulesets, tenants, userLocations, userRestrictions, users } from '../src/db/schema';
+import { accounts, apiKeys, auditLog, contests, operatorFlags, operatorSessions, operators, rulesets, tenants, userLocations, userRestrictions, users } from '../src/db/schema';
 import {
   PLATFORM_ACCOUNT_KINDS,
   SEED_API_KEYS,
@@ -14,8 +14,10 @@ import {
   SEED_USERS,
   SIDEOUT_TENANT_ID,
   SIDEOUT_TENANT_NAME,
+  DEFAULT_OPERATOR_ADMIN_EMAIL,
   seedApiKeys,
   seedContests,
+  seedOperatorAdmin,
   seedPlatformAccounts,
   seedRuleset,
   seedSideoutTenant,
@@ -23,6 +25,7 @@ import {
 } from '../src/db/seed';
 import { SPEC_EXAMPLE_RULESET } from '../src/eligibility';
 import { balanceOf, findAccount, reconcile } from '../src/ledger';
+import { authenticateSession, signIn } from '../src/operators';
 import { getVerification } from '../src/users';
 import { connectMigrator, connectRuntime } from './helpers';
 import { wipeLedger } from './ledger/fixtures';
@@ -191,8 +194,15 @@ describe('db:seed', () => {
     expect(first.contests.map((c) => [c.externalId, c.state, c.created])).toEqual([
       [SEED_CONTESTS.draft, 'draft', true],
       [SEED_CONTESTS.open, 'open', true],
+      [SEED_CONTESTS.awaiting, 'awaiting_settlement', true],
       [SEED_CONTESTS.settled, 'settled', true],
     ]);
+
+    // The awaiting contest holds its four entries in escrow until an operator closes it.
+    const awaiting = first.contests.find((c) => c.externalId === SEED_CONTESTS.awaiting);
+    const [awaitingRow] = await runtime.db.select().from(contests).where(eq(contests.id, awaiting?.id ?? ''));
+    expect(await balanceOf(runtime.db, awaitingRow?.escrowAccountId ?? '')).toBe(400n);
+    expect(awaitingRow?.settlementPolicy).toBe('operator_close');
 
     const open = first.contests.find((c) => c.externalId === SEED_CONTESTS.open);
     const openParticipants = await listParticipants(runtime.db, open?.id ?? '');
@@ -201,8 +211,8 @@ describe('db:seed', () => {
     expect(await balanceOf(runtime.db, openRow?.escrowAccountId ?? '')).toBe(400n);
     for (const userId of SEED_USER_IDS.slice(0, 4)) {
       const wallet = await findAccount(runtime.db, { tenantId: tenant.id as Id<'tnt'>, kind: 'user_wallet', ownerRef: userId, asset: 'POINTS' });
-      // 1000 issued, 100 into the open contest, and for the first five also 100 into the settled one plus its payout.
-      expect(await balanceOf(runtime.db, wallet?.id ?? '')).toBeGreaterThanOrEqual(800n);
+      // 1000 issued, 100 into the open contest, 100 into the awaiting one, and for the first five also 100 into the settled one plus its payout.
+      expect(await balanceOf(runtime.db, wallet?.id ?? '')).toBeGreaterThanOrEqual(700n);
     }
 
     const settled = first.contests.find((c) => c.externalId === SEED_CONTESTS.settled);
@@ -226,7 +236,41 @@ describe('db:seed', () => {
     // A second run creates nothing.
     const second = await seedContests(database.db, tenant.id as Id<'tnt'>);
     expect(second.contests.map((c) => [c.id, c.created])).toEqual(first.contests.map((c) => [c.id, false]));
-    expect(await database.db.select().from(contests)).toHaveLength(3);
+    expect(await database.db.select().from(contests)).toHaveLength(4);
     expect((await reconcile(runtime.db)).ok).toBe(true);
+  });
+
+  it('seeds the console admin once, prints its password only when set, and rotates on request', async () => {
+    const first = await seedOperatorAdmin(database.db);
+    expect(first.created).toBe(true);
+    expect(first.operator).toMatchObject({ email: DEFAULT_OPERATOR_ADMIN_EMAIL, role: 'admin' });
+    expect(first.password).toMatch(/^[A-Za-z0-9]{24}$/);
+    expect(await runtime.db.select().from(operators)).toHaveLength(1);
+    const signedIn = await signIn(runtime.db, { email: DEFAULT_OPERATOR_ADMIN_EMAIL, password: first.password ?? '' });
+    expect(signedIn.operator.id).toBe(first.operator.id);
+
+    // A rerun leaves the account alone and has no password to print.
+    const second = await seedOperatorAdmin(database.db);
+    expect(second).toMatchObject({ created: false, password: null });
+    expect(second.operator.id).toBe(first.operator.id);
+    await expect(authenticateSession(runtime.db, signedIn.token)).resolves.toMatchObject({ operator: { id: first.operator.id } });
+
+    // A rotation sets a new password and signs the account out everywhere.
+    const rotated = await seedOperatorAdmin(database.db, { rotate: true });
+    expect(rotated).toMatchObject({ created: false });
+    expect(rotated.password).toMatch(/^[A-Za-z0-9]{24}$/);
+    expect(rotated.password).not.toBe(first.password);
+    await expect(signIn(runtime.db, { email: DEFAULT_OPERATOR_ADMIN_EMAIL, password: first.password ?? '' })).rejects.toMatchObject({ code: 'invalid_credentials' });
+    await expect(signIn(runtime.db, { email: DEFAULT_OPERATOR_ADMIN_EMAIL, password: rotated.password ?? '' })).resolves.toMatchObject({ operator: { id: first.operator.id } });
+    await expect(authenticateSession(runtime.db, signedIn.token)).rejects.toMatchObject({ code: 'session_revoked' });
+    expect(await runtime.db.select().from(operatorSessions).where(eq(operatorSessions.operatorId, first.operator.id))).toHaveLength(2);
+
+    // A custom email is honoured and normalised.
+    const custom = await seedOperatorAdmin(database.db, { email: 'Ops@Example.COM' });
+    expect(custom.operator.email).toBe('ops@example.com');
+    expect(await runtime.db.select().from(operators)).toHaveLength(2);
+    const audit = await runtime.db.select().from(auditLog).where(eq(auditLog.action, 'operator.created'));
+    expect(audit).toHaveLength(2);
+    expect(audit.every((row) => row.actorKind === 'operator' && row.actorRef === 'seed' && JSON.stringify(row.after).includes('passwordHash') === false)).toBe(true);
   });
 });

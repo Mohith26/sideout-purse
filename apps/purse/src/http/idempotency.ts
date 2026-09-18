@@ -1,11 +1,11 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { and, eq, sql } from 'drizzle-orm';
-import type { MiddlewareHandler } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { IDEMPOTENCY_KEY_HEADER, IDEMPOTENT_REPLAYED_HEADER, isIdempotencyKey, RETRY_AFTER_HEADER } from '@purse/types';
 import type { Id } from '@repo/ids';
-import { errorFields } from '@repo/logger';
+import { errorFields, type Logger } from '@repo/logger';
 
 import type { Db } from '../db/client';
 import { idempotencyKeys, idempotencyReservations, type IdempotencyKeyRow } from '../db/schema';
@@ -45,10 +45,16 @@ import type { RequestScope } from './request-id';
  * `pnpm --filter @purse/api db:purge`.
  *
  * Reads (GET, HEAD, OPTIONS) take no key.
+ *
+ * Whose namespace a key lives in is `tenantOf`: the authenticated key's tenant on `/v1`,
+ * the tenant named in the path on the console's routes (`routes/console`), where a
+ * mutation outside any tenant (a ruleset activation) is idempotent at the service level
+ * instead and takes no key. `keyPrefix` keeps the console's keys apart from the partner's
+ * for the same tenant.
  */
 export type IdempotencyScope = { Variables: { db: Db; idempotencyKey: string | undefined; replayBody: unknown } };
 
-type Scope = RequestScope & AuthScope & BodyScope & IdempotencyScope;
+type Scope = RequestScope & BodyScope & IdempotencyScope;
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -58,10 +64,14 @@ export const RESERVATION_TTL_MS = 60_000;
 export const IN_PROGRESS_WAIT_MS = 5_000;
 const POLL_MS = 50;
 
-export type IdempotencyDeps = {
+export type IdempotencyDeps<E extends Scope = Scope> = {
   db: Db;
   /** How long a concurrent replay waits before `idempotency_key_in_progress`; tests shorten it. */
   inProgressWaitMs?: number;
+  /** The tenant whose namespace holds the request's key; defaults to the authenticated API key's. `undefined` means the mutation takes no key. */
+  tenantOf?: (c: Context<E>) => Id<'tnt'> | undefined;
+  /** Prepended to every stored key, so two clients of one tenant never share a namespace. */
+  keyPrefix?: string;
 };
 
 /** Hash of what makes a request "the same request": method, concrete path and body. */
@@ -124,28 +134,36 @@ async function release(db: Db, tenantId: Id<'tnt'>, key: string, reservedAt: Dat
     .where(and(eq(idempotencyReservations.tenantId, tenantId), eq(idempotencyReservations.key, key), eq(idempotencyReservations.reservedAt, reservedAt)));
 }
 
-export function idempotency(deps: IdempotencyDeps): MiddlewareHandler<Scope> {
+export function idempotency<E extends Scope = Scope & AuthScope>(deps: IdempotencyDeps<E>): MiddlewareHandler<E> {
   const inProgressWaitMs = deps.inProgressWaitMs ?? IN_PROGRESS_WAIT_MS;
+  const tenantOf = deps.tenantOf ?? ((c: Context<E>) => (c as unknown as Context<Scope & AuthScope>).get('auth').tenant.id as Id<'tnt'>);
+  const keyPrefix = deps.keyPrefix ?? '';
   return async (c, next) => {
     c.set('db', deps.db);
     c.set('replayBody', undefined);
+    c.set('idempotencyKey', undefined);
     if (!MUTATING.has(c.req.method)) {
-      c.set('idempotencyKey', undefined);
+      await next();
+      return;
+    }
+    const tenantId = tenantOf(c);
+    if (tenantId === undefined) {
       await next();
       return;
     }
 
-    const key = c.req.header(IDEMPOTENCY_KEY_HEADER);
-    if (key === undefined || key.trim() === '') {
+    const presented = c.req.header(IDEMPOTENCY_KEY_HEADER);
+    if (presented === undefined || presented.trim() === '') {
       throw new ApiFailure({ type: 'invalid_request', code: 'missing_idempotency_key', message: `${IDEMPOTENCY_KEY_HEADER} is required on ${c.req.method} requests` });
     }
-    if (!isIdempotencyKey(key)) {
+    if (!isIdempotencyKey(presented)) {
       throw new ApiFailure({ type: 'invalid_request', code: 'invalid_idempotency_key', message: `${IDEMPOTENCY_KEY_HEADER} must be 1 to 200 characters with no whitespace or control characters` });
     }
+    const key = `${keyPrefix}${presented}`;
     c.set('idempotencyKey', key);
 
-    const tenantId = c.get('auth').tenant.id as Id<'tnt'>;
-    const logger = c.get('logger');
+    // `E` is generic, so Hono cannot resolve the variable's type; the scope guarantees it is the request logger.
+    const logger = c.get('logger') as Logger;
     const endpoint = `${c.req.method} ${c.req.matchedRoutes.at(-1)?.path ?? c.req.path}`;
     const hash = httpRequestHash(c.req.method, c.req.path, c.get('body'));
 

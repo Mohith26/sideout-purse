@@ -5,3 +5,4 @@ export * from './resources';
 export * from './embed';
 export * from './protocol';
 export * from './webhooks';
+export * from './console';

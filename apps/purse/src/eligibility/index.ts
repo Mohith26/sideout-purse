@@ -19,3 +19,4 @@ export {
 export { entryVelocity, VELOCITY_WINDOWS, type Velocity } from './velocity';
 export { decideEntry, recordDecision, openFlagsOf, flagRiskReview, type DecideEntryInput, type EntryDecision, type RecordDecisionInput } from './decide';
 export { collusionPairs, flagCollusion, type CollusionInput, type CollusionPair, type CollusionScan } from './collusion';
+export { listFlags, getFlag, reviewFlag, FlagError, FLAG_ERROR_CODES, FLAG_LIST_LIMIT_MAX, type ListFlagsInput, type ReviewFlagInput } from './flags';

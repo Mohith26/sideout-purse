@@ -130,7 +130,7 @@ export function clientAddress(c: Context, options: AddressOptions): string {
   return (c.env as Partial<HttpBindings> | undefined)?.incoming?.socket.remoteAddress ?? 'unknown';
 }
 
-function limited(c: Context, buckets: TokenBuckets, taken: Taken): ApiFailure {
+export function limited(c: Context, buckets: TokenBuckets, taken: Taken): ApiFailure {
   const seconds = Math.max(1, Math.ceil(taken.retryAfterMs / 1000));
   c.header(RATE_LIMIT_LIMIT_HEADER, String(buckets.config.burst));
   c.header(RATE_LIMIT_REMAINING_HEADER, '0');

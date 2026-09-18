@@ -22,20 +22,26 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `test/setup-env.ts` falls back to `db:setup`'s default URLs (CI's or a `.env`'s values
   win). A compose volume from before phase 1 lacks `purse_migrator`;
   `pnpm db:setup --admin-url ...` upgrades it in place.
-- Three apps: `apps/purse` (the API, `@purse/api`), `apps/purse-embed` (the iframe flows,
-  `@purse/embed`, a Next static export the API serves under `/embed`) and `apps/sideout`.
-  `pnpm dev` starts Purse on :4000, the embed dev server on :4100 (proxies `/v1` to :4000)
-  and Sideout on :3000; both apps expose `/health`. To have :4000 serve the embed like
-  production, `pnpm --filter @purse/embed build` first (`PURSE_EMBED_DIR` overrides the
-  directory; without a build `/embed` answers 404). Sideout's seeded events are under
+- Four apps: `apps/purse` (the API, `@purse/api`), `apps/purse-embed` (the iframe flows,
+  `@purse/embed`, a Next static export the API serves under `/embed`), `apps/purse-console`
+  (the operator console, `@purse/console`, a server-rendered Next app on its own origin)
+  and `apps/sideout`. `pnpm dev` starts Purse on :4000, the embed dev server on :4100
+  (proxies `/v1` to :4000), the console on :4200 and Sideout on :3000; the API and Sideout
+  expose `/health`. To have :4000 serve the embed like production,
+  `pnpm --filter @purse/embed build` first (`PURSE_EMBED_DIR` overrides the directory;
+  without a build `/embed` answers 404). Sideout's seeded events are under
   `/api/tournaments`; `POST /api/dev/login` with a seeded phone (`+14155550100` is an
-  organizer) gives a session outside production.
+  organizer) gives a session outside production. The console signs in as the seeded admin
+  (`admin@purse.local`; `pnpm --filter @purse/api db:seed -- --print-operator-password
+  --rotate-operator-password` prints a fresh password) and needs no `.env`
+  (`PURSE_API_ORIGIN` defaults to :4000).
 - `PURSE_SECRET_KEY` derives every process key (`apps/purse/src/secrets.ts`); production
   refuses to start without it, elsewhere a stand-in is used. `EMBED_SMS_PROVIDER`,
   `PURSE_EMBED_DIR`, `WEBHOOK_DISPATCHER` and `WEBHOOK_POLL_INTERVAL_MS` are the other
   phase 4 variables (`env.ts`); `PURSE_TENANT_ORIGINS` is read by the seed only.
-- CI also migrates and seeds Purse's `purse` database and runs
-  `pnpm --filter @purse/api reconcile`; a failing invariant fails the build.
+- CI also migrates and seeds Purse's `purse` database, runs
+  `pnpm --filter @purse/api reconcile` (a failing invariant fails the build) and, after the
+  build, the console's Playwright smoke against that database.
 
 ## Purse roles and the ledger
 
@@ -120,6 +126,28 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   literal in `schema.ts` and a migration. `test/webhooks/dispatcher.test.ts` is the
   receiver-down demo with a fake clock; `test/webhooks/receiver.ts` is the sample receiver.
 
+## Operator console
+
+- `apps/purse/src/routes/console/` is the console's API, mounted at `/console` behind the
+  operator session (`Authorization: Bearer cst_...`, `src/operators/`: argon2id passwords,
+  stateful `operator_sessions`, `requireAdmin()` for tenant status, keys and rulesets).
+  `index.ts` has the stack; every mutation under `/tenants/:tenantId/*` takes an
+  `Idempotency-Key` (the generalised `http/idempotency.ts`, `console:` prefix); the rest is
+  idempotent at the service level. Reads are `ledger/explorer.ts` (tree, as-of balance,
+  running balances, entry detail), `contests/browse.ts`, `users/search.ts`,
+  `eligibility/flags.ts` (review), `tenants/`. `test/console/` drives every endpoint.
+- `apps/purse-console` renders pages with `src/server/api.ts` (`load`, 401 → `/login?next=`),
+  mutates through its `/api/purse/[...path]` proxy (`src/lib/client.ts` mints one
+  idempotency key per action) and holds the token only in the `purse_console_session`
+  cookie; the middleware gates pages with no cookie. Screens are server components under
+  `src/app/(console)/`, the interactive parts client components in `src/components/`
+  (`CloseFlow`, `InvariantPanel`, `RulesetTester`, `DeliveryTable`, `FlagQueue`).
+  `pnpm --filter @purse/console build` fails if `.next/static` carries `sk_`, `whsec_` or a
+  session token (`scripts/check-bundle.ts`); `pnpm --filter @purse/console e2e` is the
+  Playwright smoke (seeds an `e2e-admin@purse.local`, needs a built console and the dev
+  `purse` database migrated and seeded). The dense primitives (`Button`, `Chip`,
+  `DataTable`, `KeyValue`, `Money`, ...) are `@sideout/ui`, `so-*` classes in `components.css`.
+
 ## Identity, eligibility and the v1 API
 
 - `apps/purse/src/eligibility/`: `evaluate.ts` is pure (no database, clock or randomness;
@@ -164,9 +192,10 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 ## The boundary, and where things go
 
 - Sideout imports from Purse only through `@purse/sdk` and `@purse/types`; Purse imports
-  nothing from Sideout; the embed app imports nothing of the API's source (it speaks HTTP)
-  and, alone among Purse's apps, may use `@sideout/ui`. `packages/config/eslint/boundary.js`
-  enforces it and `test/boundary.test.ts` proves it. Neutral shared code lives in `@repo/*`.
+  nothing from Sideout; the embed and console apps import nothing of the API's source (they
+  speak HTTP) and, alone among Purse's apps, may use `@sideout/ui`.
+  `packages/config/eslint/boundary.js` enforces it and `test/boundary.test.ts` proves it.
+  Neutral shared code lives in `@repo/*`.
 - Each app names only its own connection string (`apps/*/src/env.ts`);
   `test/env-isolation.test.ts` proves each `loadEnv` ignores the other's. Never add a root `.env`.
 - Schema changes: edit `apps/<app>/src/db/schema.ts`, then `pnpm --filter <pkg> db:generate`

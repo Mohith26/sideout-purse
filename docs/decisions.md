@@ -658,6 +658,93 @@ The `log` SMS sender echoes the code to the browser outside production (the flow
 the hint) and is refused by the env loader in production, where `none` is the default until
 a provider is configured.
 
+## Phase 5 decisions (operator console)
+
+### The console is its own Next.js app on its own origin, talking to `/console/*` server-to-server
+
+Spec 4.10 puts the console at `console.purse.<domain>` "behind its own auth".
+`apps/purse-console` is a server-rendered Next.js app (`next start`, port 4200 locally) on
+its own origin, not a static export under the API like the embed: it needs a server to
+hold the session cookie and to make the API calls, and a separate origin keeps its cookie
+jar apart from the embed's `purse_session` on the API origin. The API grew a route group,
+`/console/*` (`apps/purse/src/routes/console/`), which is the console's whole surface:
+tenants and keys, endpoints and deliveries, the contest browser and close flow, flags and
+restrictions, the ledger explorer and `reconcile()`, rulesets and the tester, the audit
+log. Every page of the console reads it server-to-server (`src/server/api.ts`) and every
+mutation from the browser goes through the console's own `/api/purse/*` proxy, which
+appends the path under `/console` and nothing else. The brief's other option, an
+operator-scoped secret key in the console's environment, was not taken: a key is scoped to
+one tenant, and the console is the one client that must see every tenant, the whole
+journal and the platform-wide rulesets. No secret key exists in the console at all, which
+`scripts/check-bundle.ts` proves against every build (it fails on `sk_`, `whsec_` or a
+session token in `.next/static`; it caught the first draft's own copy).
+
+### Operator accounts and stateful sessions
+
+Operators live in `operators` (email, argon2id hash with the API keys' parameters, role
+`admin | operator`, `disabled_at`), created by the seed and the owner role only; the
+runtime may change a password hash and nothing else. A sign-in (`POST /console/auth/login`)
+mints a 256-bit token, `cst_` and 43 base64url characters, stores its SHA-256 in
+`operator_sessions` with a twelve-hour expiry, and returns it once to the console's server,
+which keeps it in `purse_console_session`, HttpOnly, `SameSite=Lax`, `Secure` in
+production. Sessions are stateful, unlike the embed's signed cookie, so a sign-out, a
+password change (which revokes every other session) or a disabled account ends them at
+once. Failed sign-ins are charged to the address (ten at once, then one every thirty
+seconds); a wrong email and a wrong password are the same `invalid_credentials`, and an
+unknown email still costs one argon2 verification so timing does not tell them apart. The
+console's proxy accepts a mutation only as `application/json`, which with `SameSite=Lax`
+is the CSRF guard. The seed's admin is `admin@purse.local` (`PURSE_OPERATOR_ADMIN_EMAIL`
+picks another) with a random 24-character password that exists only in the run that set
+it: `db:seed -- --print-operator-password` prints it then, `--rotate-operator-password`
+sets a new one and signs the account out everywhere. Expired and revoked sessions are
+purged a month later by `db:purge`.
+
+### What `admin` may do that `operator` may not
+
+Both roles review flags, place and lift restrictions, close and void contests, manage
+endpoints and replay deliveries: the daily work. Only an `admin` changes what the platform
+is: a tenant's status, API keys (create, revoke), and rulesets (publish, activate). The
+check is `requireAdmin()` on those routes and the console hides the controls; the API is
+the authority. Creating and disabling operators is not in the console yet (the seed and
+the owner role do it), noted as a follow-up.
+
+### Console mutations are idempotent per tenant, and platform-wide ones at the service level
+
+The v1 idempotency middleware was generalised (`tenantOf`, `keyPrefix`): under
+`/console/tenants/:tenantId/*` every mutation takes an `Idempotency-Key`, stored in that
+tenant's namespace with the `console:` prefix so a partner's keys and the console's never
+meet, and replayed from the stored response like a partner's. The console's client mints
+one key per user action and reuses it for a retry, so a double click never closes a
+contest or mints a key twice. Mutations outside any tenant (ruleset publish and activate,
+the session routes) take no key and are idempotent at the service level: the same body
+under a used version returns it, a different body is `conflict`, activating the active
+version changes nothing, and a second sign-out is a no-op.
+
+### `GET /console/reconcile` answers 200 with a failed report
+
+`/internal/reconcile` answers 500 on a failed invariant so a scheduler can alarm on the
+status. The console's copy answers 200 with the same report either way, because the panel
+renders a failed invariant red with its detail, which is more useful to the operator than
+an error envelope; the log line still says `reconcile failed`. The panel runs it on
+mount, on demand and every sixty seconds while open.
+
+### The seed's fourth contest
+
+The console's close flow needs an `operator_close` contest in `awaiting_settlement` to
+demonstrate, so the seed adds `seed-awaiting-doubles` (four entrants, every score in) to
+the draft, open and settled ones. Closing it from the console settles it for good; a rerun
+of the seed does not recreate it, which is the seed's contract for every contest.
+
+### Where the console's tests run
+
+Route tests (`apps/purse/test/console/`) cover every console endpoint with a refusal and
+a success; component tests (`apps/purse-console/test/`) cover the close flow's two steps,
+the invariant panel with a failed invariant, and the tester; the Playwright smoke
+(`apps/purse-console/e2e/`) signs in as an e2e admin the seed creates and prints for that
+run, drills from the settled seed contest into its settlement entry and sees the lines
+balance, queries a point-in-time balance and runs the panel to green. CI runs it after the
+build against the seeded `purse` database.
+
 ## Phase 6 decisions (Sideout domain)
 
 Two of these need the captain before the public deploy, one is a follow-up, and the rest record how phase 6

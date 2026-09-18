@@ -27,6 +27,9 @@
       "path": "apps/purse-embed"
     },
     {
+      "path": "apps/purse-console"
+    },
+    {
       "path": "apps/sideout"
     },
     {

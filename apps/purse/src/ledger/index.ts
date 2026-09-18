@@ -40,3 +40,25 @@ export {
 } from './flows';
 export { reconcile, INVARIANTS, type InvariantId, type InvariantResult, type ReconcileReport } from './reconcile';
 export { assertRuntimeRole, runtimeRolePrivileges, type JournalPrivileges } from './role-check';
+export {
+  accountTree,
+  accountSummary,
+  accountDetail,
+  accountEntries,
+  entryDetail,
+  listEntries,
+  encodeCursor,
+  decodeCursor,
+  ENTRY_LIST_LIMIT_MAX,
+  type AccountOwner,
+  type AccountSummary,
+  type AccountDetail,
+  type AccountEntry,
+  type EntryLine,
+  type AssetTotals,
+  type EntryDetail,
+  type EntrySummary,
+  type EntryCursor,
+  type ListEntriesInput,
+  type Page,
+} from './explorer';

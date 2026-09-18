@@ -114,6 +114,29 @@ describe('Purse embed → the rest', () => {
   });
 });
 
+describe('Purse console → the rest', () => {
+  const file = 'apps/purse-console/src/boundary-fixture.ts';
+
+  it('rejects the API’s source, the embed’s, and anything of Sideout’s', async () => {
+    const byPackage = await lint(file, "import { createApp } from '@purse/api';\ncreateApp;\n");
+    expect(ruleIds(byPackage)).toContain('no-restricted-imports');
+    const byPath = await lint(file, "import { createApp } from '../../purse/src/app';\ncreateApp;\n");
+    expect(ruleIds(byPath)).toContain('import-x/no-restricted-paths');
+    expect(byPath.find((v) => v.ruleId === 'import-x/no-restricted-paths')?.message).toMatch(/over HTTP \(\/console\)/);
+    const embed = await lint(file, "import { x } from '../../purse-embed/src/embed/theme';\nx;\n");
+    expect(ruleIds(embed)).toContain('import-x/no-restricted-paths');
+    const sideout = await lint(file, "import { middleware } from '../../sideout/src/middleware';\nmiddleware;\n");
+    expect(ruleIds(sideout)).toContain('import-x/no-restricted-paths');
+    const sideoutPackage = await lint(file, "import { x } from '@sideout/web';\nx;\n");
+    expect(ruleIds(sideoutPackage)).toContain('no-restricted-imports');
+  });
+
+  it('allows the shared design system and the public types', async () => {
+    const violations = await lint(file, "import { DataTable } from '@sideout/ui';\nimport { CONTEST_STATES } from '@purse/types';\nDataTable;\nCONTEST_STATES;\n");
+    expect(ruleIds(violations).filter((id) => id === 'no-restricted-imports' || id === 'import-x/no-restricted-paths')).toEqual([]);
+  });
+});
+
 describe('repository-wide rules from spec section 7', () => {
   it('no-console, no-explicit-any and empty catch are errors in app code', async () => {
     const violations = await lint(

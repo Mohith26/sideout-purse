@@ -37,3 +37,4 @@ export {
 } from './locations';
 export { refreshFingerprint, identityFingerprint, normalizeName, type FingerprintResult } from './fingerprint';
 export { loadProfile, profileOf, type UserProfile } from './profile';
+export { searchUsers, USER_LIST_LIMIT_MAX, type FoundUser } from './search';

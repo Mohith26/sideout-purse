@@ -9,6 +9,7 @@ import { renderError } from './http/errors';
 import { DEFAULT_RATE_LIMIT, TokenBuckets, type RateLimitConfig } from './http/rate-limit';
 import { requestId, type RequestScope } from './http/request-id';
 import type { Providers } from './providers';
+import { consoleRoutes } from './routes/console';
 import { embedRoutes } from './routes/embed';
 import { embedStaticRoutes } from './routes/embed-static';
 import { healthRoutes } from './routes/health';
@@ -48,7 +49,8 @@ export type AppDeps = {
  * with the versioned base). They are registered before the `/v1` router, so its
  * authentication never sees a `GET` to them; so are the embed's publishable-key routes
  * (`/v1/embed/state` and the rest of `routes/embed.ts`) and the embed app itself under
- * `/embed`. Every other request under `/v1` needs a secret key.
+ * `/embed`. Every other request under `/v1` needs a secret key. The operator console's API
+ * is `/console/*` (`routes/console`), behind the console's own session, never a key.
  */
 export function createApp(deps: AppDeps) {
   const app = new Hono<RequestScope>();
@@ -81,6 +83,17 @@ export function createApp(deps: AppDeps) {
   app.route('/', embedStatic.routes);
   app.route('/v1', health);
   app.route('/v1', internal);
+  app.route(
+    '/console',
+    consoleRoutes({
+      db: deps.db,
+      keys: deps.keys,
+      providers: deps.providers,
+      trustedProxyHops: deps.trustedProxyHops ?? 0,
+      ...(deps.clock === undefined ? {} : { clock: deps.clock }),
+      ...(deps.inProgressWaitMs === undefined ? {} : { inProgressWaitMs: deps.inProgressWaitMs }),
+    }),
+  );
   app.route(
     '/v1/embed',
     embedRoutes({

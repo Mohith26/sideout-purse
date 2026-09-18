@@ -13,20 +13,21 @@ screenshots, lands with the last phase.
 
 ## Layout
 
-One pnpm workspace, two apps, and the packages that sit between them. Sideout may import
+One pnpm workspace, four apps, and the packages that sit between them. Sideout may import
 from Purse only through `@purse/sdk` and `@purse/types`; an ESLint rule enforces that in
-CI, and a test proves the rule fires. The two apps have separate databases and separate
-connection strings that are never loaded into the same process.
+CI, and a test proves the rule fires. The two products have separate databases and separate
+connection strings that are never loaded into the same process; the embed and the console
+are Purse's, own no database, and speak to the API over HTTP.
 
 ```
 apps/
   purse/            Purse API. Hono on Node 22, Drizzle + postgres, Zod.   PURSE_DATABASE_URL (+ PURSE_MIGRATOR_DATABASE_URL)
   sideout/          Sideout web app. Next.js 15 App Router, Tailwind 4.   SIDEOUT_DATABASE_URL
-  purse-embed/      (phase 4) the iframe-hosted identity and wallet flows
-  purse-console/    (phase 5) the operator console
+  purse-embed/      the iframe-hosted sign-in, identity, wallet, entry and rewards flows; a static export the API serves under /embed
+  purse-console/    the operator console. Next.js 15, its own operator accounts and sessions, calls the API's /console routes server-to-server.   PURSE_API_ORIGIN
 packages/
-  ui/               @sideout/ui   design tokens, Tailwind theme, the AppShell primitive
-  purse-types/      @purse/types  API error taxonomy, header names, the eligibility vocabulary and the v1 resource shapes
+  ui/               @sideout/ui   design tokens, Tailwind theme, the AppShell and the dense primitives (tables, chips, forms)
+  purse-types/      @purse/types  API error taxonomy, header names, the eligibility vocabulary, the v1 and console resource shapes, the iframe protocol
   purse-sdk/        @purse/sdk    the partner-facing client (phase 4 implements; phase 0 ships its version)
   ids/              @repo/ids     typed-prefix UUID v7 ids shared by both apps
   db/               @repo/db      connection and migration helpers; holds no schema, no URL
@@ -42,8 +43,8 @@ Each app owns its Drizzle config and migration folder (`apps/*/drizzle`). Migrat
 forward-only and applied by `pnpm db:migrate`, which runs each app's migrator in its own
 process. Reference rows never live in migration history: `pnpm db:seed` upserts them in
 both apps (the quickstart below says what) and can be re-run against any environment; the
-three seed contests are a draft, an open one with entrants holding promo points, and a
-settled one whose results reconcile.
+four seed contests are a draft, an open one with entrants holding promo points, one in
+`awaiting_settlement` for the console's close flow, and a settled one whose results reconcile.
 
 Purse connects as two roles. `purse_migrator` owns its databases and runs migrations and
 seeds; `purse_app`, the API's runtime role, owns nothing and cannot `UPDATE` or `DELETE`
@@ -67,17 +68,23 @@ pnpm db:setup               # or: provision an existing Postgres (defaults to lo
 
 pnpm db:migrate             # applies both apps' migrations, each in its own process
 pnpm db:seed                # Purse: the Sideout tenant, its platform accounts, the active ruleset, six users,
-                            # two API keys and the seed contests. Sideout: the demo events. Both safe to re-run
-pnpm dev                    # Purse on :4000, the embed dev server on :4100, Sideout on :3000
+                            # two API keys, the seed contests and the console admin. Sideout: the demo events. Both safe to re-run
+pnpm dev                    # Purse on :4000, the embed dev server on :4100, the console on :4200, Sideout on :3000
 pnpm --filter @purse/embed build   # optional: lets :4000 serve the embed under /embed as production does
 ```
 
-The first seed prints nothing secret. To hold a key, ask for it:
+The first seed prints nothing secret. To hold a key, or the console admin's password, ask for it:
 
 ```sh
 pnpm --filter @purse/api db:seed -- --print-keys               # prints the plaintext of any key this run created
 pnpm --filter @purse/api db:seed -- --print-keys --rotate-keys # revokes the seed keys and prints the new ones
+pnpm --filter @purse/api db:seed -- --print-operator-password --rotate-operator-password
+                                                               # sets and prints a new password for admin@purse.local
+                                                               # (PURSE_OPERATOR_ADMIN_EMAIL picks another address)
 ```
+
+Then sign in at http://localhost:4200 with that address and password. The console needs no
+`.env` of its own: `PURSE_API_ORIGIN` names the API (default `http://localhost:4000`).
 
 Then:
 
@@ -88,7 +95,10 @@ curl localhost:3000/api/tournaments                              # the three see
 curl localhost:3000/api/tournaments/sandbar-classic-2026         # live: pools, standings, bracket, sponsors
 curl localhost:3000/api/tournaments/sandbar-classic-2026/impact  # raised vs goal, from donation rows
 open http://localhost:3000   # the Sideout shell
+open http://localhost:4200   # the operator console: tenants and keys, deliveries, contests and the close flow,
+                             # the review queue, the ledger explorer, the invariant panel, rulesets and the tester
 pnpm --filter @purse/api reconcile   # the seven ledger invariants against the dev database; exits 1 on any failure
+pnpm --filter @purse/console e2e     # the Playwright smoke: signs in, drills into the settled contest's entry, runs the panel
 ```
 
 `GET /internal/reconcile` returns the same report over HTTP behind `INTERNAL_API_TOKEN`

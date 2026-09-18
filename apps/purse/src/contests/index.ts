@@ -63,3 +63,4 @@ export {
   type VoidContestInput,
   type VoidedContest,
 } from './settlement';
+export { browseContests, CONTEST_LIST_LIMIT_MAX, type BrowsedContest, type BrowseContestsInput } from './browse';

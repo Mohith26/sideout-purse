@@ -43,6 +43,9 @@ export const ID_PREFIXES = {
   webhookEvent: 'evt',
   webhookDelivery: 'whd',
   webhookAttempt: 'wha',
+  // Purse operator console (system spec 4.10)
+  operator: 'opr',
+  operatorSession: 'ops',
   // Sideout (system spec 5.1). Sideout's local account is `sou`, never `usr`: the two
   // identities are linked by an opaque external id (decision D8), not by sharing a prefix.
   charity: 'chr',

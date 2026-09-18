@@ -92,6 +92,20 @@
       "when": 1789735948482,
       "tag": "0012_embed_webhook_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789739053337,
+      "tag": "0013_operators",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789739061340,
+      "tag": "0014_operator_guards",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,37 @@
+{
+  "name": "@purse/console",
+  "version": "0.0.1",
+  "private": true,
+  "description": "The Purse operator console (system spec 4.10): tenants and keys, webhooks and the delivery log, the contest browser and close flow, the review queues, the ledger explorer and invariant panel, and the ruleset editor. A Next.js app behind its own auth that talks to the Purse API's /console routes server-to-server.",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --port 4200",
+    "build": "next build && tsx scripts/check-bundle.ts",
+    "start": "next start --port 4200",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "clean": "rm -rf .next dist test-results playwright-report"
+  },
+  "dependencies": {
+    "@purse/types": "workspace:*",
+    "@repo/logger": "workspace:*",
+    "@sideout/ui": "workspace:*",
+    "next": "~15.5.25",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@repo/config": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^22.20.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "jsdom": "^30.1.0",
+    "tsx": "^4.23.13",
+    "vitest": "^5.0.1"
+  }
+}
