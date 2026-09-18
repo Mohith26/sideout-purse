@@ -547,17 +547,28 @@ limit and a global limit in `server/context.ts`.
 ### Sign-in codes: any live code verifies, and the SMS budget is a variable
 
 Requesting a code is unauthenticated, so a stranger who knows a number can ask for codes in
-its name. That must not lock the owner out: `verifyCode` accepts any of the last three
-unexpired, unconsumed codes for the number (three is the per-phone cap over a code's
-ten-minute life), a new request never invalidates the codes already sent, a wrong guess counts
-against all of them (five guesses per number, not per code), and a successful one consumes
-them all. The per-phone cap stays at three per ten minutes; what the stranger can still do is
-spend those three, which the owner sees as `too_many_requests` for the rest of the window.
+its name, and `POST /api/auth/verify` is unauthenticated by nature. What is guaranteed:
+
+- A new request never touches the codes already out for a number. Every unexpired,
+  unconsumed code verifies (the set is bounded by the ten-minute expiry, not by any
+  limiter, so a restart or a second instance changes nothing), and a successful sign-in
+  consumes every code out for the number.
+- `request-code` returns the code's id and `verify` names it, so wrong guesses count against
+  that one code (five, then `code_locked`). A stranger holds only the ids of the codes they
+  asked for, so their guesses can lock only those; the owner's own code stays usable.
+- Verify attempts are limited to five per client address per ten minutes, and a code request
+  is charged to a cap only after every cap (phone, address, instance) has allowed it, so a
+  refused request never spends the number's window or the SMS budget.
+
+What a stranger can still do is spend the number's three requests per ten minutes, which the
+owner sees as `too_many_requests` when asking for another code; the code they already have
+keeps working.
 
 The global cap is the instance's SMS budget and lives in `AUTH_CODE_GLOBAL_CAP` (default 600
-codes per ten minutes, about 3,600 messages an hour at most, which at a few cents each bounds
-the worst hour of abuse to a handful of dollars). Set it to what the SMS account should be
-allowed to spend once phase 9 wires the provider; the per-address and per-phone caps are fixed.
+codes per ten minutes, so 3,600 messages an hour at most: roughly a hundred dollars an hour at
+a few cents a message, and more for international destinations). Lower it if that is more
+than the SMS account should be able to spend in the worst hour once phase 9 wires the
+provider; the per-address and per-phone caps are fixed in code.
 
 ### Dev donations settle when their status is read
 

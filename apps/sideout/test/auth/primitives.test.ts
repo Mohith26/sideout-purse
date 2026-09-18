@@ -72,6 +72,17 @@ describe('rate limiter', () => {
     expect(limiter.hit('k', new Date(t0.getTime() + 10_001)).allowed).toBe(true);
   });
 
+  it('can be asked without being charged', () => {
+    const limiter = createRateLimiter({ limit: 1, windowMs: 10_000, maxKeys: 10 });
+    const t0 = new Date('2026-09-18T12:00:00Z');
+    expect(limiter.check('k', t0)).toEqual({ allowed: true, retryAfterSeconds: 0 });
+    expect(limiter.check('k', t0)).toEqual({ allowed: true, retryAfterSeconds: 0 });
+    expect(limiter.size()).toBe(0);
+    expect(limiter.hit('k', t0).allowed).toBe(true);
+    expect(limiter.check('k', new Date(t0.getTime() + 4000))).toEqual({ allowed: false, retryAfterSeconds: 6 });
+    expect(limiter.check('k', new Date(t0.getTime() + 10_001)).allowed).toBe(true);
+  });
+
   it('is bounded: never holds more than maxKeys keys, evicting the least recently touched', () => {
     const limiter = createRateLimiter({ limit: 1, windowMs: 60_000, maxKeys: 3 });
     const now = new Date();

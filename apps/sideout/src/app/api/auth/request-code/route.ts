@@ -12,9 +12,10 @@ export const runtime = 'nodejs';
 const bodySchema = z.object({ phone: phoneE164Schema });
 
 /**
- * Start phone sign-in: issue a one-time code and send it through the SMS seam. Outside
- * production the code is echoed in the response so tests and local development need no
- * inbox; in production the response says only when it expires.
+ * Start phone sign-in: issue a one-time code and send it through the SMS seam. The
+ * response carries the code's id, which `POST /api/auth/verify` names, and when it expires.
+ * Outside production the code itself is echoed too, so tests and local development need
+ * no inbox.
  */
 export async function POST(request: Request): Promise<Response> {
   return handle(request, async () => {
@@ -25,6 +26,6 @@ export async function POST(request: Request): Promise<Response> {
       address: clientAddress(request.headers, env.trustedProxyHops),
       now: new Date(),
     });
-    return ok({ expiresAt: result.expiresAt.toISOString(), ...(result.code === undefined ? {} : { code: result.code }) });
+    return ok({ codeId: result.codeId, expiresAt: result.expiresAt.toISOString(), ...(result.code === undefined ? {} : { code: result.code }) });
   });
 }

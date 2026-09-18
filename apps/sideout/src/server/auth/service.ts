@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { newId } from '@repo/ids';
 
 import type { Db } from '../../db/client';
@@ -12,21 +12,24 @@ import type { RateLimiter } from './rate-limit';
 import { SmsUnavailableError, type SmsSender } from './sms';
 
 /**
- * Phone-number sign-in. `requestCode` issues a one-time code and sends it through the
- * `SmsSender` seam; `verifyCode` consumes it and returns the user, creating the local
- * account (with a freshly minted Purse external id) on first sign-in. Requesting a code is
- * unauthenticated, so a new request never invalidates the codes already out for a number:
- * any of the last `LIVE_CODES_PER_PHONE` unexpired, unconsumed codes verifies, a wrong
- * guess counts against all of them, and a successful one consumes them all.
+ * Phone-number sign-in. `requestCode` issues a one-time code, sends it through the
+ * `SmsSender` seam and returns the code's id; `verifyCode` takes that id and the code,
+ * consumes it and returns the user, creating the local account (with a freshly minted
+ * Purse external id) on first sign-in. Requesting a code is unauthenticated, so the codes
+ * already out for a number are never touched by a new request: every unexpired, unconsumed
+ * code verifies, guesses count against the one code they name, and a successful one
+ * consumes every code out for the number.
  */
 
-/** The per-phone request cap over a code's lifetime, so this many codes can be live at once. */
-export const LIVE_CODES_PER_PHONE = 3;
-
 export type AuthLimiters = {
+  /** Code requests per client address. */
   perAddress: RateLimiter;
+  /** Code requests per phone number; also how many codes can be live for it at once. */
   perPhone: RateLimiter;
+  /** Code requests for the whole instance: the SMS budget. */
   global: RateLimiter;
+  /** Verify attempts per client address. */
+  verifyPerAddress: RateLimiter;
 };
 
 export type AuthServiceDeps = {
@@ -39,9 +42,9 @@ export type AuthServiceDeps = {
 };
 
 export type RequestCodeInput = { phoneE164: string; address: string; now: Date };
-export type RequestCodeResult = { expiresAt: Date; code?: string };
+export type RequestCodeResult = { codeId: string; expiresAt: Date; code?: string };
 
-export type VerifyCodeInput = { phoneE164: string; code: string; displayName?: string | undefined; now: Date };
+export type VerifyCodeInput = { phoneE164: string; codeId: string; code: string; address: string; displayName?: string | undefined; now: Date };
 export type VerifyCodeResult = { user: User; created: boolean };
 
 function nonEmpty(value: string | undefined): string | undefined {
@@ -52,12 +55,15 @@ function nonEmpty(value: string | undefined): string | undefined {
 export function createAuthService(deps: AuthServiceDeps) {
   return {
     async requestCode(input: RequestCodeInput): Promise<RequestCodeResult> {
-      for (const [name, limiter, key] of [
-        ['global', deps.limiters.global, 'global'],
-        ['address', deps.limiters.perAddress, input.address],
+      // Every cap is consulted before any is charged, so a request one cap refuses never
+      // spends another (a refused address cannot eat the number's window or the SMS budget).
+      const caps = [
         ['phone', deps.limiters.perPhone, input.phoneE164],
-      ] as const) {
-        const verdict = limiter.hit(key, input.now);
+        ['address', deps.limiters.perAddress, input.address],
+        ['global', deps.limiters.global, 'global'],
+      ] as const;
+      for (const [name, limiter, key] of caps) {
+        const verdict = limiter.check(key, input.now);
         if (!verdict.allowed) {
           throw failure.rateLimited('too_many_requests', 'Too many sign-in codes requested; try again shortly.', {
             scope: name,
@@ -65,6 +71,7 @@ export function createAuthService(deps: AuthServiceDeps) {
           });
         }
       }
+      for (const [, limiter, key] of caps) limiter.hit(key, input.now);
 
       if (deps.sms.name === 'unavailable') {
         throw failure.internal('sms_unavailable', 'Sign-in by SMS is not available right now.').withStatus(503);
@@ -92,34 +99,39 @@ export function createAuthService(deps: AuthServiceDeps) {
         throw error;
       }
 
-      return deps.echoCodes ? { expiresAt, code } : { expiresAt };
+      return deps.echoCodes ? { codeId: id, expiresAt, code } : { codeId: id, expiresAt };
     },
 
     async verifyCode(input: VerifyCodeInput): Promise<VerifyCodeResult> {
+      const verdict = deps.limiters.verifyPerAddress.hit(input.address, input.now);
+      if (!verdict.allowed) {
+        throw failure.rateLimited('too_many_requests', 'Too many sign-in attempts; try again shortly.', {
+          scope: 'address',
+          retryAfterSeconds: verdict.retryAfterSeconds,
+        });
+      }
+
       const outcome = await deps.db.transaction(async (tx) => {
-        const outstanding = await tx
+        const [issued] = await tx
           .select()
           .from(authCodes)
-          .where(and(eq(authCodes.phoneE164, input.phoneE164), isNull(authCodes.consumedAt)))
-          .orderBy(desc(authCodes.createdAt))
-          .limit(LIVE_CODES_PER_PHONE)
+          .where(and(eq(authCodes.id, input.codeId), eq(authCodes.phoneE164, input.phoneE164)))
           .for('update');
-        if (outstanding.length === 0) return { ok: false as const, code: 'code_invalid' as const };
-        const live = outstanding.filter((code) => code.expiresAt.getTime() > input.now.getTime());
-        if (live.length === 0) return { ok: false as const, code: 'code_expired' as const };
-        const open = live.filter((code) => code.attempts < CODE_MAX_ATTEMPTS);
-        if (open.length === 0) return { ok: false as const, code: 'code_locked' as const };
+        if (issued === undefined || issued.consumedAt !== null) return { ok: false as const, code: 'code_invalid' as const };
+        if (issued.expiresAt.getTime() <= input.now.getTime()) return { ok: false as const, code: 'code_expired' as const };
+        if (issued.attempts >= CODE_MAX_ATTEMPTS) return { ok: false as const, code: 'code_locked' as const };
 
-        const matched = open.find((code) => codeMatches(code.codeHash, input.code, input.phoneE164, deps.sessionSecret));
-        const liveIds = live.map((code) => code.id);
-        if (matched === undefined) {
+        if (!codeMatches(issued.codeHash, input.code, input.phoneE164, deps.sessionSecret)) {
           await tx
             .update(authCodes)
             .set({ attempts: sql`${authCodes.attempts} + 1` })
-            .where(inArray(authCodes.id, liveIds));
+            .where(eq(authCodes.id, issued.id));
           return { ok: false as const, code: 'code_invalid' as const };
         }
-        await tx.update(authCodes).set({ consumedAt: input.now }).where(inArray(authCodes.id, liveIds));
+        await tx
+          .update(authCodes)
+          .set({ consumedAt: input.now })
+          .where(and(eq(authCodes.phoneE164, input.phoneE164), isNull(authCodes.consumedAt), gt(authCodes.expiresAt, input.now)));
 
         const [existing] = await tx.select().from(users).where(eq(users.phoneE164, input.phoneE164)).limit(1);
         if (existing !== undefined) {
