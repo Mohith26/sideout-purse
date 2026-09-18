@@ -10,7 +10,7 @@ import { purgeExpired } from '../src/maintenance/purge';
  * consumed or expired more than a day ago. Nothing in the journal, the audit log or the
  * decision record is ever touched. Exits non-zero on failure.
  *
- *   pnpm --filter @purse/api purge
+ *   pnpm --filter @purse/api db:purge
  */
 const logger = createLogger({ service: 'purse-purge', level: 'info' });
 const config = env();

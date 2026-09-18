@@ -564,7 +564,7 @@ export type IdempotencyScope = (typeof idempotencyScope.enumValues)[number];
  *   at whichever layer sees it first.
  *
  * Append-only for the runtime; rows are eligible for removal after the 30-day TTL
- * (spec 4.1) by `pnpm --filter @purse/api purge`, which runs as the owner.
+ * (spec 4.1) by `pnpm --filter @purse/api db:purge`, which runs as the owner.
  */
 export const IDEMPOTENCY_TTL_DAYS = 30;
 

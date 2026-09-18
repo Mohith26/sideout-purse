@@ -40,7 +40,7 @@ import type { RequestScope } from './request-id';
  * What is stored: every 2xx and every 4xx except 429, because a refusal is the answer to
  * that request. A 5xx and a 429 are not stored and release the reservation, so the partner
  * retries the same key and the request is performed then. Rows are kept for at least 30
- * days and removed by `pnpm --filter @purse/api purge`.
+ * days and removed by `pnpm --filter @purse/api db:purge`.
  *
  * Reads (GET, HEAD, OPTIONS) take no key.
  */

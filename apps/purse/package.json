@@ -15,7 +15,7 @@
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts",
     "reconcile": "tsx --env-file-if-exists=.env scripts/reconcile.ts",
-    "purge": "tsx --env-file-if-exists=.env scripts/purge.ts",
+    "db:purge": "tsx --env-file-if-exists=.env scripts/purge.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

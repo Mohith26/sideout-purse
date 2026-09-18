@@ -384,7 +384,7 @@ claim and the store leaves a claim that expires, after which the key may be retr
 (Stripe's rule); a 5xx and a 429 store nothing and release the claim, so the partner
 retries the same key and the request is performed then. The stored body is jsonb, so a
 replay is the original response as JSON (key order may differ). Keys are remembered for
-at least 30 days; `pnpm --filter @purse/api purge` removes older rows and their claims as
+at least 30 days; `pnpm --filter @purse/api db:purge` removes older rows and their claims as
 the owner, after which a key is fresh.
 
 ### A refusal for funds alone is `insufficient_funds`
