@@ -6,8 +6,9 @@
  * tables (4.6: identity fingerprints and operator flags), API keys and embed tokens;
  * phase 4 adds the embed's origin allowlist and sign-in codes (4.8) and the webhook
  * endpoints, deliveries and attempts (4.9); phase 5 adds the operator console's accounts
- * and sessions (4.10). Later phases add plumbing in this file and generate migrations from
- * it with `pnpm db:generate`.
+ * and sessions (4.10); phase 9 adds the record of every reconcile run (section 10, the
+ * last result `/health` reports). Later phases add plumbing in this file and generate
+ * migrations from it with `pnpm db:generate`.
  *
  * Conventions every table follows:
  *
@@ -24,8 +25,8 @@
  *   `purse_app` gets exactly what it needs per table in a custom migration (see
  *   `drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`, `0006_contest_guards.sql`,
  *   `0008_identity_guards.sql`, `0010_idempotency_reservation_grants.sql`,
- *   `0012_embed_webhook_guards.sql` and `0014_operator_guards.sql`). A new table with no
- *   grant is unreadable by the runtime,
+ *   `0012_embed_webhook_guards.sql`, `0014_operator_guards.sql` and
+ *   `0016_reconcile_run_grants.sql`). A new table with no grant is unreadable by the runtime,
  *   which `test/ledger/roles.test.ts` turns into a failing test rather than a surprise in
  *   production. Append-only tables (the journal, the audit log, contest results, used
  *   idempotency keys) never grant UPDATE, DELETE or TRUNCATE; other tables grant UPDATE
@@ -55,6 +56,7 @@ import type { EligibilityReason, RequiredAction, WebhookEventType } from '@purse
 import { idCheck, idPatternLiteral, nullableIdCheck, timestamps } from '@repo/db';
 
 import type { Ruleset } from '../eligibility/ruleset';
+import type { ReconcileReport } from '../ledger/reconcile';
 import { TIE_BREAK_RULES, type PrizeStructure } from '../settlement/types';
 
 // ---- Tenancy -------------------------------------------------------------------------
@@ -1264,3 +1266,39 @@ export const operatorSessions = pgTable(
 );
 
 export type OperatorSession = typeof operatorSessions.$inferSelect;
+
+// ---- Operations (phase 9) ------------------------------------------------------------
+
+/** Who ran the invariants: the scheduled job, the internal route, the console's panel, the CLI, or a test. */
+export const reconcileRunSource = pgEnum('reconcile_run_source', ['schedule', 'internal', 'console', 'cli', 'test']);
+export type ReconcileRunSource = (typeof reconcileRunSource.enumValues)[number];
+
+/**
+ * One row per `reconcile()` run (spec section 10: "`GET /health` returns ... last reconcile
+ * result"). Written by whoever ran the invariants, read by `/health`, which reports the
+ * newest row rather than re-running the checks on every probe. Append-only: a run is a
+ * fact about the ledger at a moment, and a failed one stays on the record (the runtime
+ * gets `SELECT, INSERT` only, `drizzle/0016_reconcile_run_grants.sql`). `failed` is the
+ * list of failed invariant ids so an uptime check can name them without opening `report`.
+ */
+export const reconcileRuns = pgTable(
+  'reconcile_runs',
+  {
+    id: text('id').primaryKey(),
+    ok: boolean('ok').notNull(),
+    source: reconcileRunSource('source').notNull(),
+    ranAt: timestamp('ran_at', { withTimezone: true }).notNull(),
+    durationMs: integer('duration_ms').notNull(),
+    failed: jsonb('failed').$type<string[]>().notNull(),
+    report: jsonb('report').$type<ReconcileReport>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    idCheck('reconcile_runs_id_prefix', table.id, 'rcr'),
+    check('reconcile_runs_duration_non_negative', sql`${table.durationMs} >= 0`),
+    check('reconcile_runs_failed_matches_ok', sql`(${table.ok} and jsonb_array_length(${table.failed}) = 0) or (not ${table.ok} and jsonb_array_length(${table.failed}) > 0)`),
+    index('reconcile_runs_ran_at_idx').on(table.ranAt),
+  ],
+);
+
+export type ReconcileRun = typeof reconcileRuns.$inferSelect;

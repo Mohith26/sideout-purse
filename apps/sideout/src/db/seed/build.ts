@@ -71,7 +71,26 @@ export type SeedDataset = {
 
 export const SEED_RNG_SEED = 0x51de_0f7;
 export const SEED_CHARITY_SLUG = 'open-court-project';
-export const SEED_SLUGS = { live: 'sandbar-classic-2026', upcoming: 'pier-9-open-2026', settled: 'low-tide-open-2026' } as const;
+/**
+ * The three flagship events (phase 6) and, from phase 9, one event per remaining status so
+ * the seed exercises every tournament state (acceptance criterion 29) plus the two the
+ * end-to-end flows drive: `communityCup` (registration open, free entry, so the Player flow
+ * can register without a card even where no donation provider is configured), `boardwalk`
+ * (live, pool play under way, so a captain can submit a pool score and watch the standings
+ * move) and `duneCup` (live, everything final but a disputed bracket final, so the
+ * Organizer flow can resolve it, end play and close through the frozen preview).
+ */
+export const SEED_SLUGS = {
+  live: 'sandbar-classic-2026',
+  upcoming: 'pier-9-open-2026',
+  settled: 'low-tide-open-2026',
+  draft: 'harvest-moon-mixer-2026',
+  drawn: 'foggy-bottom-fours-2026',
+  cancelled: 'rained-out-rally-2026',
+  communityCup: 'community-cup-2026',
+  boardwalk: 'boardwalk-invitational-2026',
+  duneCup: 'dune-cup-2026',
+} as const;
 /** `+1 415 555-01xx`: the reserved fictional range, never a real subscriber. */
 export const SEED_PHONE_PREFIX = '+1415555';
 export const SEED_ORGANIZER_PHONE = `${SEED_PHONE_PREFIX}0100`;
@@ -527,12 +546,17 @@ class SeedBuilder {
 
   // ---- pool stage ----------------------------------------------------------------------
 
-  /** Draw and fully play the pools with the engine; returns the persisted config and the standings input. */
+  /**
+   * Draw the pools with the engine and play them: every match, or, with `playUntilSlot`,
+   * only the court slots before it (the rest stay `scheduled`, which is how the seed
+   * leaves an event mid-pool-play or freshly drawn). Returns the persisted config and the
+   * standings input.
+   */
   poolStage(
     t: NewTournament,
     teams: readonly SeedTeam[],
     organizer: SeedUser,
-    options: { poolSize: number; courts: number; advancement: PoolToBracketConfig['advancement']; drawnAt: Date; rngSeed: number },
+    options: { poolSize: number; courts: number; advancement: PoolToBracketConfig['advancement']; drawnAt: Date; rngSeed: number; playUntilSlot?: number },
   ): { config: PoolToBracketConfig; pools: Array<{ row: NewPool; teams: SeedTeam[] }>; played: Map<string, StandingsMatch[]> } {
     const config: PoolToBracketConfig = {
       version: DRAW_CONFIG_VERSION,
@@ -564,6 +588,7 @@ class SeedBuilder {
       const b = byId.get(m.teamBId);
       if (pool === undefined || a === undefined || b === undefined) throw new Error('seed: pool match references an unknown team');
       const scheduledAt = new Date(startsAt.getTime() + m.courtSlot * POOL_MATCH_MINUTES * MINUTE);
+      const play = options.playUntilSlot === undefined || m.courtSlot < options.playUntilSlot;
       const startedAt = new Date(scheduledAt.getTime() + this.rng.int(1, 5) * MINUTE);
       const finalizedAt = new Date(startedAt.getTime() + this.rng.int(18, 26) * MINUTE);
       const match: NewMatch = {
@@ -583,11 +608,15 @@ class SeedBuilder {
         nextMatchId: null,
         nextMatchSlot: null,
         scheduledAt,
-        startedAt,
+        startedAt: play ? startedAt : null,
         finalizedAt: null,
         createdAt: options.drawnAt,
         updatedAt: options.drawnAt,
       };
+      if (!play) {
+        this.data.matches.push(match);
+        continue;
+      }
       const result = this.playMatch(a, b, m.bestOf);
       this.finalise(match, a, b, result, finalizedAt);
       this.data.matches.push(match);
@@ -970,6 +999,270 @@ export function buildSeed(options: SeedOptions): SeedDataset {
     b.data.teamMembers.push({ id: b.mint('tmm'), teamId: waiting.id, userId: waitingCaptain.row.id, role: 'captain', createdAt: waitingCreated });
     b.supporterDonation(t, null, 20_000n, b.at(-5 * DAY));
     b.transitions(t, organizer, [['draft', 'registration_open', b.at(-19 * DAY), 'organizer']]);
+  }
+
+  // ---- Phase 9: the remaining statuses, and the two events the end-to-end flows drive. Players
+  // are drawn from the same roster (people play more than one weekend); nobody is on two teams
+  // in one event.
+  const rosterFrom = (offset: number, count: number): Array<readonly [SeedUser, SeedUser]> =>
+    Array.from({ length: count }, (_, i) => {
+      const captain = players[(offset + i * 2) % players.length];
+      const player = players[(offset + i * 2 + 1) % players.length];
+      if (captain === undefined || player === undefined) throw new Error('seed: roster too small');
+      return [captain, player] as const;
+    });
+
+  // ---- Draft: Harvest Moon Mixer, being built for next month. No teams, no draw, unlisted.
+  {
+    const start = b.at(35 * DAY);
+    const created = b.at(-2 * DAY);
+    b.tournament(
+      {
+        slug: SEED_SLUGS.draft,
+        name: 'Harvest Moon Mixer',
+        subtitle: 'Coed twos under the lights, still being planned',
+        beneficiaryId: charity.id,
+        venueName: 'Moonlight Beach',
+        venueCity: 'Encinitas',
+        venueRegion: 'CA',
+        startsAt: start,
+        endsAt: new Date(start.getTime() + 6 * HOUR),
+        format: 'pool_to_bracket',
+        division: 'coed',
+        maxTeams: 12,
+        entryDonationCents: 3500n,
+        fundraisingGoalCents: 150_000n,
+        status: 'draft',
+        drawConfig: null,
+        createdAt: created,
+      },
+      organizer,
+    );
+  }
+
+  // ---- Registration closed, drawn: Foggy Bottom Fours, tomorrow. 8 paid teams, 2 pools drawn, nothing played.
+  {
+    const start = b.at(1 * DAY);
+    const created = b.at(-25 * DAY);
+    const t = b.tournament(
+      {
+        slug: SEED_SLUGS.drawn,
+        name: 'Foggy Bottom Fours',
+        subtitle: 'Eight teams, two pools, first serve at nine',
+        beneficiaryId: charity.id,
+        venueName: 'Ocean Beach',
+        venueCity: 'San Francisco',
+        venueRegion: 'CA',
+        startsAt: start,
+        endsAt: new Date(start.getTime() + 7 * HOUR),
+        format: 'pool_to_bracket',
+        division: 'open',
+        maxTeams: 8,
+        entryDonationCents: 3000n,
+        fundraisingGoalCents: 100_000n,
+        status: 'registration_closed',
+        drawConfig: null,
+        createdAt: created,
+      },
+      organizer,
+    );
+    const teams = b.buildTeams(t, rosterFrom(5, 8), { status: 'registered', registeredFrom: b.at(-22 * DAY), registeredTo: b.at(-4 * DAY), seeded: 2 });
+    for (const team of teams) b.entryDonation(t, team, 'succeeded');
+    b.supporterDonation(t, null, 12_000n, b.at(-9 * DAY));
+    b.transitions(t, organizer, [
+      ['draft', 'registration_open', b.at(-24 * DAY), 'organizer'],
+      ['registration_open', 'registration_closed', b.at(-3 * DAY), 'organizer'],
+    ]);
+    b.poolStage(t, teams, organizer, { poolSize: 4, courts: 2, advancement: { perPool: 2, wildcards: 0 }, drawnAt: b.at(-2 * DAY), rngSeed: 0x0f06, playUntilSlot: 0 });
+  }
+
+  // ---- Cancelled: Rained-out Rally, called off last week after six teams had entered (the
+  // Purse contest is voided and every stake refunded; the donations stay with the charity).
+  {
+    const start = b.at(-7 * DAY);
+    const created = b.at(-50 * DAY);
+    const t = b.tournament(
+      {
+        slug: SEED_SLUGS.cancelled,
+        name: 'Rained-out Rally',
+        subtitle: 'Cancelled: the courts flooded the night before',
+        beneficiaryId: charity.id,
+        venueName: 'Dockweiler Beach',
+        venueCity: 'Los Angeles',
+        venueRegion: 'CA',
+        startsAt: start,
+        endsAt: new Date(start.getTime() + 7 * HOUR),
+        format: 'pool_to_bracket',
+        division: 'open',
+        maxTeams: 16,
+        entryDonationCents: 2500n,
+        fundraisingGoalCents: 80_000n,
+        status: 'cancelled',
+        drawConfig: null,
+        createdAt: created,
+      },
+      organizer,
+    );
+    const teams = b.buildTeams(t, rosterFrom(21, 6), { status: 'registered', registeredFrom: b.at(-45 * DAY), registeredTo: b.at(-10 * DAY), seeded: 0 });
+    for (const team of teams) b.entryDonation(t, team, 'succeeded');
+    b.transitions(t, organizer, [
+      ['draft', 'registration_open', b.at(-48 * DAY), 'organizer'],
+      ['registration_open', 'cancelled', b.at(-8 * DAY), 'organizer'],
+    ]);
+  }
+
+  // ---- Registration open, free entry: Community Cup, in ten days. Three teams in; one complete
+  // pair still to register (the Player flow's), one captain waiting on a partner.
+  {
+    const start = b.at(10 * DAY);
+    const created = b.at(-12 * DAY);
+    const t = b.tournament(
+      {
+        slug: SEED_SLUGS.communityCup,
+        name: 'Community Cup',
+        subtitle: 'Free to enter: bring a partner, play for the courts',
+        beneficiaryId: charity.id,
+        venueName: 'Main Beach',
+        venueCity: 'Santa Cruz',
+        venueRegion: 'CA',
+        startsAt: start,
+        endsAt: new Date(start.getTime() + 6 * HOUR),
+        format: 'pool_to_bracket',
+        division: 'open',
+        maxTeams: 8,
+        entryDonationCents: 0n,
+        fundraisingGoalCents: 50_000n,
+        status: 'registration_open',
+        drawConfig: null,
+        createdAt: created,
+      },
+      organizer,
+    );
+    // Free entry: a registered team has no donation row at all (server/field.ts counts it as confirmed).
+    const registered = b.buildTeams(t, rosterFrom(33, 3), { status: 'registered', registeredFrom: b.at(-11 * DAY), registeredTo: b.at(-2 * DAY), seeded: 0 });
+    for (const team of registered) {
+      b.audit({
+        actorKind: 'player',
+        actorUserId: team.captain.row.id,
+        action: 'team.status_changed',
+        subjectType: 'team',
+        subjectId: team.row.id,
+        detail: { from: 'forming', to: 'registered', reason: 'registration', donationId: null, purseEntry: 'second_step' },
+        createdAt: team.row.registeredAt ?? team.row.createdAt ?? b.anchor,
+      });
+    }
+    // A complete pair (partner accepted) that has not registered yet: the Player flow registers it.
+    b.buildTeams(t, rosterFrom(39, 1), { status: 'forming', registeredFrom: b.at(-1 * DAY), registeredTo: b.at(-1 * DAY + HOUR), seeded: 0 });
+    const waitingCaptain = players[41 % players.length];
+    if (waitingCaptain !== undefined) {
+      const waitingCreated = b.at(-3 * HOUR);
+      const waiting: NewTeam = {
+        id: b.mint('tm'),
+        tournamentId: t.id,
+        name: `${waitingCaptain.row.displayName.split(' ').slice(-1)[0] ?? 'Team'} / ?`,
+        seed: null,
+        status: 'forming',
+        invitedPhoneE164: `${SEED_PHONE_PREFIX}0199`,
+        registeredAt: null,
+        createdAt: waitingCreated,
+        updatedAt: waitingCreated,
+      };
+      b.data.teams.push(waiting);
+      b.data.teamMembers.push({ id: b.mint('tmm'), teamId: waiting.id, userId: waitingCaptain.row.id, role: 'captain', createdAt: waitingCreated });
+    }
+    b.supporterDonation(t, null, 15_000n, b.at(-4 * DAY));
+    b.transitions(t, organizer, [['draft', 'registration_open', b.at(-11 * DAY), 'organizer']]);
+  }
+
+  // ---- Live, pool play under way: Boardwalk Invitational, started two hours before the anchor.
+  // 8 teams, 2 pools of 4 on 2 courts; the first four slots of each pool are final, the last two
+  // scheduled, so a captain can submit a pool score and watch the standings move (the Player flow).
+  {
+    const start = b.at(-2 * HOUR);
+    const created = b.at(-30 * DAY);
+    const t = b.tournament(
+      {
+        slug: SEED_SLUGS.boardwalk,
+        name: 'Boardwalk Invitational',
+        subtitle: 'Eight invited teams, two pools, pool play now',
+        beneficiaryId: charity.id,
+        venueName: 'Mission Beach Boardwalk Courts',
+        venueCity: 'San Diego',
+        venueRegion: 'CA',
+        startsAt: start,
+        endsAt: new Date(start.getTime() + 7 * HOUR),
+        format: 'pool_to_bracket',
+        division: 'open',
+        maxTeams: 8,
+        entryDonationCents: 3000n,
+        fundraisingGoalCents: 120_000n,
+        status: 'live',
+        drawConfig: null,
+        createdAt: created,
+      },
+      organizer,
+    );
+    const teams = b.buildTeams(t, rosterFrom(2, 8), { status: 'checked_in', registeredFrom: b.at(-28 * DAY), registeredTo: b.at(-3 * DAY), seeded: 2 });
+    for (const team of teams) b.entryDonation(t, team, 'succeeded');
+    b.supporterDonation(t, null, 30_000n, b.at(-6 * DAY));
+    b.supporterDonation(t, players[45] ?? null, 5_000n, b.at(-1 * DAY));
+    b.transitions(t, organizer, [
+      ['draft', 'registration_open', b.at(-29 * DAY), 'organizer'],
+      ['registration_open', 'registration_closed', b.at(-2 * DAY), 'organizer'],
+    ]);
+    b.poolStage(t, teams, organizer, { poolSize: 4, courts: 2, advancement: { perPool: 2, wildcards: 0 }, drawnAt: b.at(-1 * DAY), rngSeed: 0xb0a7, playUntilSlot: 4 });
+    b.transitions(t, organizer, [['registration_closed', 'live', new Date(start.getTime() - 20 * MINUTE), 'organizer']]);
+  }
+
+  // ---- Live, one dispute from done: Dune Cup, yesterday evening. 8 teams, 2 pools complete, a
+  // bracket of 4 whose semifinals are final and whose final is disputed: the Organizer flow
+  // resolves it, ends play and closes the tournament through Purse's frozen preview.
+  {
+    const start = b.at(-26 * HOUR);
+    const created = b.at(-40 * DAY);
+    const t = b.tournament(
+      {
+        slug: SEED_SLUGS.duneCup,
+        name: 'Dune Cup',
+        subtitle: 'Eight teams, a bracket of four, one result still contested',
+        beneficiaryId: charity.id,
+        venueName: 'Dunes Beach',
+        venueCity: 'Half Moon Bay',
+        venueRegion: 'CA',
+        startsAt: start,
+        endsAt: new Date(start.getTime() + 6 * HOUR),
+        format: 'pool_to_bracket',
+        division: 'open',
+        maxTeams: 8,
+        entryDonationCents: 3500n,
+        fundraisingGoalCents: 100_000n,
+        status: 'live',
+        drawConfig: null,
+        createdAt: created,
+      },
+      organizer,
+    );
+    const teams = b.buildTeams(t, rosterFrom(13, 8), { status: 'checked_in', registeredFrom: b.at(-38 * DAY), registeredTo: b.at(-5 * DAY), seeded: 2 });
+    for (const team of teams) b.entryDonation(t, team, 'succeeded');
+    b.supporterDonation(t, null, 40_000n, b.at(-15 * DAY));
+    b.supporterDonation(t, players[46] ?? null, 8_000n, b.at(-2 * DAY));
+    b.transitions(t, organizer, [
+      ['draft', 'registration_open', b.at(-39 * DAY), 'organizer'],
+      ['registration_open', 'registration_closed', b.at(-4 * DAY), 'organizer'],
+    ]);
+    const stage = b.poolStage(t, teams, organizer, { poolSize: 4, courts: 2, advancement: { perPool: 2, wildcards: 0 }, drawnAt: b.at(-3 * DAY), rngSeed: 0xd0e5 });
+    b.transitions(t, organizer, [['registration_closed', 'live', new Date(start.getTime() - 30 * MINUTE), 'organizer']]);
+    b.bracketStage(t, stage, teams, organizer, { drawnAt: new Date(start.getTime() + 3 * HOUR + 15 * MINUTE), plan: { 1: 'final', 2: 'final', 3: 'disputed' } });
+    b.data.sponsors.push({
+      id: b.mint('spn'),
+      tournamentId: t.id,
+      name: 'Half Moon Surf Co.',
+      logoUrl: null,
+      tier: 'prize',
+      prizeContributionCents: 25_000n,
+      createdAt: created,
+      updatedAt: created,
+    });
   }
 
   return b.data;

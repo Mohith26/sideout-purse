@@ -14,6 +14,7 @@
     "db:generate:custom": "drizzle-kit generate --custom",
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts",
+    "demo:reset": "tsx --env-file-if-exists=.env scripts/demo-reset.ts",
     "reconcile": "tsx --env-file-if-exists=.env scripts/reconcile.ts",
     "db:purge": "tsx --env-file-if-exists=.env scripts/purge.ts",
     "clean": "rm -rf dist"

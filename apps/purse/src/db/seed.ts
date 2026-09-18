@@ -2,7 +2,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Id } from '@repo/ids';
 
 import { createApiKey, revokeApiKey, type CreatedApiKey } from '../auth/api-keys';
-import { closeContest, createContest, enterContest, getContest, previewSettlement, submitScores, transition } from '../contests';
+import { closeContest, createContest, enterContest, getContest, previewSettlement, submitScores, transition, voidContest } from '../contests';
 import { publishRuleset, SPEC_EXAMPLE_RULESET } from '../eligibility';
 import { activeOrigins, addOrigin } from '../embed/origins';
 import { findAccount, openAccount } from '../ledger/accounts';
@@ -98,15 +98,16 @@ export async function seedRuleset(db: Db): Promise<{ ruleset: RulesetRow; create
 // ---- Users (phase 3) -----------------------------------------------------------------
 
 /**
- * Six users the seed contests are played by. Stable ids, like the tenant's, so every
+ * Seven users the seed contests are played by. Stable ids, like the tenant's, so every
  * environment agrees, and stable external ids the way a partner would link them. Their
  * wallets are funded with promo points through the ledger like anyone else's.
  *
  * Between them they exercise every verification state (acceptance criterion 29) and the
  * risk controls: three verified (demographics supplied, permitted regions), one left
  * pending by the dev identity provider, one rejected by it, one who has never started and
- * has excluded themself; the last two share a name and date of birth, which raises the
- * duplicate-identity flag the operator console reviews.
+ * has excluded themself, and one verified player an operator has blocked from the platform
+ * (`platform_block`, the `platform_blocked` refusal). The fifth and sixth share a name and
+ * date of birth, which raises the duplicate-identity flag the operator console reviews.
  */
 export const SEED_USER_IDS: ReadonlyArray<Id<'usr'>> = [
   'usr_01a0b278-93be-70eb-9f0e-c4bfefda6f93',
@@ -115,6 +116,7 @@ export const SEED_USER_IDS: ReadonlyArray<Id<'usr'>> = [
   'usr_01a0b278-93be-70eb-9f0e-d35624fd293e',
   'usr_01a0b278-93be-70eb-9f0e-d790d453c2f0',
   'usr_01a0b278-93be-70eb-9f0e-da1121d7a116',
+  'usr_01a0b278-93be-70eb-9f0e-e07c3a5d2b41',
 ];
 
 export type SeedUser = {
@@ -127,6 +129,8 @@ export type SeedUser = {
   /** What the dev identity provider is seeded to answer, and what the seed drives the user to. */
   verification: 'verified' | 'pending' | 'rejected' | 'unstarted';
   selfExcluded?: boolean;
+  /** An operator has blocked this account from the platform (`platform_block`, no end date). */
+  platformBlocked?: boolean;
 };
 
 export const SEED_USERS: readonly SeedUser[] = [
@@ -136,6 +140,7 @@ export const SEED_USERS: readonly SeedUser[] = [
   { id: SEED_USER_IDS[3] ?? 'usr_', externalId: 'seed:user-4', displayName: 'Diego Alvarez', dateOfBirth: '1989-01-22', phoneE164: '+17135550104', region: null, verification: 'pending' },
   { id: SEED_USER_IDS[4] ?? 'usr_', externalId: 'seed:user-5', displayName: 'Sam Okafor', dateOfBirth: '1996-09-09', phoneE164: '+12125550105', region: 'US-NY', verification: 'rejected' },
   { id: SEED_USER_IDS[5] ?? 'usr_', externalId: 'seed:user-6', displayName: 'Sam Okafor', dateOfBirth: '1996-09-09', phoneE164: '+12125550106', region: 'US-NY', verification: 'unstarted', selfExcluded: true },
+  { id: SEED_USER_IDS[6] ?? 'usr_', externalId: 'seed:user-7', displayName: 'Jordan Blake', dateOfBirth: '1990-05-17', phoneE164: '+13235550107', region: 'US-CA', verification: 'verified', platformBlocked: true },
 ];
 
 /** The dev identity provider as the seed drives it: the same lists `DEV_IDENTITY_*` would carry. */
@@ -150,10 +155,11 @@ export const SEED_SELF_EXCLUSION_DAYS = 30;
 export type SeedUsersResult = { users: Array<{ id: string; externalId: string; verification: string; created: boolean }>; duplicateFlags: number };
 
 /**
- * Upsert the six users by their stable ids (a phase 2 database has placeholder rows for
- * them from the migration backfill), then bring each to its verification state through
- * the same state machine the API runs, record locations, fingerprints and the one
- * self-exclusion. Every step is idempotent: a rerun changes nothing.
+ * Upsert the seven users by their stable ids (a phase 2 database has placeholder rows for
+ * the first six from the migration backfill), then bring each to its verification state
+ * through the same state machine the API runs, record locations, fingerprints, the one
+ * self-exclusion and the one platform block. Every step is idempotent: a rerun changes
+ * nothing.
  */
 export async function seedUsers(db: Db, tenantId: Id<'tnt'>): Promise<SeedUsersResult> {
   const identity = devIdentityProvider(SEED_IDENTITY_LISTS);
@@ -185,19 +191,24 @@ export async function seedUsers(db: Db, tenantId: Id<'tnt'>): Promise<SeedUsersR
       await startVerification(db, { tenantId, userId: user.id, identity, actor: SEED_OPERATOR });
     }
     if (seed.selfExcluded === true) await seedSelfExclusion(db, tenantId, user);
+    if (seed.platformBlocked === true) await seedPlatformBlock(db, tenantId, user);
 
     results.push({ id: user.id, externalId: user.externalId, verification: (await getVerification(db, user.id)).state, created });
   }
   return { users: results, duplicateFlags };
 }
 
-async function seedSelfExclusion(db: Db, tenantId: Id<'tnt'>, user: User): Promise<void> {
+async function activeRestriction(db: Db, userId: string, kind: 'self_exclusion' | 'platform_block'): Promise<boolean> {
   const [active] = await db.execute<{ id: string }>(sql`
     select id from user_restrictions
-    where user_id = ${user.id} and kind = 'self_exclusion' and lifted_at is null and (ends_at is null or ends_at > now())
+    where user_id = ${userId} and kind = ${kind} and lifted_at is null and (ends_at is null or ends_at > now())
     limit 1
   `);
-  if (active !== undefined) return;
+  return active !== undefined;
+}
+
+async function seedSelfExclusion(db: Db, tenantId: Id<'tnt'>, user: User): Promise<void> {
+  if (await activeRestriction(db, user.id, 'self_exclusion')) return;
   await addRestriction(db, {
     tenantId,
     userId: user.id,
@@ -205,6 +216,18 @@ async function seedSelfExclusion(db: Db, tenantId: Id<'tnt'>, user: User): Promi
     reason: 'seed: self-excluded for a month',
     endsAt: new Date(Date.now() + SEED_SELF_EXCLUSION_DAYS * 86_400_000),
     actor: { kind: 'user', ref: user.id },
+  });
+}
+
+/** The operator's block: a verified identity the platform still refuses (`platform_blocked`), with no end date. */
+async function seedPlatformBlock(db: Db, tenantId: Id<'tnt'>, user: User): Promise<void> {
+  if (await activeRestriction(db, user.id, 'platform_block')) return;
+  await addRestriction(db, {
+    tenantId,
+    userId: user.id,
+    kind: 'platform_block',
+    reason: 'seed: blocked by an operator after a chargeback dispute',
+    actor: SEED_OPERATOR,
   });
 }
 
@@ -277,19 +300,26 @@ export const SEED_OPERATOR: Actor = { kind: 'operator', ref: 'seed' };
 export const SEED_CONTESTS = {
   draft: 'seed-draft-doubles',
   open: 'seed-open-doubles',
+  locked: 'seed-locked-doubles',
+  inProgress: 'seed-in-progress-doubles',
   awaiting: 'seed-awaiting-doubles',
   settled: 'seed-settled-doubles',
+  cancelled: 'seed-cancelled-doubles',
+  voided: 'seed-voided-doubles',
 } as const;
 
 export type SeedContestsResult = { contests: Array<{ externalId: string; id: string; state: string; created: boolean }> };
 
 /**
- * One contest per state the seed can reach without scores from Sideout: a `draft`, an
- * `open` with four entered users holding promo points, an `awaiting_settlement` one with
- * every score in (the console's close flow settles it behind the frozen preview), and a
- * `settled` one whose results reconcile (I4, I5, I7). Each is keyed on its
- * `external_id` and built in one transaction through the same services the API uses, so
- * a rerun creates nothing and a partial run leaves nothing behind.
+ * One contest per state a contest can rest in (acceptance criterion 29; `settling` exists
+ * only inside the settlement transaction): a `draft`, an `open` with four entered users
+ * holding promo points, a `locked` one whose field is fixed, an `in_progress` one with
+ * half its scores in, an `awaiting_settlement` one with every score in (the console's
+ * close flow settles it behind the frozen preview), a `settled` one whose results
+ * reconcile (I4, I5, I7), a `cancelled` one that never took an entry, and a `voided` one
+ * whose entries were refunded. Each is keyed on its `external_id` and built in one
+ * transaction through the same services the API uses, so a rerun creates nothing and a
+ * partial run leaves nothing behind.
  */
 export async function seedContests(db: Db, tenantId: Id<'tnt'>): Promise<SeedContestsResult> {
   const results: SeedContestsResult['contests'] = [];
@@ -305,10 +335,18 @@ export async function seedContests(db: Db, tenantId: Id<'tnt'>): Promise<SeedCon
           return seedDraftContest(tx, tenantId, externalId);
         case 'open':
           return seedOpenContest(tx, tenantId, externalId);
+        case 'locked':
+          return seedLockedContest(tx, tenantId, externalId);
+        case 'inProgress':
+          return seedInProgressContest(tx, tenantId, externalId);
         case 'awaiting':
           return seedAwaitingContest(tx, tenantId, externalId);
         case 'settled':
           return seedSettledContest(tx, tenantId, externalId);
+        case 'cancelled':
+          return seedCancelledContest(tx, tenantId, externalId);
+        case 'voided':
+          return seedVoidedContest(tx, tenantId, externalId);
       }
     });
     results.push({ externalId, id: built.id, state: built.state, created: true });
@@ -351,6 +389,61 @@ async function seedOpenContest(tx: DbOrTx, tenantId: Id<'tnt'>, externalId: stri
   for (const userId of entrants) {
     await enterContest(tx, { tenantId, contestId: contest.id, userId, idempotencyKey: `seed:enter:${externalId}:${userId}`, actor: SEED_OPERATOR });
   }
+  return getContest(tx, tenantId, contest.id);
+}
+
+/** Four entrants, the field fixed: no more entries, play has not started. */
+async function seedLockedContest(tx: DbOrTx, tenantId: Id<'tnt'>, externalId: string): Promise<Contest> {
+  const { contest } = await createContest(tx, {
+    tenantId,
+    externalId,
+    kind: 'tournament',
+    title: 'Sideout seed: Wednesday doubles (locked)',
+    asset: 'POINTS',
+    entryAmount: SEED_ENTRY_AMOUNT,
+    maxParticipants: 8,
+    prizeStructure: { type: 'winner_take_all' },
+    idempotencyKey: `seed:create:${externalId}`,
+    actor: SEED_OPERATOR,
+  });
+  await transition(tx, { tenantId, contestId: contest.id, to: 'open', actor: SEED_OPERATOR, reason: 'seed' });
+  const entrants = SEED_USER_IDS.slice(0, 4);
+  await fundWallets(tx, tenantId, entrants);
+  for (const userId of entrants) {
+    await enterContest(tx, { tenantId, contestId: contest.id, userId, idempotencyKey: `seed:enter:${externalId}:${userId}`, actor: SEED_OPERATOR });
+  }
+  await transition(tx, { tenantId, contestId: contest.id, to: 'locked', actor: SEED_OPERATOR, reason: 'seed' });
+  return getContest(tx, tenantId, contest.id);
+}
+
+/** Four entrants, play under way: two scores in, two attempts still open, so the contest cannot settle yet. */
+async function seedInProgressContest(tx: DbOrTx, tenantId: Id<'tnt'>, externalId: string): Promise<Contest> {
+  const { contest } = await createContest(tx, {
+    tenantId,
+    externalId,
+    kind: 'tournament',
+    title: 'Sideout seed: Thursday doubles (in progress)',
+    asset: 'POINTS',
+    entryAmount: SEED_ENTRY_AMOUNT,
+    prizeStructure: { type: 'placement_table', placements: [{ placement: 1, amount: '250' }, { placement: 2, amount: '150' }] },
+    idempotencyKey: `seed:create:${externalId}`,
+    actor: SEED_OPERATOR,
+  });
+  await transition(tx, { tenantId, contestId: contest.id, to: 'open', actor: SEED_OPERATOR, reason: 'seed' });
+  const entrants = SEED_USER_IDS.slice(0, 4);
+  await fundWallets(tx, tenantId, entrants);
+  for (const userId of entrants) {
+    await enterContest(tx, { tenantId, contestId: contest.id, userId, idempotencyKey: `seed:enter:${externalId}:${userId}`, actor: SEED_OPERATOR });
+  }
+  await transition(tx, { tenantId, contestId: contest.id, to: 'locked', actor: SEED_OPERATOR, reason: 'seed' });
+  await transition(tx, { tenantId, contestId: contest.id, to: 'in_progress', actor: SEED_OPERATOR, reason: 'seed' });
+  await submitScores(tx, {
+    tenantId,
+    contestId: contest.id,
+    scores: entrants.slice(0, 2).map((userId, index) => ({ userId, score: [21, 16][index] ?? null, attemptFinished: true, sourceRef: `seed:match:${index + 1}` })),
+    idempotencyKey: `seed:scores:${externalId}`,
+    actor: SEED_OPERATOR,
+  });
   return getContest(tx, tenantId, contest.id);
 }
 
@@ -425,6 +518,49 @@ async function seedSettledContest(tx: DbOrTx, tenantId: Id<'tnt'>, externalId: s
     idempotencyKey: `seed:close:${externalId}`,
   });
   return closed.contest;
+}
+
+/** Opened, then called off before anyone entered: `cancelled` is only reachable while no entry is held. */
+async function seedCancelledContest(tx: DbOrTx, tenantId: Id<'tnt'>, externalId: string): Promise<Contest> {
+  const { contest } = await createContest(tx, {
+    tenantId,
+    externalId,
+    kind: 'tournament',
+    title: 'Sideout seed: rained-out doubles (cancelled)',
+    asset: 'POINTS',
+    entryAmount: SEED_ENTRY_AMOUNT,
+    prizeStructure: { type: 'winner_take_all' },
+    idempotencyKey: `seed:create:${externalId}`,
+    actor: SEED_OPERATOR,
+  });
+  await transition(tx, { tenantId, contestId: contest.id, to: 'open', actor: SEED_OPERATOR, reason: 'seed' });
+  await transition(tx, { tenantId, contestId: contest.id, to: 'cancelled', actor: SEED_OPERATOR, reason: 'seed: venue flooded' });
+  return getContest(tx, tenantId, contest.id);
+}
+
+/** Three entrants, play started, then voided: every entry refunded by a reversing entry and the escrow back to zero. */
+async function seedVoidedContest(tx: DbOrTx, tenantId: Id<'tnt'>, externalId: string): Promise<Contest> {
+  const { contest } = await createContest(tx, {
+    tenantId,
+    externalId,
+    kind: 'tournament',
+    title: 'Sideout seed: heat-wave doubles (voided)',
+    asset: 'POINTS',
+    entryAmount: SEED_ENTRY_AMOUNT,
+    prizeStructure: { type: 'percentage_split', percentages: [70, 30] },
+    idempotencyKey: `seed:create:${externalId}`,
+    actor: SEED_OPERATOR,
+  });
+  await transition(tx, { tenantId, contestId: contest.id, to: 'open', actor: SEED_OPERATOR, reason: 'seed' });
+  const entrants = SEED_USER_IDS.slice(0, 3);
+  await fundWallets(tx, tenantId, entrants);
+  for (const userId of entrants) {
+    await enterContest(tx, { tenantId, contestId: contest.id, userId, idempotencyKey: `seed:enter:${externalId}:${userId}`, actor: SEED_OPERATOR });
+  }
+  await transition(tx, { tenantId, contestId: contest.id, to: 'locked', actor: SEED_OPERATOR, reason: 'seed' });
+  await transition(tx, { tenantId, contestId: contest.id, to: 'in_progress', actor: SEED_OPERATOR, reason: 'seed' });
+  const voided = await voidContest(tx, { tenantId, contestId: contest.id, actor: SEED_OPERATOR, idempotencyKey: `seed:void:${externalId}`, reason: 'seed: play abandoned in a heat wave' });
+  return voided.contest;
 }
 
 /** Issue every user's promo points once (the ledger's idempotency makes a rerun a no-op) so they can afford to enter. */

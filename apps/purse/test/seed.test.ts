@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
 import { authenticateApiKey, resetAuthCaches } from '../src/auth';
-import { listParticipants, listResults } from '../src/contests';
+import { CONTEST_STATES, listParticipants, listResults } from '../src/contests';
 import type { Database } from '../src/db/client';
 import { accounts, apiKeys, auditLog, contests, operatorFlags, operatorSessions, operators, rulesets, tenants, userLocations, userRestrictions, users } from '../src/db/schema';
 import {
@@ -110,7 +110,7 @@ describe('db:seed', () => {
     expect(await database.db.select().from(rulesets)).toHaveLength(1);
   });
 
-  it('seeds six users covering every verification state, their locations, one self-exclusion and the duplicate-identity flag, idempotently', async () => {
+  it('seeds seven users covering every verification state, their locations, one self-exclusion, one platform block and the duplicate-identity flag, idempotently', async () => {
     const { tenant } = await seedSideoutTenant(database.db);
     await seedRuleset(database.db);
     const first = await seedUsers(database.db, tenant.id as Id<'tnt'>);
@@ -122,11 +122,13 @@ describe('db:seed', () => {
     const flags = await runtime.db.select().from(operatorFlags);
     expect(flags).toHaveLength(1);
     expect(flags[0]).toMatchObject({ kind: 'duplicate_identity', status: 'open', dedupeKey: `pair:${SEED_USER_IDS[4]}:${SEED_USER_IDS[5]}` });
-    // Locations for the five who declared one; a self-exclusion on the sixth.
+    // Locations for the six who declared one; a self-exclusion on the sixth user, an operator's platform block on the seventh.
     expect(await runtime.db.select().from(userLocations)).toHaveLength(SEED_USERS.filter((user) => user.region !== null).length);
     const restrictions = await runtime.db.select().from(userRestrictions);
-    expect(restrictions).toHaveLength(1);
-    expect(restrictions[0]).toMatchObject({ userId: SEED_USER_IDS[5], kind: 'self_exclusion', createdBy: `user:${SEED_USER_IDS[5]}`, liftedAt: null });
+    expect(restrictions).toHaveLength(2);
+    expect(restrictions.find((r) => r.kind === 'self_exclusion')).toMatchObject({ userId: SEED_USER_IDS[5], createdBy: `user:${SEED_USER_IDS[5]}`, liftedAt: null });
+    expect(restrictions.find((r) => r.kind === 'platform_block')).toMatchObject({ userId: SEED_USER_IDS[6], createdBy: 'operator:seed', liftedAt: null, endsAt: null });
+    expect(await getVerification(runtime.db, SEED_USER_IDS[6] ?? '')).toMatchObject({ state: 'verified' });
     // The verified users carry a provider reference and a re-verify date, never anything else.
     const verified = await getVerification(runtime.db, SEED_USER_IDS[0] ?? '');
     expect(verified).toMatchObject({ state: 'verified', provider: 'dev' });
@@ -137,9 +139,9 @@ describe('db:seed', () => {
     const second = await seedUsers(database.db, tenant.id as Id<'tnt'>);
     expect(second.users.map((user) => [user.externalId, user.verification, user.created])).toEqual(SEED_USERS.map((user) => [user.externalId, user.verification, false]));
     expect(second.duplicateFlags).toBe(0);
-    expect(await runtime.db.select().from(users)).toHaveLength(6);
+    expect(await runtime.db.select().from(users)).toHaveLength(7);
     expect(await runtime.db.select().from(operatorFlags)).toHaveLength(1);
-    expect(await runtime.db.select().from(userRestrictions)).toHaveLength(1);
+    expect(await runtime.db.select().from(userRestrictions)).toHaveLength(2);
   });
 
   it('completes the placeholder users a phase 2 database was left with, keeping their wallets', async () => {
@@ -151,7 +153,7 @@ describe('db:seed', () => {
     await seedUsers(database.db, tenant.id as Id<'tnt'>);
     const [row] = await runtime.db.select().from(users).where(eq(users.id, legacy));
     expect(row).toMatchObject({ externalId: 'seed:user-1', displayName: 'Ana Reyes' });
-    expect(await runtime.db.select().from(users)).toHaveLength(6);
+    expect(await runtime.db.select().from(users)).toHaveLength(7);
   });
 
   it('mints one sandbox secret key with the operator scope and one publishable key, authenticates the secret, and rotates on request', async () => {
@@ -185,7 +187,7 @@ describe('db:seed', () => {
     await expect(authenticateApiKey(runtime.db, rotated.keys[0]?.plaintext ?? '')).resolves.toMatchObject({ key: { label: 'seed:sideout:secret:sandbox' } });
   });
 
-  it('seeds one contest per reachable state, idempotently, and the settled one reconciles', async () => {
+  it('seeds one contest per resting state, idempotently, and the ledger reconciles', async () => {
     const { tenant } = await seedSideoutTenant(database.db);
     await seedPlatformAccounts(database.db, tenant.id);
     await seedRuleset(database.db);
@@ -194,9 +196,29 @@ describe('db:seed', () => {
     expect(first.contests.map((c) => [c.externalId, c.state, c.created])).toEqual([
       [SEED_CONTESTS.draft, 'draft', true],
       [SEED_CONTESTS.open, 'open', true],
+      [SEED_CONTESTS.locked, 'locked', true],
+      [SEED_CONTESTS.inProgress, 'in_progress', true],
       [SEED_CONTESTS.awaiting, 'awaiting_settlement', true],
       [SEED_CONTESTS.settled, 'settled', true],
+      [SEED_CONTESTS.cancelled, 'cancelled', true],
+      [SEED_CONTESTS.voided, 'voided', true],
     ]);
+    // Every state a contest can rest in (acceptance criterion 29); `settling` is transient.
+    expect(new Set(first.contests.map((c) => c.state))).toEqual(new Set(CONTEST_STATES.filter((state) => state !== 'settling')));
+
+    // The voided contest refunded every entry: escrow back to zero, three refund entries on the record.
+    const voided = first.contests.find((c) => c.externalId === SEED_CONTESTS.voided);
+    const [voidedRow] = await runtime.db.select().from(contests).where(eq(contests.id, voided?.id ?? ''));
+    expect(await balanceOf(runtime.db, voidedRow?.escrowAccountId ?? '')).toBe(0n);
+    expect((await listParticipants(runtime.db, voided?.id ?? '')).map((p) => p.state)).toEqual(['entered', 'entered', 'entered']);
+    // The cancelled one never held an entry; the locked and in-progress ones hold four each.
+    const cancelled = first.contests.find((c) => c.externalId === SEED_CONTESTS.cancelled);
+    expect(await listParticipants(runtime.db, cancelled?.id ?? '')).toHaveLength(0);
+    for (const key of ['locked', 'inProgress'] as const) {
+      const contest = first.contests.find((c) => c.externalId === SEED_CONTESTS[key]);
+      const [row] = await runtime.db.select().from(contests).where(eq(contests.id, contest?.id ?? ''));
+      expect(await balanceOf(runtime.db, row?.escrowAccountId ?? ''), key).toBe(400n);
+    }
 
     // The awaiting contest holds its four entries in escrow until an operator closes it.
     const awaiting = first.contests.find((c) => c.externalId === SEED_CONTESTS.awaiting);
@@ -211,8 +233,8 @@ describe('db:seed', () => {
     expect(await balanceOf(runtime.db, openRow?.escrowAccountId ?? '')).toBe(400n);
     for (const userId of SEED_USER_IDS.slice(0, 4)) {
       const wallet = await findAccount(runtime.db, { tenantId: tenant.id as Id<'tnt'>, kind: 'user_wallet', ownerRef: userId, asset: 'POINTS' });
-      // 1000 issued, 100 into the open contest, 100 into the awaiting one, and for the first five also 100 into the settled one plus its payout.
-      expect(await balanceOf(runtime.db, wallet?.id ?? '')).toBeGreaterThanOrEqual(700n);
+      // 1000 issued; 100 each into the open, locked, in-progress and awaiting contests; the settled one's stake and payout; the voided one's stake refunded.
+      expect(await balanceOf(runtime.db, wallet?.id ?? '')).toBeGreaterThanOrEqual(500n);
     }
 
     const settled = first.contests.find((c) => c.externalId === SEED_CONTESTS.settled);
@@ -236,7 +258,7 @@ describe('db:seed', () => {
     // A second run creates nothing.
     const second = await seedContests(database.db, tenant.id as Id<'tnt'>);
     expect(second.contests.map((c) => [c.id, c.created])).toEqual(first.contests.map((c) => [c.id, false]));
-    expect(await database.db.select().from(contests)).toHaveLength(4);
+    expect(await database.db.select().from(contests)).toHaveLength(8);
     expect((await reconcile(runtime.db)).ok).toBe(true);
   });
 

@@ -5,7 +5,7 @@ import type { Id } from '@repo/ids';
 
 import { ok } from '../../http/envelope';
 import { RequestValidationError } from '../../http/errors';
-import { accountDetail, accountEntries, accountSummary, accountTree, decodeCursor, entryDetail, listEntries, reconcile } from '../../ledger';
+import { accountDetail, accountEntries, accountSummary, accountTree, decodeCursor, entryDetail, listEntries, reconcileAndRecord } from '../../ledger';
 import { param } from '../v1/schemas';
 import type { ConsoleDeps, ConsoleScope } from './scope';
 import { accountDetailResource, accountEntryResource, accountResource, entryDetailResource, entrySummaryResource } from './serialize';
@@ -16,7 +16,8 @@ import { tenantOf } from './tenants';
  * engineer"): a tenant's account tree with derived balances, one account with its
  * balance now and as of any instant (`balanceOf(asOf)`), the entries that touched it
  * with a running balance, the journal, one entry with every line and the per-asset sums
- * that show it balances, and `reconcile()` on demand. Reads only; nothing here writes.
+ * that show it balances, and `reconcile()` on demand (each run recorded in `reconcile_runs`,
+ * the last result `/health` reports). Otherwise reads only.
  */
 const accountIdSchema = z.string().regex(/^acct_[0-9a-f-]{36}$/, 'must be an account id (acct_...)');
 const entryIdSchema = z.string().regex(/^je_[0-9a-f-]{36}$/, 'must be a journal entry id (je_...)');
@@ -88,10 +89,10 @@ export function globalLedgerRoutes(_deps: ConsoleDeps) {
   // Always 200 with the report, unlike /internal/reconcile: the panel renders a failed
   // invariant red rather than an error envelope, and the log still alarms.
   routes.get('/reconcile', async (c) => {
-    const report = await reconcile(c.get('db'));
+    const { report, run } = await reconcileAndRecord(c.get('db'), 'console');
     const logger = c.get('logger');
-    if (report.ok) logger.info('reconcile clean (console)', { durationMs: report.durationMs });
-    else logger.error('reconcile failed (console)', { failed: report.invariants.filter((each) => !each.ok).map((each) => each.id) });
+    if (report.ok) logger.info('reconcile clean (console)', { runId: run.id, durationMs: report.durationMs });
+    else logger.error('reconcile failed (console)', { runId: run.id, failed: report.invariants.filter((each) => !each.ok).map((each) => each.id) });
     const body: ReconcileResource = report;
     return ok(c, body);
   });
