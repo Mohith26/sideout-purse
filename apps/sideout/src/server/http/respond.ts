@@ -5,7 +5,7 @@ import { ZodError, z } from 'zod';
 import { env } from '../../env';
 import { logger } from '../../lib/logger';
 import { readOrMintRequestId } from '../../lib/request-id';
-import { ApiFailure, failure, type SideoutApiError } from './errors';
+import { failure, isApiFailure, type SideoutApiError } from './errors';
 
 /**
  * The response envelope: `{ data }` on success, `{ error }` otherwise. Every route goes
@@ -67,7 +67,7 @@ export async function handle(request: Request, body: (context: RequestContext) =
 }
 
 function renderError(error: unknown, log: Logger): Response {
-  if (error instanceof ApiFailure) return fail(error.error, error.status);
+  if (isApiFailure(error)) return fail(error.error, error.status);
   if (error instanceof ZodError) {
     const bad = failure.invalidRequest('validation_failed', 'The request did not match the expected shape.', z.treeifyError(error));
     return fail(bad.error, bad.status);

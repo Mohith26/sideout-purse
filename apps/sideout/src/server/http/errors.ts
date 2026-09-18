@@ -35,6 +35,16 @@ export class ApiFailure extends Error {
   }
 }
 
+/**
+ * Whether `error` is an `ApiFailure`, judged by shape rather than `instanceof`: the
+ * services `server/context.ts` caches on `globalThis` outlive the module graph they were
+ * built from when `next dev` recompiles, so the failure they throw can be an instance of
+ * an earlier copy of this class than the one the caller imported.
+ */
+export function isApiFailure(error: unknown): error is ApiFailure {
+  return error instanceof Error && error.name === 'ApiFailure' && 'error' in error && 'status' in error;
+}
+
 const make =
   (type: SideoutErrorType) =>
   (code: string, message: string, detail?: unknown): ApiFailure =>
