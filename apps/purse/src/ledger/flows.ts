@@ -9,8 +9,9 @@ import { reverseEntry } from './reverse';
 /**
  * The spec 4.2.5 standard flows as typed helpers. Each one is a fixed shape over
  * `postEntry`: the kinds of the accounts on each side are asserted, so a caller cannot
- * issue points into an escrow or settle out of a wallet. Contests call these in phase 2;
- * in phase 1 only the tests do.
+ * issue points into an escrow or settle out of a wallet. The contest engine
+ * (`src/contests/`) is their caller: `escrowEntry` and `refundEscrow` on entry and
+ * withdrawal, `settleEscrow` and `voidEscrow` at close and void.
  */
 
 type Common = {

@@ -6,9 +6,10 @@ embeddable SDK, and an operator console, built from scratch as a real platform w
 real boundary in front of it. The full design is in [`docs/system-spec.md`](docs/system-spec.md);
 the decisions it leaves open are answered in [`docs/decisions.md`](docs/decisions.md).
 
-This README covers the workspace layout and the quickstart. The full write-up (the ledger,
-how a score becomes a payout, the rounding rule, the provider seams, screenshots) lands
-with the last phase.
+This README covers the workspace layout and the quickstart, and carries the short version
+of each write-up section as its phase lands (the ledger, how a score becomes a payout, the
+rounding rule). The full write-up, with the consensus half, the provider seams and
+screenshots, lands with the last phase.
 
 ## Layout
 

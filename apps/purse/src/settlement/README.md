@@ -43,4 +43,5 @@ The same rule applies to a `percentage_split` of `[50, 30, 20]` over 101 points:
   pool evenly, because nobody can be ranked.
 
 The full rule set, with the reasoning, is in the header of `settle.ts`. The README at the
-repository root repeats the rounding rule in its "How a score becomes a payout" section.
+repository root states the rounding rule in its "The rounding rule" section, as spec
+section 13 requires.
