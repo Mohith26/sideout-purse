@@ -588,8 +588,9 @@ describe('draw, forfeit and standings', () => {
     expect(waiting.status).toBe(409);
     const unpaid = await errorOf(waiting);
     expect(unpaid.code).toBe('teams_unpaid');
-    expect(unpaid.detail).toEqual({ teams: [{ id: reserving, name: 'Team 2', reservationExpiresAt: expect.any(String) }] });
-    expect(new Date((unpaid.detail as { teams: Array<{ reservationExpiresAt: string }> }).teams[0]?.reservationExpiresAt ?? '').getTime()).toBeGreaterThan(Date.now());
+    const unpaidTeams = (unpaid.detail as { teams: Array<{ id: string; name: string; reservationExpiresAt: string }> }).teams;
+    expect(unpaidTeams.map((team) => [team.id, team.name])).toEqual([[reserving, 'Team 2']]);
+    expect(new Date(unpaidTeams[0]?.reservationExpiresAt ?? '').getTime()).toBeGreaterThan(Date.now());
 
     // Once it pays it is a confirmed team the draw missed: redraw.
     await database.db.update(donations).set({ status: 'succeeded' }).where(eq(donations.teamId, reserving ?? ''));

@@ -120,7 +120,7 @@ export function createAuthService(deps: AuthServiceDeps) {
           .from(authCodes)
           .where(and(eq(authCodes.id, input.codeId), eq(authCodes.phoneE164, input.phoneE164)))
           .for('update');
-        if (issued === undefined || issued.consumedAt !== null) return { ok: false as const, code: 'code_invalid' as const };
+        if (issued?.consumedAt !== null) return { ok: false as const, code: 'code_invalid' as const };
         if (issued.expiresAt.getTime() <= input.now.getTime()) return { ok: false as const, code: 'code_expired' as const };
         if (issued.attempts >= CODE_MAX_ATTEMPTS) return { ok: false as const, code: 'code_locked' as const };
 
