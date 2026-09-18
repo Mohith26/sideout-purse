@@ -41,10 +41,9 @@ test/               repository-level tests: the boundary lint rule, env isolatio
 Each app owns its Drizzle config and migration folder (`apps/*/drizzle`). Migrations are
 forward-only and applied by `pnpm db:migrate`, which runs each app's migrator in its own
 process. Reference rows never live in migration history: `pnpm db:seed` upserts them in
-both apps (in Purse, the Sideout tenant, its platform ledger accounts, and three seed
-contests: a draft, an open one with entrants holding promo points, and a settled one whose
-results reconcile; in Sideout, the demo events described under "Quickstart") and can be
-re-run against any environment.
+both apps (the quickstart below says what) and can be re-run against any environment; the
+three seed contests are a draft, an open one with entrants holding promo points, and a
+settled one whose results reconcile.
 
 Purse connects as two roles. `purse_migrator` owns its databases and runs migrations and
 seeds; `purse_app`, the API's runtime role, owns nothing and cannot `UPDATE` or `DELETE`
@@ -133,8 +132,9 @@ that service's JSON log line, which is how a Sideout request will be traced into
 calls it makes.
 
 `pnpm db:setup` takes `--admin-url` (or `DATABASE_ADMIN_URL`) for a Postgres that is not
-the local default; `apps/*/.env.example` list every variable with a comment, and
-`apps/purse/src/env.ts` is the authoritative list for Purse.
+the local default. `apps/*/.env.example` are the templates; `apps/purse/src/env.ts` is the
+authoritative list for Purse, and [`docs/decisions.md`](docs/decisions.md) (phase 3, "Rate
+limits") notes where the template lags it.
 
 ## The API
 

@@ -298,11 +298,11 @@ entry at all, so they need their own record. Phase 2 lands spec 4.1's `idempoten
 table keyed on (`tenant_id`, `key`) with the operation, a hash of the request and a small
 JSON record of the ids the operation produced; a replay reloads the original result from
 those ids rather than storing a response body, so the replay is exact and typed and the
-table is append-only for the runtime. Phase 3's HTTP idempotency middleware can add the
-response columns the spec lists or wrap these same services; either way partner keys are
-per tenant, as the ledger's already are. The 30-day TTL purge is a phase 9 job running as
-the owner. Request keys are at most 200 characters so the ledger keys derived from them
-(`contest-entry:<key>`, `contest-withdraw:<key>`) fit the journal's 255.
+table is append-only for the runtime. Partner keys are per tenant, as the ledger's
+already are. (Phase 3 has since added the HTTP layer's response columns to this table
+under a `scope` column and the 30-day purge as `db:purge`; see "Two layers of
+idempotency, one table".) Request keys are at most 200 characters so the ledger keys
+derived from them (`contest-entry:<key>`, `contest-withdraw:<key>`) fit the journal's 255.
 
 ### Money moved by settlement and void is keyed by the contest, not the request
 
