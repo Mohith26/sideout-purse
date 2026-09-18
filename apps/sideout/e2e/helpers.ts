@@ -17,7 +17,7 @@ export const SLUGS = SEED_SLUGS;
 
 export type Member = { userId: string; displayName: string; role: 'captain' | 'player' };
 export type Team = { id: string; name: string; status: string; members: Member[] };
-export type MatchRow = { id: string; round: number; bracketPosition: number | null; poolId: string | null; teamAId: string | null; teamBId: string | null; status: string; bestOf: number };
+export type MatchRow = { id: string; round: number; bracketPosition: number | null; poolId: string | null; teamAId: string | null; teamBId: string | null; winnerTeamId: string | null; status: string; bestOf: number };
 export type TournamentDetail = {
   id: string;
   slug: string;

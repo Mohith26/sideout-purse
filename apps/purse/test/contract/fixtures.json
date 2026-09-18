@@ -3347,14 +3347,16 @@
       "status": 200,
       "body": {
         "data": {
+          "status": "ok",
           "sha": "test-sha",
           "migrations": {
-            "applied": 15,
-            "available": 15,
+            "applied": 17,
+            "available": 17,
             "pending": 0
           },
           "rulesetVersion": "2026.09.1",
-          "sdkVersion": "0.0.1"
+          "sdkVersion": "0.0.1",
+          "reconcile": null
         }
       }
     }

@@ -122,3 +122,23 @@ describe('envelope', () => {
     }
   });
 });
+
+describe('public pages', () => {
+  it('serves the responsible-play policy (with the limits anchor) and the support path without a key', async () => {
+    const h = harness();
+    try {
+      const policy = await h.app.request('/responsible-play');
+      expect(policy.status).toBe(200);
+      expect(policy.headers.get('content-type')).toMatch(/text\/html/);
+      const policyHtml = await policy.text();
+      expect(policyHtml).toContain('id="limits"');
+      expect(policyHtml).toContain('Self-exclusion');
+      expect(policyHtml).not.toMatch(/sk_(sandbox|live)_/);
+      const support = await h.app.request('/support');
+      expect(support.status).toBe(200);
+      expect(await support.text()).toContain('responsible-play');
+    } finally {
+      await h.close();
+    }
+  });
+});

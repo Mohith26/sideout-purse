@@ -19,7 +19,8 @@ export const metadata: Metadata = { title: 'Live play' };
 export default async function HomePage() {
   const { app, now, clock } = await pageContext();
   const summaries = await listTournamentSummaries(app.db, clock);
-  const live = summaries.filter((s) => s.tournament.status === 'live');
+  // The event that started most recently comes first: what is happening now, ahead of one still open from yesterday.
+  const live = summaries.filter((s) => s.tournament.status === 'live').sort((a, b) => b.tournament.startsAt.localeCompare(a.tournament.startsAt));
   const strips = await Promise.all(
     live.map(async (summary) => {
       const [matches, all] = await Promise.all([listLiveMatches(app.db, summary.tournament.id), listMatchViews(app.db, summary.tournament.id)]);

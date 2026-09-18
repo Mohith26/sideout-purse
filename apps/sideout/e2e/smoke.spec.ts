@@ -37,10 +37,11 @@ test.describe('every screen', () => {
       await page.screenshot({ path: path.join(SCREENSHOT_DIR, `${screen.name}-${width}.png`), fullPage: true, clip: { x: 0, y: 0, width, height }, animations: 'disabled', style: '.so-tabbar { position: absolute; }' });
     }
 
-    // The live event is on the home strip; the console is a 404 to anyone but an organizer, and a player screen sends a stranger to sign in.
+    // The flagship live event heads the home strips (the most recently started first); the console is a 404 to anyone but an organizer, and a player screen sends a stranger to sign in.
     await signInAs(context, null);
     await page.goto('/');
-    await expect(page.getByTestId('live-strip')).toBeVisible();
+    await expect(page.getByTestId('live-strip').first()).toBeVisible();
+    await expect(page.getByTestId('live-strip').first()).toContainText(live.name);
     await expect(page.getByRole('link', { name: new RegExp(live.name) }).first()).toBeVisible();
     await page.goto('/organizer/events');
     await expect(page.getByRole('heading', { level: 1, name: 'No page here' })).toBeVisible();
