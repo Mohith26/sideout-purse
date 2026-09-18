@@ -1055,7 +1055,10 @@
         "Idempotency-Key": "<idempotency-key>"
       },
       "body": {
-        "userId": "usr_<id>"
+        "userId": "usr_<id>",
+        "location": {
+          "declaredRegion": "US-CA"
+        }
       }
     },
     "response": {
@@ -1073,6 +1076,52 @@
             ],
             "rulesetVersion": "2026.09.1"
           }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.get.restricted",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:priya",
+          "displayName": "Priya N",
+          "phoneE164": null,
+          "dateOfBirth": "1998-11-05",
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          },
+          "restrictions": [
+            {
+              "id": "rst_<id>",
+              "kind": "self_exclusion",
+              "reason": "taking a month off",
+              "startsAt": "<instant>",
+              "endsAt": null
+            }
+          ],
+          "location": {
+            "regionCode": "US-CA",
+            "source": "declared",
+            "resolvedAt": "<instant>",
+            "confidence": 0.6
+          },
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
         }
       }
     }
@@ -1178,6 +1227,46 @@
             "requested": "100",
             "shortfall": "100"
           }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.get.blocked",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "usr_<id>",
+          "externalId": "sideout:poor",
+          "displayName": "No Points",
+          "phoneE164": null,
+          "dateOfBirth": "1990-01-01",
+          "verification": {
+            "state": "unstarted",
+            "provider": null,
+            "verifiedAt": null,
+            "reverifyAfter": null
+          },
+          "restrictions": [
+            {
+              "id": "rst_<id>",
+              "kind": "platform_block",
+              "startsAt": "<instant>",
+              "endsAt": null
+            }
+          ],
+          "location": null,
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
         }
       }
     }
@@ -2335,113 +2424,6 @@
     }
   },
   {
-    "name": "contests.create.third",
-    "request": {
-      "method": "POST",
-      "path": "/v1/contests",
-      "headers": {
-        "Authorization": "Bearer <api-key>",
-        "Idempotency-Key": "<idempotency-key>"
-      },
-      "body": {
-        "externalId": "sideout:doubles-3",
-        "kind": "tournament",
-        "title": "Saturday doubles",
-        "asset": "POINTS",
-        "entryAmount": "100",
-        "maxParticipants": 8,
-        "prizeStructure": {
-          "type": "percentage_split",
-          "percentages": [
-            50,
-            30,
-            20
-          ]
-        }
-      }
-    },
-    "response": {
-      "status": 201,
-      "body": {
-        "data": {
-          "id": "cnt_<id>",
-          "externalId": "sideout:doubles-3",
-          "kind": "tournament",
-          "title": "Saturday doubles",
-          "asset": "POINTS",
-          "entryAmount": "100",
-          "maxParticipants": 8,
-          "prizeStructure": {
-            "type": "percentage_split",
-            "percentages": [
-              50,
-              30,
-              20
-            ]
-          },
-          "tieBreak": "split_evenly",
-          "settlementPolicy": "operator_close",
-          "eligibilityRulesetVersion": "2026.09.1",
-          "state": "draft",
-          "opensAt": null,
-          "locksAt": null,
-          "escrowAccountId": "acct_<id>",
-          "escrowBalance": "0",
-          "participantCount": 0,
-          "settledAt": null,
-          "createdAt": "<instant>",
-          "updatedAt": "<instant>"
-        }
-      }
-    }
-  },
-  {
-    "name": "contests.cancel",
-    "request": {
-      "method": "POST",
-      "path": "/v1/contests/cnt_<id>/cancel",
-      "headers": {
-        "Authorization": "Bearer <api-key>",
-        "Idempotency-Key": "<idempotency-key>"
-      },
-      "body": {}
-    },
-    "response": {
-      "status": 200,
-      "body": {
-        "data": {
-          "id": "cnt_<id>",
-          "externalId": "sideout:doubles-3",
-          "kind": "tournament",
-          "title": "Saturday doubles",
-          "asset": "POINTS",
-          "entryAmount": "100",
-          "maxParticipants": 8,
-          "prizeStructure": {
-            "type": "percentage_split",
-            "percentages": [
-              50,
-              30,
-              20
-            ]
-          },
-          "tieBreak": "split_evenly",
-          "settlementPolicy": "operator_close",
-          "eligibilityRulesetVersion": "2026.09.1",
-          "state": "cancelled",
-          "opensAt": null,
-          "locksAt": null,
-          "escrowAccountId": "acct_<id>",
-          "escrowBalance": "0",
-          "participantCount": 0,
-          "settledAt": null,
-          "createdAt": "<instant>",
-          "updatedAt": "<instant>"
-        }
-      }
-    }
-  },
-  {
     "name": "contests.get.not_found",
     "request": {
       "method": "GET",
@@ -2704,8 +2686,8 @@
         "data": {
           "sha": "test-sha",
           "migrations": {
-            "applied": 9,
-            "available": 9,
+            "applied": 11,
+            "available": 11,
             "pending": 0
           },
           "rulesetVersion": "2026.09.1",

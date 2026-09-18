@@ -25,9 +25,9 @@ import { describeContest, loadContestResource, participantResource, previewResou
 
 /**
  * `/v1/contests` (spec 4.7). Every mutation here is one contest service call under the
- * request's transaction and idempotency key; the actor is the authenticated key's. The
- * spec lists `open` and `lock`; `start`, `finish` and `cancel` are the remaining plain
- * transitions of spec 4.3, mounted the same way so the lifecycle is reachable over HTTP
+ * request's idempotency key; the actor is the authenticated key's. The spec lists `open`
+ * and `lock`; `start` and `finish` are the two further plain transitions of spec 4.3 the
+ * flow needs (scores are accepted only from `in_progress`), mounted the same way
  * (docs/decisions.md). `preview` and `close` run the same pure settlement function, and
  * `close` requires the preview's hash.
  */
@@ -63,7 +63,6 @@ const TRANSITIONS: Readonly<Record<string, ContestState>> = {
   lock: 'locked',
   start: 'in_progress',
   finish: 'awaiting_settlement',
-  cancel: 'cancelled',
 };
 
 export function contestsRoutes(deps: V1Deps) {

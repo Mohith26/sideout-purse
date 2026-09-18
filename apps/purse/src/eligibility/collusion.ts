@@ -12,9 +12,10 @@ import type { Ruleset } from './ruleset';
  * nothing more. A meeting is a settled `head_to_head` contest with exactly two results
  * and a strict winner (placement 1 against a lower placement); a tie is not a meeting.
  *
- * `scanCollusion` runs over a tenant (`pnpm --filter @purse/api risk:scan`);
- * `flagCollusionAfterSettlement` runs inside the settlement transaction of a head-to-head
- * contest, so a signal surfaces the moment the meeting that tips it is recorded.
+ * `collusionPairs` reads the signal for the pairs the given users belong to;
+ * `flagCollusion` records it. `executeSettlement` calls `flagCollusion` inside the
+ * settlement transaction of a head-to-head contest for the two players it involved, so a
+ * signal surfaces the moment the meeting that tips it is recorded.
  */
 export type CollusionPair = {
   a: string;
@@ -25,12 +26,13 @@ export type CollusionPair = {
   share: number;
 };
 
-export async function collusionPairs(db: DbOrTx, input: { tenantId: Id<'tnt'>; ruleset: Ruleset; users?: readonly string[] }): Promise<CollusionPair[]> {
+export type CollusionInput = { tenantId: Id<'tnt'>; ruleset: Ruleset; users: readonly string[] };
+
+export async function collusionPairs(db: DbOrTx, input: CollusionInput): Promise<CollusionPair[]> {
   const { minMeetings, oneSidedShare } = input.ruleset.collusion;
-  const users = [...(input.users ?? [])];
-  const scoped = users.length > 0;
+  if (input.users.length === 0) return [];
   const list = sql.join(
-    users.map((userId) => sql`${userId}`),
+    input.users.map((userId) => sql`${userId}`),
     sql`, `,
   );
   const rows = await db.execute<{ a: string; b: string; meetings: number; a_wins: number }>(sql`
@@ -45,7 +47,7 @@ export async function collusionPairs(db: DbOrTx, input: { tenantId: Id<'tnt'>; r
         and c.state = 'settled'
         and (select count(*) from contest_results r where r.contest_id = c.id) = 2
     ) pair
-    ${scoped ? sql`where pair.a in (${list}) or pair.b in (${list})` : sql``}
+    where pair.a in (${list}) or pair.b in (${list})
     group by pair.a, pair.b
     having count(*) >= ${minMeetings}
     order by pair.a, pair.b
@@ -61,7 +63,7 @@ export async function collusionPairs(db: DbOrTx, input: { tenantId: Id<'tnt'>; r
 export type CollusionScan = { pairs: CollusionPair[]; flags: OperatorFlag[] };
 
 /** Flag every qualifying pair once (`pair:<a>:<b>`); a pair already flagged, open or reviewed, raises nothing new. */
-export async function flagCollusion(db: DbOrTx, input: { tenantId: Id<'tnt'>; ruleset: Ruleset; users?: readonly string[] }): Promise<CollusionScan> {
+export async function flagCollusion(db: DbOrTx, input: CollusionInput): Promise<CollusionScan> {
   const pairs = await collusionPairs(db, input);
   const flags: OperatorFlag[] = [];
   for (const pair of pairs) {

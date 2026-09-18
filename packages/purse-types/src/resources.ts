@@ -69,7 +69,8 @@ export type VerificationResource = {
 export type RestrictionResource = {
   id: string;
   kind: RestrictionKind;
-  reason: string | null;
+  /** Present for the kinds a user places on themself (`self_exclusion`, `cool_off`); an operator's or the platform's reason is not shared. */
+  reason?: string | null;
   startsAt: string;
   endsAt: string | null;
 };

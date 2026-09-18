@@ -38,7 +38,9 @@ export type FingerprintResult = { fingerprint: string; collisions: string[]; fla
  * Store the user's current fingerprint and flag every other user of the tenant that shares
  * it. One flag per pair (`pair:<a>:<b>`, ids sorted), so a rerun on either user raises
  * nothing new; a dismissed flag is not raised again either, which is what the operator
- * asked for by dismissing it.
+ * asked for by dismissing it. Two users written at once with the same fingerprint
+ * serialise on an advisory lock over the fingerprint (taken after the caller's user lock,
+ * never before it), so the second sees the first's committed row and the pair is flagged.
  */
 export async function refreshFingerprint(tx: DbOrTx, user: User): Promise<FingerprintResult> {
   const complete = user.displayName !== null && user.displayName.trim() !== '' && user.dateOfBirth !== null;
@@ -51,6 +53,7 @@ export async function refreshFingerprint(tx: DbOrTx, user: User): Promise<Finger
 
   if (!complete) return { fingerprint, collisions: [], flags: [] };
 
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`fingerprint:${user.tenantId}:${fingerprint}`}, 0))`);
   const others = await tx
     .select({ userId: identityFingerprints.userId })
     .from(identityFingerprints)

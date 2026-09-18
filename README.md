@@ -158,7 +158,7 @@ The routes: `POST /users` (create or upsert by `externalId`), `GET /users/:id`,
 `POST /users/:id/verification` (starts the identity flow through the provider seam and
 returns a five-minute, single-use embed token), `GET /users/:id/wallet`,
 `POST /users/:id/credits` (operator-scoped keys only); `POST /contests`,
-`GET /contests/:id`, `POST /contests/:id/{open,lock,start,finish,cancel}`,
+`GET /contests/:id`, `POST /contests/:id/{open,lock,start,finish}`,
 `POST /contests/:id/entries` (evaluates eligibility, escrows the entry),
 `DELETE /contests/:id/entries/:userId`, `POST /contests/:id/scores`,
 `GET /contests/:id/preview` (the frozen settlement preview with its payout hash),

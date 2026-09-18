@@ -131,22 +131,32 @@ describe('v1 contract', () => {
     const entered = await op.record<EntryResource>('contests.entries.create', 'POST', `/v1/contests/${contestId}/entries`, { userId: anaId, teamRef: 'team-a', seed: 1 });
     expect(entered.status).toBe(201);
     expect(entered.data).toMatchObject({ participant: { userId: anaId, state: 'entered', teamRef: 'team-a' }, eligibility: { allowed: true, rulesetVersion: '2026.09.1' }, contest: { escrowBalance: '100', participantCount: 1 } });
-    await addRestriction(h.database.db, { tenantId: boot.tenantId, userId: priyaId, kind: 'self_exclusion', actor: { kind: 'user', ref: priyaId } });
-    const excluded = await op.record('contests.entries.not_eligible', 'POST', `/v1/contests/${contestId}/entries`, { userId: priyaId });
+    await addRestriction(h.database.db, { tenantId: boot.tenantId, userId: priyaId, kind: 'self_exclusion', reason: 'taking a month off', actor: { kind: 'user', ref: priyaId } });
+    const excluded = await op.record('contests.entries.not_eligible', 'POST', `/v1/contests/${contestId}/entries`, { userId: priyaId, location: { declaredRegion: 'US-CA' } });
     expect(excluded.status).toBe(403);
     expect(excluded.error).toMatchObject({ type: 'not_eligible', code: 'not_eligible', detail: { reasons: ['self_excluded'], rulesetVersion: '2026.09.1' } });
     expect(excluded.error?.detail?.['requiredAction']).toBeUndefined();
-    // The refusal was recorded and committed with the 403 that reported it (spec 4.5).
+    // The refusal was recorded and committed with the 403 that reported it (spec 4.5), and
+    // so was the location the request carried; a user's own restriction shows its reason.
     const refusals = await h.database.db.select().from(eligibilityDecisions).where(and(eq(eligibilityDecisions.userId, priyaId), eq(eligibilityDecisions.contestId, contestId)));
     expect(refusals).toHaveLength(1);
     expect(refusals[0]).toMatchObject({ allowed: false, reasons: ['self_excluded'], rulesetVersion: '2026.09.1' });
     expect(refusals[0]?.requestId).toBe(excluded.headers.get('X-Request-Id'));
+    const priyaAfter = await op.record<UserResource>('users.get.restricted', 'GET', `/v1/users/${priyaId}`);
+    expect(priyaAfter.data).toMatchObject({ location: { regionCode: 'US-CA', source: 'declared' }, restrictions: [{ kind: 'self_exclusion', reason: 'taking a month off' }] });
     const broke = await op.record('contests.entries.insufficient_funds', 'POST', `/v1/contests/${contestId}/entries`, { userId: marcusId, seed: 2, location: { ip: '203.0.113.9' } });
     expect(broke.status).toBe(201);
     const poor = (await plain.post<UserResource>('/v1/users', { externalId: 'sideout:poor', displayName: 'No Points', dateOfBirth: '1990-01-01' })).data;
     const unfunded = await op.record('contests.entries.insufficient_funds.refused', 'POST', `/v1/contests/${contestId}/entries`, { userId: poor?.id ?? '' });
     expect(unfunded.status).toBe(402);
     expect(unfunded.error).toMatchObject({ type: 'insufficient_funds', code: 'insufficient_funds', detail: { reasons: ['insufficient_balance'], requiredAction: 'add_funds', balance: '0', requested: '100' } });
+    // An operator's restriction is visible, its reason is not.
+    await addRestriction(h.database.db, { tenantId: boot.tenantId, userId: poor?.id ?? '', kind: 'platform_block', reason: 'risk desk: chargeback pattern', actor: { kind: 'operator', ref: 'ops-1' } });
+    const blocked = await op.record<UserResource>('users.get.blocked', 'GET', `/v1/users/${poor?.id ?? ''}`);
+    expect(blocked.data?.restrictions).toHaveLength(1);
+    expect(blocked.data?.restrictions[0]).toMatchObject({ kind: 'platform_block' });
+    expect(blocked.data?.restrictions[0]).not.toHaveProperty('reason');
+    expect(JSON.stringify(blocked.raw)).not.toContain('chargeback');
     const twice = await op.record('contests.entries.conflict', 'POST', `/v1/contests/${contestId}/entries`, { userId: anaId });
     expect(twice.status).toBe(409);
     expect(twice.error).toMatchObject({ type: 'conflict', code: 'already_entered' });
@@ -204,7 +214,7 @@ describe('v1 contract', () => {
     const previewAfter = await op.record<PreviewResource>('contests.preview.settled', 'GET', `/v1/contests/${contestId}/preview`);
     expect(previewAfter.data?.payoutHash).toBe(payoutHash);
 
-    // ---- finish, void, cancel ---------------------------------------------------------
+    // ---- finish and void --------------------------------------------------------------
     const second = (await op.record<ContestResource>('contests.create.second', 'POST', '/v1/contests', { ...definition, externalId: 'sideout:doubles-2', kind: 'head_to_head', prizeStructure: { type: 'winner_take_all' } })).data;
     const secondId = second?.id ?? '';
     await op.record('contests.open.second', 'POST', `/v1/contests/${secondId}/open`, {});
@@ -221,9 +231,6 @@ describe('v1 contract', () => {
     expect(revoided.error).toMatchObject({ type: 'invalid_state', code: 'already_voided' });
     const emptyResults = await op.record<ResultsResource>('contests.results.unsettled', 'GET', `/v1/contests/${secondId}/results`);
     expect(emptyResults.data).toMatchObject({ state: 'voided', settledAt: null, results: [] });
-    const third = (await op.record<ContestResource>('contests.create.third', 'POST', '/v1/contests', { ...definition, externalId: 'sideout:doubles-3' })).data;
-    const cancelled = await op.record<ContestResource>('contests.cancel', 'POST', `/v1/contests/${third?.id ?? ''}/cancel`, {});
-    expect(cancelled.data?.state).toBe('cancelled');
     const unknownContest = await op.record('contests.get.not_found', 'GET', `/v1/contests/cnt_${'0'.repeat(8)}-0000-7000-8000-${'0'.repeat(12)}`);
     expect(unknownContest.error).toMatchObject({ type: 'invalid_request', code: 'contest_not_found' });
 

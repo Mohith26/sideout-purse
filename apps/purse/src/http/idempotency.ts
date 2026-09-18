@@ -1,11 +1,14 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import { and, eq, sql } from 'drizzle-orm';
 import type { MiddlewareHandler } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { IDEMPOTENCY_KEY_HEADER, IDEMPOTENT_REPLAYED_HEADER, isIdempotencyKey } from '@purse/types';
+import { IDEMPOTENCY_KEY_HEADER, IDEMPOTENT_REPLAYED_HEADER, isIdempotencyKey, RETRY_AFTER_HEADER } from '@purse/types';
 import type { Id } from '@repo/ids';
+import { errorFields } from '@repo/logger';
 
-import type { Db, DbOrTx } from '../db/client';
-import { idempotencyKeys } from '../db/schema';
+import type { Db } from '../db/client';
+import { idempotencyKeys, idempotencyReservations, type IdempotencyKeyRow } from '../db/schema';
 import { requestHash } from '../ledger/hash';
 import type { AuthScope } from './auth';
 import type { BodyScope } from './body';
@@ -18,35 +21,46 @@ import type { RequestScope } from './request-id';
  * under a key is stored and every replay is answered with it, unchanged, creating nothing
  * new; the same key with a different request is a `conflict`.
  *
- * The middleware owns one database transaction for the whole request. Handlers reach it
- * as `c.get('db')`, so every service transaction they open becomes a savepoint inside it,
- * and the stored response row commits with the request's effects or not at all: a crash
- * between the two is impossible, and a refused entry's decision record (written after its
- * savepoint rolled back) commits with the 403 that reported it. An advisory lock on the
- * key serialises concurrent replays, so the second waits and then reads the first's row.
+ * A mutation runs in three short steps, and no connection or lock is held between them.
+ * First the key is claimed: a replay is answered from the stored `http` row, otherwise a
+ * reservation in `idempotency_reservations` names the request's hash and expires after
+ * `RESERVATION_TTL_MS`. Then the handler runs against the pool (`c.get('db')`): every
+ * service opens and commits its own transactions, so a provider called between two of
+ * them (`startVerification`) holds no row lock and no pool connection while it waits on a
+ * vendor, and a refused entry's decision record commits with the 403 that reported it.
+ * Last, the response is stored as the key's `http` row. A crash between the claim and
+ * the store leaves a reservation that expires, after which the key may be retried and the
+ * request is performed then.
+ *
+ * A second request under a live reservation waits for the first to finish and is answered
+ * with its stored response; one still waiting after `IN_PROGRESS_WAIT_MS` is refused with
+ * `conflict` / `idempotency_key_in_progress` and `Retry-After`. The same key with a
+ * different request, in flight or stored, is `idempotency_key_reused`.
  *
  * What is stored: every 2xx and every 4xx except 429, because a refusal is the answer to
- * that request. A 5xx, a 429 and a failed commit are not stored and roll everything back,
- * so the partner retries the same key and the request is performed then. Rows are kept
- * for at least 30 days and removed by `pnpm --filter @purse/api purge`.
+ * that request. A 5xx and a 429 are not stored and release the reservation, so the partner
+ * retries the same key and the request is performed then. Rows are kept for at least 30
+ * days and removed by `pnpm --filter @purse/api purge`.
  *
- * Reads (GET, HEAD, OPTIONS) take no key and see the pool directly.
+ * Reads (GET, HEAD, OPTIONS) take no key.
  */
-export type IdempotencyScope = { Variables: { db: DbOrTx; idempotencyKey: string | undefined } };
+export type IdempotencyScope = { Variables: { db: Db; idempotencyKey: string | undefined } };
 
 type Scope = RequestScope & AuthScope & BodyScope & IdempotencyScope;
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-/** Thrown inside the transaction to roll it back while keeping the response that explains why. */
-class RollbackWithResponse extends Error {
-  override readonly name = 'RollbackWithResponse';
-  constructor(readonly response: Response) {
-    super('rollback');
-  }
-}
+/** How long a claim outlives a request that never stored its response. Longer than any handler, including a vendor call. */
+export const RESERVATION_TTL_MS = 60_000;
+/** How long a concurrent replay waits for the request in flight before it is told to retry. */
+export const IN_PROGRESS_WAIT_MS = 5_000;
+const POLL_MS = 50;
 
-export type IdempotencyDeps = { db: Db };
+export type IdempotencyDeps = {
+  db: Db;
+  /** How long a concurrent replay waits before `idempotency_key_in_progress`; tests shorten it. */
+  inProgressWaitMs?: number;
+};
 
 /** Hash of what makes a request "the same request": method, concrete path and body. */
 export function httpRequestHash(method: string, path: string, body: unknown): string {
@@ -57,10 +71,62 @@ export function storableStatus(status: number): boolean {
   return status < 500 && status !== 429;
 }
 
+type Claim = { kind: 'replay'; stored: IdempotencyKeyRow } | { kind: 'in_progress'; endpoint: string } | { kind: 'claimed'; reservedAt: Date };
+
+function reused(key: string, endpoint: string): ApiFailure {
+  return new ApiFailure({
+    type: 'conflict',
+    code: 'idempotency_key_reused',
+    message: `${IDEMPOTENCY_KEY_HEADER} ${key} was already used for a different request`,
+    detail: { idempotencyKey: key, endpoint },
+  });
+}
+
+/** Answer from the stored row, or claim the key; a live claim by another request is `in_progress`. */
+async function claim(db: Db, tenantId: Id<'tnt'>, key: string, hash: string, endpoint: string): Promise<Claim> {
+  const [stored] = await db
+    .select()
+    .from(idempotencyKeys)
+    .where(and(eq(idempotencyKeys.tenantId, tenantId), eq(idempotencyKeys.scope, 'http'), eq(idempotencyKeys.key, key)));
+  if (stored !== undefined) {
+    if (stored.requestHash !== hash) throw reused(key, stored.operation);
+    return { kind: 'replay', stored };
+  }
+  // Whole milliseconds: the instant round-trips through a Date and names this claim in `release`.
+  const reservedAt = sql`date_trunc('milliseconds', now())`;
+  const expiresAt = sql`now() + ${RESERVATION_TTL_MS / 1000}::float8 * interval '1 second'`;
+  const [reserved] = await db
+    .insert(idempotencyReservations)
+    .values({ tenantId, key, operation: endpoint, requestHash: hash, reservedAt, expiresAt })
+    .onConflictDoUpdate({
+      target: [idempotencyReservations.tenantId, idempotencyReservations.key],
+      set: { operation: endpoint, requestHash: hash, reservedAt, expiresAt },
+      setWhere: sql`${idempotencyReservations.expiresAt} <= now()`,
+    })
+    .returning({ reservedAt: idempotencyReservations.reservedAt });
+  if (reserved !== undefined) return { kind: 'claimed', reservedAt: reserved.reservedAt };
+  const [live] = await db
+    .select()
+    .from(idempotencyReservations)
+    .where(and(eq(idempotencyReservations.tenantId, tenantId), eq(idempotencyReservations.key, key)));
+  if (live === undefined) throw new Error(`idempotency key ${key} could not be claimed and holds no reservation`);
+  if (live.requestHash !== hash) throw reused(key, live.operation);
+  return { kind: 'in_progress', endpoint: live.operation };
+}
+
+/** Expire the claim this request holds, so a retry may perform the request at once. Another request's newer claim is left alone. */
+async function release(db: Db, tenantId: Id<'tnt'>, key: string, reservedAt: Date): Promise<void> {
+  await db
+    .update(idempotencyReservations)
+    .set({ expiresAt: sql`now()` })
+    .where(and(eq(idempotencyReservations.tenantId, tenantId), eq(idempotencyReservations.key, key), eq(idempotencyReservations.reservedAt, reservedAt)));
+}
+
 export function idempotency(deps: IdempotencyDeps): MiddlewareHandler<Scope> {
+  const inProgressWaitMs = deps.inProgressWaitMs ?? IN_PROGRESS_WAIT_MS;
   return async (c, next) => {
+    c.set('db', deps.db);
     if (!MUTATING.has(c.req.method)) {
-      c.set('db', deps.db);
       c.set('idempotencyKey', undefined);
       await next();
       return;
@@ -80,63 +146,57 @@ export function idempotency(deps: IdempotencyDeps): MiddlewareHandler<Scope> {
     const endpoint = `${c.req.method} ${c.req.matchedRoutes.at(-1)?.path ?? c.req.path}`;
     const hash = httpRequestHash(c.req.method, c.req.path, c.get('body'));
 
-    let response: Response;
-    try {
-      response = await deps.db.transaction(async (tx) => {
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`idem:http:${tenantId}:${key}`}, 0))`);
-        const [existing] = await tx
-          .select()
-          .from(idempotencyKeys)
-          .where(and(eq(idempotencyKeys.tenantId, tenantId), eq(idempotencyKeys.scope, 'http'), eq(idempotencyKeys.key, key)));
-
-        if (existing !== undefined) {
-          if (existing.requestHash !== hash) {
-            throw new ApiFailure({
-              type: 'conflict',
-              code: 'idempotency_key_reused',
-              message: `${IDEMPOTENCY_KEY_HEADER} ${key} was already used for a different request`,
-              detail: { idempotencyKey: key, endpoint: existing.operation },
-            });
-          }
-          logger.info('idempotent replay', { idempotencyKey: key, endpoint: existing.operation, status: existing.responseStatus });
-          c.header(IDEMPOTENT_REPLAYED_HEADER, 'true');
-          return c.json(existing.responseBody ?? {}, (existing.responseStatus ?? 200) as ContentfulStatusCode);
-        }
-
-        c.set('db', tx);
-        let produced: Response;
-        try {
-          await next();
-          produced = c.res;
-        } catch (error) {
-          produced = renderError(c, logger, error);
-        }
-        if (!storableStatus(produced.status)) throw new RollbackWithResponse(produced);
-
-        const body = (await produced.clone().json()) as Record<string, unknown>;
-        await tx.insert(idempotencyKeys).values({
-          tenantId,
-          scope: 'http',
-          key,
-          operation: endpoint,
-          requestHash: hash,
-          responseStatus: produced.status,
-          responseBody: body,
-        });
-        return produced;
-      });
-    } catch (error) {
-      if (error instanceof RollbackWithResponse) {
-        response = error.response;
-      } else if (error instanceof ApiFailure) {
-        throw error;
-      } else {
-        // The transaction itself failed (a deferred constraint at commit, a lost
-        // connection): whatever the handler answered is void, and nothing was stored.
-        response = renderError(c, logger, error);
+    const waitingSince = Date.now();
+    let reservedAt: Date;
+    for (;;) {
+      const claimed = await claim(deps.db, tenantId, key, hash, endpoint);
+      if (claimed.kind === 'replay') {
+        logger.info('idempotent replay', { idempotencyKey: key, endpoint: claimed.stored.operation, status: claimed.stored.responseStatus });
+        c.header(IDEMPOTENT_REPLAYED_HEADER, 'true');
+        return c.json(claimed.stored.responseBody ?? {}, (claimed.stored.responseStatus ?? 200) as ContentfulStatusCode);
       }
+      if (claimed.kind === 'claimed') {
+        reservedAt = claimed.reservedAt;
+        break;
+      }
+      if (Date.now() - waitingSince >= inProgressWaitMs) {
+        c.header(RETRY_AFTER_HEADER, '1');
+        throw new ApiFailure(
+          {
+            type: 'conflict',
+            code: 'idempotency_key_in_progress',
+            message: `A request with ${IDEMPOTENCY_KEY_HEADER} ${key} is still in progress; retry it to receive its response`,
+            detail: { idempotencyKey: key, endpoint: claimed.endpoint },
+          },
+          409,
+        );
+      }
+      await sleep(POLL_MS);
     }
-    c.res = response;
-    return response;
+
+    let produced: Response;
+    try {
+      await next();
+      produced = c.res;
+    } catch (error) {
+      produced = renderError(c, logger, error);
+    }
+    if (!storableStatus(produced.status)) {
+      await release(deps.db, tenantId, key, reservedAt);
+      c.res = produced;
+      return produced;
+    }
+
+    const body = (await produced.clone().json()) as Record<string, unknown>;
+    try {
+      await deps.db
+        .insert(idempotencyKeys)
+        .values({ tenantId, scope: 'http', key, operation: endpoint, requestHash: hash, responseStatus: produced.status, responseBody: body })
+        .onConflictDoNothing();
+    } catch (error) {
+      logger.error('idempotent response not stored; the request itself is committed', { idempotencyKey: key, endpoint, ...errorFields(error) });
+    }
+    c.res = produced;
+    return produced;
   };
 }

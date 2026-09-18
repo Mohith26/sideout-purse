@@ -311,7 +311,8 @@ describe(`randomized operation sequence (${OPS} ops, seed ${SEED})`, () => {
       }
       if (bucket < 0.93) {
         const empty = byState('draft', 'open', 'locked', 'in_progress', 'awaiting_settlement').filter((c) => entered(c).length === 0);
-        return empty.length > 0 ? { kind: 'c_transition', contest: random.pick(empty), to: 'cancelled', via: via() } : push();
+        // Cancelling has no route (docs/decisions.md), so it is always a service call.
+        return empty.length > 0 ? { kind: 'c_transition', contest: random.pick(empty), to: 'cancelled', via: 'service' } : push();
       }
       return contestOps.length > 0 ? { kind: 'c_replay', of: random.pick(contestOps) } : push();
     };
@@ -367,7 +368,7 @@ describe(`randomized operation sequence (${OPS} ops, seed ${SEED})`, () => {
       return new LedgerError(error.code as LedgerErrorCode, error.message);
     };
     const entriesOf = (ids: string[]): Promise<PostedEntry[]> => Promise.all(ids.map((id) => loadEntry(runtime.db, id)));
-    const TRANSITION_ROUTES = { open: 'open', locked: 'lock', in_progress: 'start', awaiting_settlement: 'finish', cancelled: 'cancel' } as const;
+    const TRANSITION_ROUTES: Partial<Record<ContestState, string>> = { open: 'open', locked: 'lock', in_progress: 'start', awaiting_settlement: 'finish' };
 
     /** The same operation over the v1 API: the key becomes `Idempotency-Key`, the response becomes a `Result`. */
     const callHttp = async (op: Extract<Op, { via: Via }>, key: string): Promise<Result> => {
@@ -380,7 +381,9 @@ describe(`randomized operation sequence (${OPS} ops, seed ${SEED})`, () => {
       };
       switch (op.kind) {
         case 'c_transition': {
-          const { data, replayed } = await request<ContestResource>('POST', `${base}/${TRANSITION_ROUTES[op.to]}`, {});
+          const route = TRANSITION_ROUTES[op.to];
+          if (route === undefined) throw new Error(`no v1 route moves a contest to ${op.to}`);
+          const { data, replayed } = await request<ContestResource>('POST', `${base}/${route}`, {});
           return { entries: [], contest: data, replayed };
         }
         case 'c_enter': {

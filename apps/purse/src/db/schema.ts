@@ -20,8 +20,9 @@
  * - Enumerations are Postgres enums, not free text, so the database rejects a typo.
  * - Privileges are explicit. Tables are owned by `purse_migrator`; the runtime role
  *   `purse_app` gets exactly what it needs per table in a custom migration (see
- *   `drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`, `0006_contest_guards.sql`
- *   and `0008_identity_guards.sql`). A new table with no grant is unreadable by the runtime,
+ *   `drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`, `0006_contest_guards.sql`,
+ *   `0008_identity_guards.sql` and `0010_idempotency_reservation_grants.sql`). A new
+ *   table with no grant is unreadable by the runtime,
  *   which `test/ledger/roles.test.ts` turns into a failing test rather than a surprise in
  *   production. Append-only tables (the journal, the audit log, contest results, used
  *   idempotency keys) never grant UPDATE, DELETE or TRUNCATE; other tables grant UPDATE
@@ -556,11 +557,11 @@ export type IdempotencyScope = (typeof idempotencyScope.enumValues)[number];
  *   ids the operation produced, from which a replay reloads and returns the original
  *   result. They commit with the effects they describe or not at all.
  * - `http` rows are written by the v1 idempotency middleware (`src/http/idempotency.ts`)
- *   in the same transaction as the request's effects, once the response is known:
- *   `operation` is the endpoint (`POST /v1/contests/:id/entries`), `request_hash` covers the
- *   method, path and body, and `response_status` and `response_body` are what every replay
- *   of the key is answered with, unchanged. A different request under a used key is a
- *   conflict at whichever layer sees it first.
+ *   once the response is known, after the request's effects have committed: `operation`
+ *   is the endpoint (`POST /v1/contests/:id/entries`), `request_hash` covers the method,
+ *   path and body, and `response_status` and `response_body` are what every replay of the
+ *   key is answered with, unchanged. A different request under a used key is a conflict
+ *   at whichever layer sees it first.
  *
  * Append-only for the runtime; rows are eligible for removal after the 30-day TTL
  * (spec 4.1) by `pnpm --filter @purse/api purge`, which runs as the owner.
@@ -595,6 +596,36 @@ export const idempotencyKeys = pgTable(
 );
 
 export type IdempotencyKeyRow = typeof idempotencyKeys.$inferSelect;
+
+/**
+ * The claim the v1 middleware holds on an `http` key while its request is in flight: one
+ * row per (tenant, key), written before the handler runs and re-claimed by a retry once
+ * `expires_at` has passed, so a request that crashed between its effects and its stored
+ * response does not hold the key forever. A live claim tells a concurrent replay to wait
+ * for the stored row; a 5xx releases it by expiring it. Not history: the runtime updates
+ * every column but the key, and the purge removes rows with the keys they guarded.
+ */
+export const idempotencyReservations = pgTable(
+  'idempotency_reservations',
+  {
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    key: text('key').notNull(),
+    /** The endpoint, for the conflict a different request under a live key reports. */
+    operation: text('operation').notNull(),
+    requestHash: text('request_hash').notNull(),
+    reservedAt: timestamp('reserved_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ name: 'idempotency_reservations_pkey', columns: [table.tenantId, table.key] }),
+    check('idempotency_reservations_window', sql`${table.expiresAt} >= ${table.reservedAt}`),
+    index('idempotency_reservations_reserved_at_idx').on(table.reservedAt),
+  ],
+);
+
+export type IdempotencyReservation = typeof idempotencyReservations.$inferSelect;
 
 // ---- Identity (spec 4.1, decision D8) ------------------------------------------------
 

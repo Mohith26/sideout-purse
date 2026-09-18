@@ -24,6 +24,8 @@ export type AppDeps = {
   rateLimit?: RateLimitConfig;
   /** The rate limiter's clock, for tests. */
   clock?: () => number;
+  /** How long a replay waits for a request in flight under its key, for tests. */
+  inProgressWaitMs?: number;
 };
 
 /**
@@ -63,7 +65,16 @@ export function createApp(deps: AppDeps) {
   app.route('/', internal);
   app.route('/v1', health);
   app.route('/v1', internal);
-  app.route('/v1', v1Routes({ db: deps.db, providers: deps.providers, buckets, ...(deps.clock === undefined ? {} : { clock: deps.clock }) }));
+  app.route(
+    '/v1',
+    v1Routes({
+      db: deps.db,
+      providers: deps.providers,
+      buckets,
+      ...(deps.clock === undefined ? {} : { clock: deps.clock }),
+      ...(deps.inProgressWaitMs === undefined ? {} : { inProgressWaitMs: deps.inProgressWaitMs }),
+    }),
+  );
 
   return { app, buckets };
 }

@@ -4,18 +4,18 @@ import type { Id } from '@repo/ids';
 import type { DbOrTx } from '../db/client';
 import type { Contest, User } from '../db/schema';
 import { decideEntry, rulesetForContest, type EntryDecision } from '../eligibility';
-import type { Actor } from '../ledger/audit';
-import type { GeoProvider, RiskProvider } from '../providers/types';
-import { profileOf, resolveAndRecordLocation, type LocationInput } from '../users';
+import type { RiskProvider } from '../providers/types';
+import { profileOf } from '../users';
 import { ContestError } from './errors';
 
 /**
  * Where the eligibility engine (spec 4.5, `src/eligibility`) meets an entry. `enterContest`
  * calls this under the contest row lock and the per-user entry lock, after the contest's
  * own checks (`contest_not_open`, `contest_full`) and with the wallet balance in hand, so
- * the decision is made against the journal as it stands at that instant. What the partner
- * knows of the user's location goes through the `GeoProvider` seam first, and the
- * `RiskProvider` seam is consulted for signals alongside the pure evaluation.
+ * the decision is made against the journal as it stands at that instant. The user's
+ * location was recorded through the `GeoProvider` seam before the entry began (it is a
+ * fact about the user, kept whether or not the entry goes through), and the `RiskProvider`
+ * seam is consulted for signals alongside the pure evaluation.
  */
 export type EntryEligibilityInput = {
   tenantId: Id<'tnt'>;
@@ -23,18 +23,10 @@ export type EntryEligibilityInput = {
   contest: Contest;
   walletBalance: bigint;
   now: Date;
-  location?: LocationInput | null;
-  geo?: GeoProvider;
   risk?: RiskProvider;
-  actor: Actor;
-  requestId?: string;
 };
 
 export async function evaluateEntryEligibility(tx: DbOrTx, input: EntryEligibilityInput): Promise<EntryDecision> {
-  if (input.location !== undefined && input.location !== null) {
-    if (input.geo === undefined) throw new ContestError('invalid_input', 'a location was given but no geolocation provider is configured', { field: 'location' });
-    await resolveAndRecordLocation(tx, { user: input.user, location: input.location, geo: input.geo, actor: input.actor, now: input.now, ...(input.requestId === undefined ? {} : { requestId: input.requestId }) });
-  }
   const profile = await profileOf(tx, input.user, input.now);
   const ruleset = await rulesetForContest(tx, input.contest);
   return decideEntry(tx, {

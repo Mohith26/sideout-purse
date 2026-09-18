@@ -335,8 +335,8 @@ Spec 4.1 seals `api_keys.kind` as `secret | publishable` and spec 4.7 marks
 `scopes text[]` to `api_keys`, whose only value today is `operator`; a publishable key may
 carry none (a CHECK holds both). A request on an operator-scoped key acts as an
 `operator` actor (`audit_log.actor_kind = 'operator'`, `actor_ref` = the key id), which is
-also what lets it close an `operator_close` contest (spec 4.3 MUST) and drive `finish`,
-`cancel` and `void`; a plain secret key acts as the `tenant` and is refused those with
+also what lets it close an `operator_close` contest (spec 4.3 MUST) and drive `finish`
+and `void`; a plain secret key acts as the `tenant` and is refused those with
 `permission_error` (`operator_scope_required` for credits, `operator_required` for a
 close). This mirrors how real platforms model restricted keys and keeps the console's
 "create, reveal once, revoke" flow (phase 5) on one table. The seed's Sideout secret key
@@ -372,15 +372,20 @@ Phase 2's `idempotency_keys` rows are the service layer's (the ids an operation 
 committed with its effects). Phase 3 adds the HTTP layer the spec describes (endpoint,
 request hash, response status and body) to the same table under a `scope` column that is
 part of the primary key, so a partner's key is recorded twice, once per layer, and the
-two never collide. The v1 middleware owns one database transaction per mutation: handlers
-reach it as `c.get('db')`, every service transaction inside becomes a savepoint, and the
-`http` row commits with the request's effects or not at all. A 2xx and every 4xx but 429
-are stored, because a refusal is the answer to that request (Stripe's rule); a 5xx, a 429
-and a failed commit store nothing and roll everything back, so the partner retries the same
-key and the request is performed then. The stored body is jsonb, so a replay is the
-original response as JSON (key order may differ). Keys are remembered for at least 30
-days; `pnpm --filter @purse/api purge` removes older rows as the owner, after which a key
-is fresh.
+two never collide. The v1 middleware holds no transaction across a request: it claims the
+key in `idempotency_reservations` (one row per key, expiring after a minute), runs the
+handler against the pool, and then stores the `http` row. Every service commits its own
+transaction, so the identity provider is called with no row lock and no pool connection
+held, and a refused entry's decision record commits with the 403 that reported it. A
+concurrent request under a live claim waits for the stored response (up to five seconds,
+then `conflict` / `idempotency_key_in_progress` with `Retry-After`); a crash between the
+claim and the store leaves a claim that expires, after which the key may be retried. A
+2xx and every 4xx but 429 are stored, because a refusal is the answer to that request
+(Stripe's rule); a 5xx and a 429 store nothing and release the claim, so the partner
+retries the same key and the request is performed then. The stored body is jsonb, so a
+replay is the original response as JSON (key order may differ). Keys are remembered for
+at least 30 days; `pnpm --filter @purse/api purge` removes older rows and their claims as
+the owner, after which a key is fresh.
 
 ### A refusal for funds alone is `insufficient_funds`
 
@@ -450,18 +455,24 @@ answers `review`, never `deny`; a `review` becomes an `operator_flags` row (`ris
 and the entry goes through. The evaluator enforces the limits themselves. Duplicate
 identities (SHA-256 of the normalised name and the date of birth) are flagged per pair
 within a tenant, once, and never auto-block; a user missing either part gets a fingerprint
-of their own id so a cleared field cannot leave a stale match behind. The head-to-head
-collusion signal is checked inside every head-to-head settlement for the pair it involved
-and by `pnpm --filter @purse/api risk:scan` over a tenant; a meeting is a settled
-head-to-head contest with a strict winner, and a qualifying pair is flagged once.
+of their own id so a cleared field cannot leave a stale match behind, and two users
+written at once with one identity serialise on the fingerprint so the pair is still
+flagged. The head-to-head collusion signal is checked inside every head-to-head
+settlement for the pair it involved, and nowhere else; a meeting is a settled head-to-head
+contest with a strict winner, and a qualifying pair is flagged once. A restriction's
+`reason` reaches the partner only for the kinds a user places on themself
+(`self_exclusion`, `cool_off`); an operator's or the platform's reason stays in Purse. A
+`location` sent with an entry is recorded before the entry is attempted, so it stands
+whether or not the entry is refused.
 
 ### Routes beyond the 4.7 list
 
-Spec 4.7 lists `open` and `lock`; `start` (`in_progress`), `finish`
-(`awaiting_settlement`) and `cancel` are the remaining plain transitions of spec 4.3 and
-are mounted the same way, because scores are accepted only from `in_progress` and the
-lifecycle must be reachable over HTTP. `GET /health` and `GET /internal/reconcile` answer
-at the root (phase 0) and under `/v1` (the spec's base); neither takes an API key.
+Spec 4.7 lists `open` and `lock`; `start` (`in_progress`) and `finish`
+(`awaiting_settlement`) are mounted the same way, because scores are accepted only from
+`in_progress` and a contest whose results never all arrive must still reach settlement
+over HTTP. `cancelled` has no route: nothing in the flow needs it, and a partner can
+leave a draft alone. `GET /health` and `GET /internal/reconcile` answer at the root
+(phase 0) and under `/v1` (the spec's base); neither takes an API key.
 
 ### The phase 3 backfill and `accounts.user_id`
 
@@ -476,11 +487,15 @@ allows only for a `legacy:` placeholder. A fresh database backfills nothing.
 
 ### Rate limits and the last reconcile result
 
-The per-key token bucket lives in process memory (`RATE_LIMIT_BURST`,
-`RATE_LIMIT_PER_SECOND`), keyed by the presented key's visible prefix so it runs before
-authentication and throttles guessing; a shared store for several replicas is a phase 9
-concern. `/health` now reports the active ruleset version; the last reconcile result still
-waits for phase 9's scheduled job.
+The token buckets live in process memory (`RATE_LIMIT_BURST`, `RATE_LIMIT_PER_SECOND`,
+at most ten thousand buckets). An authenticated request spends from its key's bucket,
+keyed by the key's id, so nobody who merely knows a partner's visible prefix can spend
+the partner's allowance; a request that fails authentication spends from its address's
+bucket, and an address that has spent it on failures is refused before the next
+verification it would cost. The address is the socket's; a forwarded address behind a
+proxy and a shared store for several replicas are phase 9 hosting concerns. `/health` now
+reports the active ruleset version; the last reconcile result still waits for phase 9's
+scheduled job.
 
 ## Phase 6 decisions (Sideout domain)
 

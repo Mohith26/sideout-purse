@@ -1,7 +1,7 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Id } from '@repo/ids';
 
-import { createApiKey, type CreatedApiKey } from '../auth/api-keys';
+import { createApiKey, revokeApiKey, type CreatedApiKey } from '../auth/api-keys';
 import { closeContest, createContest, enterContest, getContest, previewSettlement, submitScores, transition } from '../contests';
 import { publishRuleset, SPEC_EXAMPLE_RULESET } from '../eligibility';
 import { findAccount, openAccount } from '../ledger/accounts';
@@ -230,9 +230,7 @@ export async function seedApiKeys(db: Db, tenantId: Id<'tnt'>, options: { rotate
         .from(apiKeys)
         .where(and(eq(apiKeys.tenantId, tenantId), eq(apiKeys.label, spec.label), isNull(apiKeys.revokedAt)));
       if (existing !== undefined && options.rotate !== true) return { key: existing, plaintext: null, created: false };
-      if (existing !== undefined) {
-        await tx.update(apiKeys).set({ revokedAt: sql`now()`, updatedAt: sql`now()` }).where(eq(apiKeys.id, existing.id));
-      }
+      if (existing !== undefined) await revokeApiKey(tx, { tenantId, keyId: existing.id, actor: SEED_OPERATOR });
       const made: CreatedApiKey = await createApiKey(tx, { tenantId, kind: spec.kind, environment: spec.environment, scopes: [...spec.scopes], label: spec.label, actor: SEED_OPERATOR });
       return { key: made.key, plaintext: made.plaintext, created: true };
     });

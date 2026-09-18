@@ -28,8 +28,12 @@ export type AddRestrictionInput = {
 
 const REASON_MAX = 500;
 
-/** Kinds a user may place on themselves; the rest take an operator or the platform. */
-const USER_PLACEABLE: ReadonlySet<RestrictionKind> = new Set<RestrictionKind>(['self_exclusion', 'cool_off']);
+/**
+ * Kinds a user may place on themselves; the rest take an operator or the platform. The
+ * same line decides what a partner sees: a user's own reason is theirs to share, an
+ * operator's or the platform's stays inside Purse (`routes/v1/serialize.ts`).
+ */
+export const USER_PLACEABLE_RESTRICTIONS: ReadonlySet<RestrictionKind> = new Set<RestrictionKind>(['self_exclusion', 'cool_off']);
 const TEMPORARY: ReadonlySet<RestrictionKind> = new Set<RestrictionKind>(['cool_off', 'velocity_lock']);
 
 export function actorRef(actor: Actor): string {
@@ -41,7 +45,7 @@ export async function addRestriction(db: DbOrTx, input: AddRestrictionInput): Pr
   if (reason !== null && (reason.trim() === '' || reason.length > REASON_MAX)) {
     throw new UsersError('invalid_input', `reason must be 1 to ${REASON_MAX} characters when given`, { field: 'reason' });
   }
-  if (input.actor.kind === 'user' && !USER_PLACEABLE.has(input.kind)) {
+  if (input.actor.kind === 'user' && !USER_PLACEABLE_RESTRICTIONS.has(input.kind)) {
     throw new UsersError('restriction_lift_forbidden', `A user cannot place a ${input.kind} on an account`, { kind: input.kind });
   }
   const startsAt = input.startsAt ?? new Date();

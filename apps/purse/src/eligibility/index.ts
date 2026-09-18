@@ -20,4 +20,4 @@ export {
 } from './rulesets';
 export { entryVelocity, VELOCITY_WINDOWS, type Velocity } from './velocity';
 export { decideEntry, recordDecision, openFlagsOf, flagRiskReview, type DecideEntryInput, type EntryDecision, type RecordDecisionInput } from './decide';
-export { collusionPairs, flagCollusion, type CollusionPair, type CollusionScan } from './collusion';
+export { collusionPairs, flagCollusion, type CollusionInput, type CollusionPair, type CollusionScan } from './collusion';

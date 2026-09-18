@@ -119,12 +119,13 @@ describe('append-only enforcement at the role level', () => {
   });
 
   it('the contest tables follow the same model: results and used keys are append-only, and only the columns that legitimately change are updatable', async () => {
-    for (const [table, column] of [
-      ['contest_results', 'computed_at'],
-      ['idempotency_keys', 'created_at'],
+    for (const [table, assignment] of [
+      ['contest_results', 'computed_at = now()'],
+      ['idempotency_keys', 'created_at = now()'],
+      ['idempotency_reservations', "key = 'tampered'"],
     ] as const) {
       for (const statement of [
-        () => runtime.sql.unsafe(`update ${table} set ${column} = now()`),
+        () => runtime.sql.unsafe(`update ${table} set ${assignment}`),
         () => runtime.sql.unsafe(`delete from ${table}`),
         () => runtime.sql.unsafe(`truncate ${table}`),
       ]) {
@@ -135,11 +136,11 @@ describe('append-only enforcement at the role level', () => {
       select c.table_name as "table", c.column_name as "column",
         has_column_privilege('purse_app', format('public.%I', c.table_name), c.column_name, 'UPDATE') as "update"
       from information_schema.columns c
-      where c.table_schema = 'public' and c.table_name in ('contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys')
+      where c.table_schema = 'public' and c.table_name in ('contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys', 'idempotency_reservations')
       order by 1, 2
     `;
     const updatable = Object.fromEntries(
-      ['contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys'].map((table) => [
+      ['contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys', 'idempotency_reservations'].map((table) => [
         table,
         columns.filter((row) => row.table === table && row.update).map((row) => row.column),
       ]),
@@ -150,6 +151,7 @@ describe('append-only enforcement at the role level', () => {
       contest_scores: ['superseded_by'],
       contest_results: [],
       idempotency_keys: [],
+      idempotency_reservations: ['expires_at', 'operation', 'request_hash', 'reserved_at'],
     });
     // Never the identity of a contest or of an entry.
     for (const column of ['id', 'tenant_id', 'external_id', 'asset', 'escrow_account_id', 'created_at']) {

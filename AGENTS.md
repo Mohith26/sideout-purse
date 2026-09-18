@@ -32,15 +32,17 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `db:migrate`, `db:seed`, `db:setup` and the test reset (`PURSE_MIGRATOR_DATABASE_URL`);
   `purse_app` is the runtime (`PURSE_DATABASE_URL`), owns nothing, and holds only what
   `apps/purse/drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`,
-  `0006_contest_guards.sql` and `0008_identity_guards.sql` grant. Every new table needs an explicit
+  `0006_contest_guards.sql`, `0008_identity_guards.sql` and
+  `0010_idempotency_reservation_grants.sql` grant. Every new table needs an explicit
   `GRANT ... TO purse_app` in a custom migration (`db:generate:custom`); an append-only
   table (journal, audit log, `contest_results`, `idempotency_keys`) gets `SELECT, INSERT`
   only, and a table with columns that legitimately change gets column-level `UPDATE`
   (`accounts`, `tenants`: `status, updated_at`; `contests`: `state`, `settled_at`,
   `locks_at` and the draft-editable fields; `contest_participants`: `state`, and
   `entry_journal_entry_id`, `team_ref`, `seed` only when a withdrawn entrant re-enters;
-  `contest_scores`: `superseded_by`; the phase 3 tables per the header of
-  `drizzle/0008_identity_guards.sql`). `test/ledger/roles.test.ts` fails on a table with
+  `contest_scores`: `superseded_by`; `idempotency_reservations`: everything but the key;
+  the phase 3 tables per the header of `drizzle/0008_identity_guards.sql`).
+  `test/ledger/roles.test.ts` fails on a table with
   no grant and pins the updatable columns of every contest and identity table. A wallet
   needs a `users` row (`accounts.user_id` is a foreign key), so test fixtures create users
   before wallets (`createUser`, `openWallet`, `buildArena`). Tests take the runtime
@@ -80,9 +82,10 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   ledger's typed flows inside the same transaction. New mutations follow the same shape:
   lock the contest first, post through `postEntry`'s helpers, record with `idempotent`.
 - `contests/eligibility.ts` is where an entry meets the eligibility engine: `enterContest`
-  evaluates under the contest lock plus a per-user advisory lock, records one
-  `eligibility_decisions` row per attempt (a refusal's after its savepoint rolled back), and
-  refuses with `not_eligible`, or `insufficient_funds` when a shortfall is the only reason.
+  records a request's `location` first (its own transaction, kept on refusal), evaluates
+  under the contest lock plus a per-user advisory lock, records one `eligibility_decisions`
+  row per attempt (a refusal's after its transaction rolled back), and refuses with
+  `not_eligible`, or `insufficient_funds` when a shortfall is the only reason.
 
 ## Identity, eligibility and the v1 API
 
@@ -101,12 +104,15 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   seam table.
 - `apps/purse/src/auth/`: API keys (argon2id hash only, lookup by prefix, `scopes` holds the
   `operator` flag) and embed tokens (SHA-256, single use, five minutes).
-- `apps/purse/src/http/` is the v1 middleware, outermost first: `rate-limit.ts` (per key
-  prefix, in memory), `auth.ts` (bearer secret key; `requireOperator()`), `body.ts` (JSON
-  read once, `parseBody` with Zod), `idempotency.ts` (owns the request's transaction as
-  `c.get('db')`, stores the response under the `http` scope of `idempotency_keys`), and
-  `errors.ts` (`toApiError` maps every domain error by shape; throw `RequestValidationError`,
-  never a Zod 4 `ZodError`, which is not an `Error`). Routes live in `routes/v1/`
+- `apps/purse/src/http/` is the v1 middleware, outermost first: `rate-limit.ts`
+  (`limitAuthFailures` per address before `auth.ts`, `rateLimit` per key id after it; in
+  memory, never keyed by a key's prefix), `auth.ts` (bearer secret key; `requireOperator()`),
+  `body.ts` (JSON read once with a streamed size cap, `parseBody` with Zod),
+  `idempotency.ts` (claims the key in `idempotency_reservations`, runs the handler on the
+  pool as `c.get('db')` so no transaction or lock spans a provider call, then stores the
+  response under the `http` scope of `idempotency_keys`), and `errors.ts` (`toApiError`
+  maps every domain error by shape; throw `RequestValidationError`, never a Zod 4
+  `ZodError`, which is not an `Error`). Routes live in `routes/v1/`
   (`users.ts`, `contests.ts`, `embed.ts`, `serialize.ts` for wire shapes, `schemas.ts` for
   money and ids); `/health` and `/internal/reconcile` are mounted at the root and under
   `/v1` outside that stack. Response shapes are the `@purse/types` resources.
@@ -118,9 +124,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   and reissues them. Then `curl -H "Authorization: Bearer sk_sandbox_..." -H
   "Idempotency-Key: k1" -H "content-type: application/json" -d '{"externalId":"u1"}'
   localhost:4000/v1/users`.
-- Retention scripts run as the owner: `pnpm --filter @purse/api purge` (idempotency keys
-  past 30 days, stale embed tokens); `risk:scan` rescans the collusion signal as the
-  runtime.
+- Retention runs as the owner: `pnpm --filter @purse/api purge` (idempotency keys and
+  their claims past 30 days, stale embed tokens).
 
 ## The boundary, and where things go
 

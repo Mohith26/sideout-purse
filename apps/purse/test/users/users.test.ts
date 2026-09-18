@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { newId, type Id } from '@repo/ids';
@@ -15,8 +17,10 @@ import {
   liftRestriction,
   loadProfile,
   normalizeName,
+  refreshFingerprint,
   startVerification,
   upsertUser,
+  type FingerprintResult,
 } from '../../src/users';
 import { connectMigrator, connectRuntime, rejection } from '../helpers';
 import { createTenant, createUser, wipeLedger } from '../ledger/fixtures';
@@ -121,6 +125,40 @@ describe('users', () => {
     // Another tenant's identical person is not this tenant's business.
     const other = await createTenant(runtime.db);
     expect((await upsertUser(runtime.db, { tenantId: other, externalId: 'a', displayName: 'Jose Alvarez', dateOfBirth: '1990-01-01' })).flags).toEqual([]);
+  });
+
+  it('two users written at the same moment with one identity are still flagged as a pair', async () => {
+    const a = await createUser(runtime.db, tenantId, { displayName: 'Same Person', dateOfBirth: '1990-06-01' });
+    const b = await createUser(runtime.db, tenantId, { displayName: 'same  PERSON', dateOfBirth: '1990-06-01' });
+    // The first writer fingerprints a and holds its transaction open, uncommitted, the way
+    // a concurrent upsert would; the second must not decide until the first has committed.
+    let commitFirst: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      commitFirst = resolve;
+    });
+    let fingerprintedFirst: (result: FingerprintResult) => void = () => undefined;
+    const fingerprinted = new Promise<FingerprintResult>((resolve) => {
+      fingerprintedFirst = resolve;
+    });
+    const first = runtime.db.transaction(async (tx) => {
+      const result = await refreshFingerprint(tx, a);
+      fingerprintedFirst(result);
+      await held;
+      return result;
+    });
+    expect((await fingerprinted).collisions).toEqual([]);
+    const second = runtime.db.transaction((tx) => refreshFingerprint(tx, b));
+    try {
+      expect(await Promise.race([second.then(() => 'decided'), sleep(200).then(() => 'waiting')])).toBe('waiting');
+    } finally {
+      commitFirst();
+      await first;
+    }
+    const result = await second;
+    expect(result.collisions).toEqual([a.id]);
+    expect(result.flags).toHaveLength(1);
+    expect(result.flags[0]?.detail).toMatchObject({ users: [a.id, b.id].sort() });
+    expect(await runtime.db.select().from(operatorFlags)).toHaveLength(1);
   });
 
   it('resolves a declared region or an address through the geo seam and records the current location', async () => {

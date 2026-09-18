@@ -11,7 +11,7 @@ import { balanceOf } from '../ledger/balance';
 import { escrowEntry, refundEscrow } from '../ledger/flows';
 import { getEntry, linesOf, type PostedEntry } from '../ledger/post';
 import type { GeoProvider, RiskProvider } from '../providers/types';
-import { getUser, type LocationInput } from '../users';
+import { getUser, resolveAndRecordLocation, type LocationInput } from '../users';
 import { evaluateEntryEligibility, notEligible } from './eligibility';
 import { ContestError } from './errors';
 import { idempotent, ledgerKey } from './idempotency';
@@ -31,9 +31,11 @@ import { findParticipant, getContest, getParticipant, lockContest } from './load
  * Eligibility (spec 4.5) is decided under the contest lock and a per-user entry lock (so
  * two simultaneous entries by one user to different contests see each other's velocity),
  * with the wallet balance and the journal's rolling totals as they stand at that instant.
- * Every attempt leaves one `eligibility_decisions` row: an allowed decision commits with
- * the entry; a refusal is written after the entry's transaction has rolled back, so the
- * record of the refusal survives and nothing else does.
+ * A `location` the request carries is resolved through the geo seam and recorded before
+ * the entry's transaction opens, so it stands whatever the decision. Every attempt leaves
+ * one `eligibility_decisions` row: an allowed decision commits with the entry; a refusal
+ * is written after the entry's transaction has rolled back, so the record of the refusal
+ * and the location survive and nothing else does.
  */
 export type EnterContestInput = {
   tenantId: Id<'tnt'>;
@@ -43,7 +45,7 @@ export type EnterContestInput = {
   teamRef?: string | null;
   /** Seed for the `higher_seed_wins` tie-break; lower is better. */
   seed?: number | null;
-  /** What the partner knows of where the user is now; resolved through the geo seam before the decision. */
+  /** What the partner knows of where the user is now; resolved through the geo seam and recorded before the entry is attempted. */
   location?: LocationInput | null;
   /** The seams consulted at entry. Without them no location is resolved and no risk signals are gathered. */
   providers?: { geo?: GeoProvider; risk?: RiskProvider };
@@ -80,6 +82,13 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
   const actor = input.actor ?? SYSTEM_ACTOR;
   const now = input.now ?? new Date();
   const requestId = input.requestId === undefined ? {} : { requestId: input.requestId };
+
+  if (input.location !== undefined && input.location !== null) {
+    const geo = input.providers?.geo;
+    if (geo === undefined) throw new ContestError('invalid_input', 'a location was given but no geolocation provider is configured', { field: 'location' });
+    const user = await getUser(db, input.tenantId, input.userId);
+    await resolveAndRecordLocation(db, { user, location: input.location, geo, actor, now, ...requestId });
+  }
 
   // A refusal is recorded after the transaction that would have escrowed the stake rolls back.
   let refusal: RecordDecisionInput | undefined;
@@ -148,11 +157,7 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
             contest,
             walletBalance,
             now,
-            actor,
-            ...(input.location === undefined ? {} : { location: input.location }),
-            ...(input.providers?.geo === undefined ? {} : { geo: input.providers.geo }),
             ...(input.providers?.risk === undefined ? {} : { risk: input.providers.risk }),
-            ...requestId,
           });
           const eligibility = evaluated.decision;
           const toRecord: RecordDecisionInput = { tenantId: input.tenantId, userId: user.id, contestId: contest.id, decision: eligibility, context: evaluated.context, ...requestId };

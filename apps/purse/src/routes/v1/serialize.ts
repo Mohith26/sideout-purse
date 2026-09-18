@@ -20,11 +20,12 @@ import type { IssuedEmbedToken } from '../../auth/embed-tokens';
 import type { DbOrTx } from '../../db/client';
 import type { Contest, ContestParticipant, ContestResult, ContestScore, UserVerification } from '../../db/schema';
 import type { Payout } from '../../settlement';
-import type { UserProfile } from '../../users';
+import { USER_PLACEABLE_RESTRICTIONS, type UserProfile } from '../../users';
 
 /**
  * Rows to wire resources (`@purse/types`). Money becomes a decimal string, instants become
- * ISO 8601, and nothing internal (a hash, a connection, an actor ref) is ever included.
+ * ISO 8601, and nothing internal (a hash, a connection, an actor ref, an operator's reason
+ * for a restriction) is ever included.
  */
 const iso = (value: Date | null): string | null => (value === null ? null : value.toISOString());
 
@@ -44,7 +45,7 @@ export function userResource(profile: UserProfile): UserResource {
     restrictions: restrictions.map((restriction) => ({
       id: restriction.id,
       kind: restriction.kind,
-      reason: restriction.reason,
+      ...(USER_PLACEABLE_RESTRICTIONS.has(restriction.kind) ? { reason: restriction.reason } : {}),
       startsAt: restriction.startsAt.toISOString(),
       endsAt: iso(restriction.endsAt),
     })),

@@ -52,8 +52,10 @@ export type ApiResponse<T = unknown> = {
 export type RequestOptions = {
   idempotencyKey?: string | null;
   headers?: Record<string, string>;
-  /** Send this exact text instead of a JSON body. */
-  rawBody?: string;
+  /** Send this exact text, or this stream with no declared length, instead of a JSON body. */
+  rawBody?: string | ReadableStream<Uint8Array>;
+  /** The peer address the server sees; the failed-authentication limit is keyed by it. */
+  address?: string;
 };
 
 export type Client = {
@@ -70,7 +72,7 @@ export function client(h: TestHarness, apiKey: string | undefined): Client {
     if (apiKey !== undefined) headers['Authorization'] = `Bearer ${apiKey}`;
     const write = method !== 'GET' && method !== 'HEAD';
     if (write && options.idempotencyKey !== null) headers[IDEMPOTENCY_KEY_HEADER] = options.idempotencyKey ?? key('http');
-    let payload: string | undefined;
+    let payload: string | ReadableStream<Uint8Array> | undefined;
     if (options.rawBody !== undefined) {
       payload = options.rawBody;
       headers['content-type'] ??= 'application/json';
@@ -78,7 +80,9 @@ export function client(h: TestHarness, apiKey: string | undefined): Client {
       payload = JSON.stringify(body, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v));
       headers['content-type'] = 'application/json';
     }
-    const res = await h.app.request(path, { method, headers, ...(payload === undefined ? {} : { body: payload }) });
+    const init: RequestInit & { duplex?: 'half' } = { method, headers, ...(payload === undefined ? {} : { body: payload }), ...(typeof payload === 'string' || payload === undefined ? {} : { duplex: 'half' }) };
+    const env = options.address === undefined ? undefined : { incoming: { socket: { remoteAddress: options.address } } };
+    const res = await h.app.request(path, init, env);
     const text = await res.text();
     let raw: unknown;
     try {

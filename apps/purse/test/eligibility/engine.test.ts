@@ -19,7 +19,7 @@ import {
   SPEC_EXAMPLE_RULESET,
 } from '../../src/eligibility';
 import { devRiskProvider } from '../../src/providers';
-import { addRestriction, refreshFingerprint, getUser } from '../../src/users';
+import { addRestriction, refreshFingerprint, getUser, locationOf } from '../../src/users';
 import { connectMigrator, connectRuntime, rejection } from '../helpers';
 import { createUser, key, wipeLedger } from '../ledger/fixtures';
 import { advance, buildArena, contestError, eligibleUser, fund, inProgress, makeContest, OPERATOR, score, TENANT_ACTOR, type Arena } from '../contests/fixtures';
@@ -215,6 +215,10 @@ describe('entry decisions (spec 4.5, 4.6)', () => {
     const { devGeoProvider } = await import('../../src/providers');
     const located = await contestError(enterContest(runtime.db, { tenantId: credit.tenantId, contestId: contest.id, userId: unverified.id, idempotencyKey: key(), location: { declaredRegion: 'US-TX' }, providers: { geo: devGeoProvider() } }));
     expect(located.detail).toMatchObject({ reasons: ['identity_unverified'], requiredAction: 'provide_demographics' });
+    // The location is a fact about the user and outlives the refusal: the next attempt need not repeat it.
+    await expect(locationOf(runtime.db, unverified.id)).resolves.toMatchObject({ regionCode: 'US-TX', source: 'declared' });
+    const remembered = await contestError(enterContest(runtime.db, { tenantId: credit.tenantId, contestId: contest.id, userId: unverified.id, idempotencyKey: key() }));
+    expect(remembered.detail).toMatchObject({ reasons: ['identity_unverified'] });
     // The same user enters a POINTS contest with no questions asked.
     const promo = await buildArena(runtime.db, { users: 0 });
     const points = await createUser(runtime.db, promo.tenantId, { dateOfBirth: null });
@@ -256,7 +260,7 @@ describe('entry decisions (spec 4.5, 4.6)', () => {
     };
     // a beats b four times: a meeting short of the threshold.
     for (let i = 0; i < 4; i += 1) await meet(a, b);
-    expect(await collusionPairs(runtime.db, { tenantId: arena.tenantId, ruleset: SPEC_EXAMPLE_RULESET })).toEqual([]);
+    expect(await collusionPairs(runtime.db, { tenantId: arena.tenantId, ruleset: SPEC_EXAMPLE_RULESET, users: [a, b] })).toEqual([]);
     expect(await runtime.db.select().from(operatorFlags).where(eq(operatorFlags.kind, 'collusion_signal'))).toEqual([]);
     // The fifth meeting tips it, inside the settlement that recorded it.
     await meet(a, b);
@@ -270,14 +274,15 @@ describe('entry decisions (spec 4.5, 4.6)', () => {
       await meet(c, b);
       await meet(b, c);
     }
-    const pairs = await collusionPairs(runtime.db, { tenantId: arena.tenantId, ruleset: SPEC_EXAMPLE_RULESET });
+    const pairs = await collusionPairs(runtime.db, { tenantId: arena.tenantId, ruleset: SPEC_EXAMPLE_RULESET, users: [a, b, c] });
     expect(pairs.map((each) => [each.a, each.b, each.meetings, each.share])).toEqual([[...[a, b].sort(), 5, 1]]);
-    // A rescan raises nothing new for a pair already flagged; nothing was blocked.
-    const rescan = await flagCollusion(runtime.db, { tenantId: arena.tenantId, ruleset: SPEC_EXAMPLE_RULESET });
-    expect(rescan.flags).toEqual([]);
+    expect(await collusionPairs(runtime.db, { tenantId: arena.tenantId, ruleset: SPEC_EXAMPLE_RULESET, users: [] })).toEqual([]);
+    // Flagging the pair again raises nothing new; nothing was blocked.
+    const again = await flagCollusion(runtime.db, { tenantId: arena.tenantId, ruleset: SPEC_EXAMPLE_RULESET, users: [a, b] });
+    expect(again.flags).toEqual([]);
     expect(await runtime.db.select().from(operatorFlags).where(eq(operatorFlags.kind, 'collusion_signal'))).toHaveLength(1);
-    const again = await inProgress(runtime.db, arena, { kind: 'head_to_head' }, [a, b]);
-    expect(again.state).toBe('in_progress');
+    const rematch = await inProgress(runtime.db, arena, { kind: 'head_to_head' }, [a, b]);
+    expect(rematch.state).toBe('in_progress');
     await expect(getUser(runtime.db, arena.tenantId, a)).resolves.toMatchObject({ id: a });
     expect(TENANT_ACTOR.kind).toBe('tenant');
   });

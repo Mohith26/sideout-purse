@@ -13,6 +13,7 @@ import {
   eligibilityDecisions,
   embedTokens,
   idempotencyKeys,
+  idempotencyReservations,
   identityFingerprints,
   journalEntries,
   journalLines,
@@ -54,6 +55,7 @@ export async function wipeLedger(migrator: Database): Promise<void> {
   await migrator.db.delete(contests);
   await migrator.db.delete(rulesets);
   await migrator.db.delete(idempotencyKeys);
+  await migrator.db.delete(idempotencyReservations);
   await migrator.db.delete(auditLog);
   await migrator.db.delete(accounts);
   await migrator.db.delete(userVerification);

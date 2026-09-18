@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
 import { authenticateApiKey, resetAuthCaches } from '../src/auth';
@@ -174,8 +174,11 @@ describe('db:seed', () => {
     const rotated = await seedApiKeys(database.db, tenant.id as Id<'tnt'>, { rotate: true });
     expect(rotated.keys.every((each) => each.created && each.plaintext !== null)).toBe(true);
     expect(await runtime.db.select().from(apiKeys)).toHaveLength(4);
-    resetAuthCaches();
+    // The old secret stops working at once (the verified cache is cleared with the revocation), and the revocation is audited like any other.
     await expect(authenticateApiKey(runtime.db, secret?.plaintext ?? '')).rejects.toMatchObject({ code: 'api_key_revoked' });
+    const revoked = await runtime.db.select().from(auditLog).where(and(eq(auditLog.action, 'api_key.revoked'), eq(auditLog.subject, secret?.key.id ?? '')));
+    expect(revoked).toHaveLength(1);
+    expect(revoked[0]).toMatchObject({ actorKind: 'operator', actorRef: 'seed' });
     await expect(authenticateApiKey(runtime.db, rotated.keys[0]?.plaintext ?? '')).resolves.toMatchObject({ key: { label: 'seed:sideout:secret:sandbox' } });
   });
 

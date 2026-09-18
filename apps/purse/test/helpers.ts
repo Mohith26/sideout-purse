@@ -32,6 +32,7 @@ export type HarnessOptions = {
   internalApiToken?: string;
   rateLimit?: RateLimitConfig;
   clock?: () => number;
+  inProgressWaitMs?: number;
   devIdentity?: DevIdentityLists;
   /** Replace one or more seams, for a test that needs a provider to misbehave. */
   providers?: Partial<Providers>;
@@ -68,6 +69,7 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     providers,
     rateLimit: overrides.rateLimit ?? TEST_RATE_LIMIT,
     ...(overrides.clock === undefined ? {} : { clock: overrides.clock }),
+    ...(overrides.inProgressWaitMs === undefined ? {} : { inProgressWaitMs: overrides.inProgressWaitMs }),
   });
   return { app, buckets, providers, database, logger, lines, close: () => database.close() };
 }

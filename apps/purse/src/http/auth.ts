@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 
-import { authenticateApiKey, keyPrefixOf, type AuthenticatedKey } from '../auth/api-keys';
+import { authenticateApiKey, type AuthenticatedKey } from '../auth/api-keys';
 import { AuthError } from '../auth/errors';
 import type { DbOrTx } from '../db/client';
 import type { RequestScope } from './request-id';
@@ -23,17 +23,6 @@ export function presentedToken(header: string | undefined): string | undefined {
   if (header === undefined) return undefined;
   const match = /^Bearer\s+(\S+)\s*$/i.exec(header);
   return match?.[1];
-}
-
-/** The rate limiter's key for a request: the key's visible prefix when the token has one, otherwise a shared anonymous bucket. */
-export function limiterKeyOf(header: string | undefined): string {
-  const token = presentedToken(header);
-  if (token === undefined) return 'anonymous';
-  try {
-    return `key:${keyPrefixOf(token)}`;
-  } catch {
-    return 'anonymous';
-  }
 }
 
 export function bearerAuth(deps: BearerAuthDeps): MiddlewareHandler<RequestScope & AuthScope> {

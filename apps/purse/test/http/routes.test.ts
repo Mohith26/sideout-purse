@@ -49,7 +49,6 @@ describe('every v1 route', () => {
     { method: 'POST', path: `/v1/contests/${contestId}/lock`, invalidBody: { force: true } },
     { method: 'POST', path: `/v1/contests/${contestId}/start`, invalidBody: { reason: 5 } },
     { method: 'POST', path: `/v1/contests/${contestId}/finish`, invalidBody: { reason: 5 } },
-    { method: 'POST', path: `/v1/contests/${contestId}/cancel`, invalidBody: { reason: 5 } },
     { method: 'POST', path: `/v1/contests/${contestId}/entries`, invalidBody: { userId: 'someone', seed: 0 } },
     { method: 'DELETE', path: `/v1/contests/${contestId}/entries/${userId}`, invalidBody: 'not json' },
     { method: 'POST', path: `/v1/contests/${contestId}/scores`, invalidBody: { scores: [] } },

@@ -22,6 +22,7 @@ export {
   listRestrictions,
   activeRestrictions,
   actorRef,
+  USER_PLACEABLE_RESTRICTIONS,
   type AddRestrictionInput,
   type LiftRestrictionInput,
 } from './restrictions';
