@@ -20,6 +20,8 @@ import { embedTokenResource, userResource, verificationResource } from './serial
  * the wallet, and issue credits (operator scope). Money moves only through the ledger's
  * typed flows; identity moves only through the users services.
  */
+const emptyBodySchema = z.object({}).strict();
+
 const creditsSchema = z
   .object({
     asset: z.enum(assetEnum.enumValues),
@@ -55,6 +57,8 @@ export function usersRoutes(deps: V1Deps) {
   routes.post('/:id/verification', async (c) => {
     const auth = c.get('auth');
     const userId = param(userIdSchema, 'id', c.req.param('id'));
+    // Takes no fields today; an unknown one is refused so a future field cannot be silently ignored.
+    parseBody(c, emptyBodySchema);
     const started = await startVerification(c.get('db'), {
       tenantId: auth.tenant.id as Id<'tnt'>,
       userId,

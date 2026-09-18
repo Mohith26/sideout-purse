@@ -1,9 +1,11 @@
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { API_ERROR_STATUS, API_ERROR_TYPES, type ApiErrorType, type ContestResource, type EntryResource, type PreviewResource, type ResultsResource, type SettlementResource, type UserResource } from '@purse/types';
 import { type Id } from '@repo/ids';
 
 import { resetAuthCaches } from '../../src/auth';
 import type { Database } from '../../src/db/client';
+import { eligibilityDecisions } from '../../src/db/schema';
 import { reconcile } from '../../src/ledger';
 import { addRestriction } from '../../src/users';
 import { connectMigrator, harness, type TestHarness } from '../helpers';
@@ -134,6 +136,11 @@ describe('v1 contract', () => {
     expect(excluded.status).toBe(403);
     expect(excluded.error).toMatchObject({ type: 'not_eligible', code: 'not_eligible', detail: { reasons: ['self_excluded'], rulesetVersion: '2026.09.1' } });
     expect(excluded.error?.detail?.['requiredAction']).toBeUndefined();
+    // The refusal was recorded and committed with the 403 that reported it (spec 4.5).
+    const refusals = await h.database.db.select().from(eligibilityDecisions).where(and(eq(eligibilityDecisions.userId, priyaId), eq(eligibilityDecisions.contestId, contestId)));
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]).toMatchObject({ allowed: false, reasons: ['self_excluded'], rulesetVersion: '2026.09.1' });
+    expect(refusals[0]?.requestId).toBe(excluded.headers.get('X-Request-Id'));
     const broke = await op.record('contests.entries.insufficient_funds', 'POST', `/v1/contests/${contestId}/entries`, { userId: marcusId, seed: 2, location: { ip: '203.0.113.9' } });
     expect(broke.status).toBe(201);
     const poor = (await plain.post<UserResource>('/v1/users', { externalId: 'sideout:poor', displayName: 'No Points', dateOfBirth: '1990-01-01' })).data;

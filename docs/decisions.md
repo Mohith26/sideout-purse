@@ -315,6 +315,8 @@ request's key.
 
 ### The phase 3 hooks left in place
 
+(Phase 3 has since replaced the hook and mounted the routes; see "Phase 3 decisions".)
+
 `apps/purse/src/contests/eligibility.ts` is the one named hook `enterContest` calls; it
 always allows and is marked as phase 3's to replace. `contest_not_open`, `contest_full`
 and `insufficient_balance` (as the ledger's `insufficient_funds`) are already enforced at
