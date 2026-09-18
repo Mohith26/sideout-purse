@@ -15,6 +15,7 @@ export const CONTEST_ERROR_CODES = {
   // Input
   invalid_input: 'invalid_request',
   invalid_prize_structure: 'invalid_request',
+  entry_amount_above_stake_limit: 'invalid_request',
   invalid_payout_hash: 'invalid_request',
   duplicate_user: 'invalid_request',
   external_id_taken: 'conflict',

@@ -1,4 +1,4 @@
-import { desc, eq, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
@@ -85,13 +85,6 @@ export async function activeRuleset(db: DbOrTx): Promise<Ruleset | undefined> {
   return row === undefined ? undefined : parseRuleset(row.body);
 }
 
-/** The active ruleset, or throw: an entry cannot be decided without rules in force. */
-export async function requireActiveRuleset(db: DbOrTx): Promise<Ruleset> {
-  const ruleset = await activeRuleset(db);
-  if (ruleset === undefined) throw new RulesetError('No active ruleset; run pnpm db:seed');
-  return ruleset;
-}
-
 export async function rulesetByVersion(db: DbOrTx, version: string): Promise<Ruleset | undefined> {
   const [row] = await db.select().from(rulesets).where(eq(rulesets.version, version));
   return row === undefined ? undefined : parseRuleset(row.body);
@@ -114,10 +107,6 @@ export async function findRulesetForContest(db: DbOrTx, contest: { eligibilityRu
     if (pinned !== undefined) return pinned;
   }
   return activeRuleset(db);
-}
-
-export async function listRulesets(db: DbOrTx): Promise<RulesetRow[]> {
-  return db.select().from(rulesets).orderBy(desc(rulesets.createdAt));
 }
 
 export type { Id };

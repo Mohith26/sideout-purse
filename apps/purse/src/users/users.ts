@@ -141,14 +141,6 @@ export async function getUser(db: DbOrTx, tenantId: Id<'tnt'>, userId: string): 
   return row;
 }
 
-export async function findUserByExternalId(db: DbOrTx, tenantId: Id<'tnt'>, externalId: string): Promise<User | undefined> {
-  const [row] = await db
-    .select()
-    .from(users)
-    .where(and(eq(users.tenantId, tenantId), eq(users.externalId, externalId)));
-  return row;
-}
-
 /** The verification row, which exists for every user from creation. */
 export async function getVerification(db: DbOrTx, userId: string): Promise<UserVerification> {
   const [row] = await db.select().from(userVerification).where(eq(userVerification.userId, userId));

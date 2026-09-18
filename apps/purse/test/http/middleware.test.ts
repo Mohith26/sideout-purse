@@ -2,11 +2,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { IDEMPOTENCY_KEY_HEADER, IDEMPOTENT_REPLAYED_HEADER, RATE_LIMIT_LIMIT_HEADER, RATE_LIMIT_REMAINING_HEADER, REQUEST_ID_HEADER, RETRY_AFTER_HEADER, type UserResource } from '@purse/types';
+import { IDEMPOTENCY_KEY_HEADER, IDEMPOTENT_REPLAYED_HEADER, RATE_LIMIT_LIMIT_HEADER, RATE_LIMIT_REMAINING_HEADER, REQUEST_ID_HEADER, RETRY_AFTER_HEADER, type EmbedTokenResource, type UserResource, type VerificationStartResource } from '@purse/types';
 
-import { resetAuthCaches, revokeApiKey } from '../../src/auth';
+import { consumeEmbedToken, resetAuthCaches, revokeApiKey } from '../../src/auth';
 import type { Database } from '../../src/db/client';
-import { idempotencyKeys, idempotencyReservations, journalEntries, users } from '../../src/db/schema';
+import { embedTokens, idempotencyKeys, idempotencyReservations, journalEntries, users } from '../../src/db/schema';
 import { MAX_BODY_BYTES } from '../../src/http/body';
 import { httpRequestHash } from '../../src/http/idempotency';
 import { MAX_BUCKETS, TokenBuckets } from '../../src/http/rate-limit';
@@ -271,11 +271,50 @@ describe('idempotency middleware', () => {
       expect(first.data?.verification.state).toBe('verified');
       const second = await replay;
       expect(second.headers.get(IDEMPOTENT_REPLAYED_HEADER)).toBe('true');
-      expect(second.raw).toEqual(first.raw);
+      // The same answer, less the embed token, which is handed out once (see below).
+      const { embedToken: minted, ...rest } = first.data as VerificationStartResource;
+      expect(second.data).toEqual({ ...rest, embedToken: { ...minted, token: null, replayed: true } });
       expect(gated.lines.filter((line) => line['msg'] === 'idempotent replay')).toHaveLength(1);
     } finally {
       await gated.close();
     }
+  });
+
+  it('an embed token is returned once: the stored body and every replay carry token: null and replayed: true', async () => {
+    const api = client(h, boot.operatorKey);
+    const user = await api.post<UserResource>('/v1/users', { externalId: 'u1', displayName: 'Ana', dateOfBirth: '1990-01-01' });
+    const userId = user.data?.id ?? '';
+    const k = key('embed');
+    const minted = await api.post<EmbedTokenResource>('/v1/embed/tokens', { userId, flow: 'wallet' }, { idempotencyKey: k });
+    expect(minted.status).toBe(201);
+    expect(minted.data).toMatchObject({ flow: 'wallet', userId, replayed: false });
+    const token = minted.data?.token ?? '';
+    expect(token).toMatch(/^embt_/);
+
+    const replay = await api.post<EmbedTokenResource>('/v1/embed/tokens', { userId, flow: 'wallet' }, { idempotencyKey: k });
+    expect(replay.status).toBe(201);
+    expect(replay.headers.get(IDEMPOTENT_REPLAYED_HEADER)).toBe('true');
+    expect(replay.data).toEqual({ ...minted.data, token: null, replayed: true });
+    expect(JSON.stringify(replay.raw)).not.toContain('embt_');
+    // The plaintext never rests in the idempotency store, nor anywhere else: the token row holds a digest.
+    const [stored] = await h.database.db.select().from(idempotencyKeys).where(and(eq(idempotencyKeys.tenantId, boot.tenantId), eq(idempotencyKeys.key, k)));
+    expect(stored?.responseStatus).toBe(201);
+    expect(JSON.stringify(stored?.responseBody)).not.toContain('embt_');
+    expect(JSON.stringify(await h.database.db.select().from(embedTokens))).not.toContain(token);
+    // The replay minted nothing, and the one token minted is still good for its single use.
+    expect(await h.database.db.select().from(embedTokens)).toHaveLength(1);
+    const consumed = await consumeEmbedToken(h.database.db, { token, flow: 'wallet' });
+    expect(consumed.userId).toBe(userId);
+
+    // The identity flow's token, minted by starting verification, is treated the same way.
+    const v = key('verify');
+    const started = await api.post<VerificationStartResource>(`/v1/users/${userId}/verification`, {}, { idempotencyKey: v });
+    expect(started.data?.embedToken).toMatchObject({ flow: 'identity', replayed: false });
+    expect(started.data?.embedToken.token).toMatch(/^embt_/);
+    const again = await api.post<VerificationStartResource>(`/v1/users/${userId}/verification`, {}, { idempotencyKey: v });
+    expect(again.headers.get(IDEMPOTENT_REPLAYED_HEADER)).toBe('true');
+    expect(again.data?.embedToken).toEqual({ ...started.data?.embedToken, token: null, replayed: true });
+    expect(again.data?.verification).toEqual(started.data?.verification);
   });
 
   it('a claim left by a crashed request is honoured until it expires and then retried', async () => {

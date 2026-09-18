@@ -170,8 +170,10 @@ returns a five-minute, single-use embed token), `GET /users/:id/wallet`,
 Eligibility (spec 4.5) is a pure evaluator over a versioned, stored ruleset; the seeded
 version is the spec's own example, in which `POINTS` is permitted everywhere with no
 verification and `CREDIT` is region-gated, verification-gated and stake-limited. Every
-entry attempt leaves a decision row carrying the ruleset version. Identity, geolocation
-and risk are provider seams with deterministic dev implementations:
+entry attempt the evaluator judges leaves a decision row carrying the ruleset version (a
+contest that is not open or is full is refused before it runs, under the version the
+contest pins). Identity, geolocation and risk are provider seams with deterministic dev
+implementations:
 [`docs/providers.md`](docs/providers.md) names the vendor each stands in for.
 
 ## How a score becomes a payout

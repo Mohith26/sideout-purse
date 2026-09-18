@@ -122,6 +122,16 @@ const CASES: Case[] = [
     input: { user: { dateOfBirth: '2015-01-01' }, wallet: { balance: 0n } },
     expect: { allowed: false, reasons: ['under_minimum_age', 'insufficient_balance'] },
   },
+  {
+    name: 'over the per-contest stake limit and unfunded: no action, no amount of funds admits this entry',
+    input: { contest: { entryAmount: 60_000n }, wallet: { balance: 0n } },
+    expect: { allowed: false, reasons: ['stake_limit_exceeded', 'insufficient_balance'] },
+  },
+  {
+    name: 'over the velocity limit and unfunded: no action, only time clears the limit',
+    input: { velocity: { enteredLast24h: 199_500n, enteredLast7d: 199_500n }, wallet: { balance: 0n } },
+    expect: { allowed: false, reasons: ['velocity_limit_exceeded', 'insufficient_balance'] },
+  },
 ];
 
 describe('evaluate(): the spec 4.5 case table', () => {

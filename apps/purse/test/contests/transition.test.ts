@@ -5,6 +5,7 @@ import {
   canTransition,
   CONTEST_STATES,
   createContest,
+  getContest,
   TRANSITION_ACTIONS,
   TRANSITIONS,
   transition,
@@ -288,8 +289,28 @@ describe('transitionContest() and updateContest()', () => {
     expect(badAmount.code).toBe('invalid_input');
     const badWindow = await contestError(createContest(runtime.db, { ...fields, externalId: 'x4', opensAt: new Date('2026-09-18T00:00:00Z'), locksAt: new Date('2026-09-17T00:00:00Z'), idempotencyKey: key() }));
     expect(badWindow.code).toBe('invalid_input');
+    // An entry amount above the active ruleset's per-contest stake limit could never be entered.
+    const unstakeable = await contestError(createContest(runtime.db, { ...fields, externalId: 'x5', entryAmount: 50_001n, idempotencyKey: key() }));
+    expect(unstakeable.code).toBe('entry_amount_above_stake_limit');
+    expect(unstakeable.apiType).toBe('invalid_request');
+    expect(unstakeable.detail).toMatchObject({ field: 'entryAmount', entryAmount: '50001', perContest: 50_000, rulesetVersion: '2026.09.1' });
+    expect(await runtime.db.select().from(contests)).toHaveLength(1);
+    const atLimit = await createContest(runtime.db, { ...fields, externalId: 'x6', entryAmount: 50_000n, idempotencyKey: key() });
+    expect(atLimit.contest.entryAmount).toBe(50_000n);
     const differentPayload = await contestError(createContest(runtime.db, { ...fields, title: 'Renamed', idempotencyKey: k }));
     expect(differentPayload.code).toBe('idempotency_conflict');
+  });
+
+  it('a draft edited above the stake limit cannot open until it is edited back', async () => {
+    const contest = await makeContest(runtime.db, arena);
+    await updateContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, patch: { entryAmount: 50_001n }, idempotencyKey: key(), actor: OPERATOR });
+    const refused = await contestError(transitionContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, to: 'open', actor: OPERATOR, idempotencyKey: key() }));
+    expect(refused.code).toBe('entry_amount_above_stake_limit');
+    expect(refused.detail).toMatchObject({ entryAmount: '50001', perContest: 50_000, rulesetVersion: '2026.09.1' });
+    expect((await getContest(runtime.db, arena.tenantId, contest.id)).state).toBe('draft');
+    await updateContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, patch: { entryAmount: 50_000n }, idempotencyKey: key(), actor: OPERATOR });
+    const opened = await transitionContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, to: 'open', actor: OPERATOR, idempotencyKey: key() });
+    expect(opened.contest.state).toBe('open');
   });
 
   it('a draft can be edited; anything past draft is frozen by the service and by the database', async () => {

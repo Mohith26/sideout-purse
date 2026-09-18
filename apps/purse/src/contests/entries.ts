@@ -12,7 +12,7 @@ import { escrowEntry, refundEscrow } from '../ledger/flows';
 import { getEntry, linesOf, type PostedEntry } from '../ledger/post';
 import type { GeoProvider, RiskProvider } from '../providers/types';
 import { getUser, resolveAndRecordLocation, type LocationInput } from '../users';
-import { evaluateEntryEligibility, notEligible } from './eligibility';
+import { evaluateEntryEligibility, notEligible, rulesetVersionOf } from './eligibility';
 import { ContestError } from './errors';
 import { idempotent, ledgerKey } from './idempotency';
 import { findParticipant, getContest, getParticipant, lockContest } from './load';
@@ -32,10 +32,13 @@ import { findParticipant, getContest, getParticipant, lockContest } from './load
  * two simultaneous entries by one user to different contests see each other's velocity),
  * with the wallet balance and the journal's rolling totals as they stand at that instant.
  * A `location` the request carries is resolved through the geo seam and recorded before
- * the entry's transaction opens, so it stands whatever the decision. Every attempt leaves
- * one `eligibility_decisions` row: an allowed decision commits with the entry; a refusal
- * is written after the entry's transaction has rolled back, so the record of the refusal
- * and the location survive and nothing else does.
+ * the entry's transaction opens, so it stands whatever the decision. Every attempt the
+ * evaluator judges leaves one `eligibility_decisions` row: an allowed decision commits
+ * with the entry; a refusal is written after the entry's transaction has rolled back, so
+ * the record of the refusal and the location survive and nothing else does. A contest
+ * that is not open or is full is refused before the evaluator runs, under the same
+ * `not_eligible` shape (its reason and the version the contest is judged under) and with
+ * no decision row.
  */
 export type EnterContestInput = {
   tenantId: Id<'tnt'>;
@@ -106,6 +109,7 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
               contestId: contest.id,
               state: contest.state,
               reasons: ['contest_not_open'],
+              rulesetVersion: await rulesetVersionOf(tx, contest),
             });
           }
           if (contest.locksAt !== null && contest.locksAt.getTime() <= now.getTime()) {
@@ -113,6 +117,7 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
               contestId: contest.id,
               locksAt: contest.locksAt.toISOString(),
               reasons: ['contest_not_open'],
+              rulesetVersion: await rulesetVersionOf(tx, contest),
             });
           }
 
@@ -136,6 +141,7 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
                 contestId: contest.id,
                 maxParticipants: contest.maxParticipants,
                 reasons: ['contest_full'],
+                rulesetVersion: await rulesetVersionOf(tx, contest),
               });
             }
           }

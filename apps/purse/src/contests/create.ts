@@ -8,6 +8,7 @@ import { activeRuleset } from '../eligibility/rulesets';
 import { getAccount, openAccount } from '../ledger/accounts';
 import { recordAudit, SYSTEM_ACTOR, type Actor } from '../ledger/audit';
 import { prizeStructureSchema, tieBreakRuleSchema } from '../settlement/types';
+import { assertEntryAmountWithinLimit } from './eligibility';
 import { ContestError } from './errors';
 import { idempotent } from './idempotency';
 import { getContest, lockContest } from './load';
@@ -94,8 +95,10 @@ export async function createContest(db: DbOrTx, input: CreateContestInput): Prom
           }
 
           // Pin the rules in force at creation (spec 4.1 `eligibility_ruleset_version`):
-          // every entry to this contest is judged under this version.
+          // every entry to this contest is judged under this version, so an entry amount
+          // its stake limit would refuse every entrant is refused here.
           const ruleset = await activeRuleset(tx);
+          if (ruleset !== undefined) assertEntryAmountWithinLimit(parsed, ruleset);
 
           const id = newId('cnt');
           const { account } = await openAccount(tx, {

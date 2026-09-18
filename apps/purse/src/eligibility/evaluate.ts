@@ -12,8 +12,9 @@ import type { Ruleset } from './ruleset';
  *
  * Every applicable reason is reported, in a fixed priority order, and the required action
  * is the first reason's: a terminal reason (a block, a self-exclusion, a rejected identity,
- * an under-age user) has none, so a partner never shows "add funds" to someone who could
- * not enter with any amount of funds.
+ * an under-age user, a stake or velocity limit that no balance clears) has none and ranks
+ * above the shortfall, so a partner never shows "add funds" to someone who could not enter
+ * with any amount of funds.
  */
 export type RestrictionInput = {
   kind: RestrictionKind;
@@ -53,9 +54,9 @@ export const REASON_PRIORITY: readonly EligibilityReason[] = [
   'region_not_permitted',
   'region_unknown',
   'identity_unverified',
-  'insufficient_balance',
   'stake_limit_exceeded',
   'velocity_limit_exceeded',
+  'insufficient_balance',
   'contest_not_open',
   'contest_full',
 ];

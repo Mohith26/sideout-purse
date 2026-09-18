@@ -364,7 +364,11 @@ single-use, scoped to one user and one flow, and expires in five minutes (spec 4
 5); consuming it is one `UPDATE ... WHERE consumed_at IS NULL`, so two frames racing for
 one token cannot both win, and a trigger refuses un-consuming for every role.
 `POST /users/:id/verification` mints the identity flow's token; `POST /embed/tokens` mints
-any flow's. Consumed and expired tokens are kept a day for support and then purged.
+any flow's. Consumed and expired tokens are kept a day for support and then purged. The
+plaintext is returned once and rests nowhere: the v1 idempotency layer stores those two
+responses with `token: null` and `replayed: true` in place of the token (`okOnce`), so a
+replay under the same key returns everything else unchanged and a partner that lost the
+token mints another under a fresh key.
 
 ### Two layers of idempotency, one table
 
@@ -395,8 +399,22 @@ reason (with `add_funds` as the action) and records it like every decision; the 
 route reports a decision whose only reason is the shortfall as `insufficient_funds` (402,
 the money type a partner routes to funding), and any other refusal, including a shortfall
 alongside a compliance reason, as `not_eligible` (403). Both carry `reasons[]`,
-`requiredAction` and `rulesetVersion` in `detail`. The ledger's own non-negative wallet
-guard stands behind the evaluator for the race it cannot see.
+`requiredAction` and `rulesetVersion` in `detail`. A contest that is not open or is full
+is refused before the evaluator runs, as `not_eligible` with `contest_not_open` or
+`contest_full` as its one reason and the version the contest is judged under, and writes
+no decision row. The ledger's own non-negative wallet guard stands behind the evaluator for
+the race it cannot see.
+
+### An entry amount no one could stake is refused at creation and at open
+
+The per-contest stake limit is a rule about the contest, not the entrant: a contest whose
+`entryAmount` is above the `perContest` limit of the ruleset its entries are judged under
+would refuse every entrant `stake_limit_exceeded`. `createContest` refuses it against the
+active ruleset (the one it is about to pin) and `open` refuses it against the pinned one
+(a draft may have been edited, or the pin may predate the limit), both as
+`invalid_request` / `entry_amount_above_stake_limit`. The evaluator keeps its own check
+for a contest opened before this rule, or one with no pin whose active fallback changed
+after it opened.
 
 ### Velocity is gross, per asset, from the journal
 
@@ -432,7 +450,10 @@ refused only where identity is required (`identity_unverified` with
 entry with no demographics is allowed, which is the asymmetry the spec asks for. All
 applicable reasons are reported in a fixed priority order and the first one's action is the
 decision's, so a terminal reason (a block, a self-exclusion, a rejected identity, an
-under-age user) never comes with "add funds".
+under-age user) never comes with "add funds". The stake and velocity limits rank above the
+shortfall for the same reason: no amount of funds admits an entry above the per-contest
+limit, and only time clears a velocity overrun, so a user refused for both is told nothing
+rather than "add funds".
 
 ### `rejected` is terminal for the user
 

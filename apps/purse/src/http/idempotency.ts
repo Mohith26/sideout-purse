@@ -39,12 +39,14 @@ import type { RequestScope } from './request-id';
  *
  * What is stored: every 2xx and every 4xx except 429, because a refusal is the answer to
  * that request. A 5xx and a 429 are not stored and release the reservation, so the partner
- * retries the same key and the request is performed then. Rows are kept for at least 30
- * days and removed by `pnpm --filter @purse/api db:purge`.
+ * retries the same key and the request is performed then. A handler whose response carries
+ * a secret returned once (`okOnce`) sets `replayBody`, and that is stored and replayed in
+ * place of the response it sent. Rows are kept for at least 30 days and removed by
+ * `pnpm --filter @purse/api db:purge`.
  *
  * Reads (GET, HEAD, OPTIONS) take no key.
  */
-export type IdempotencyScope = { Variables: { db: Db; idempotencyKey: string | undefined } };
+export type IdempotencyScope = { Variables: { db: Db; idempotencyKey: string | undefined; replayBody: unknown } };
 
 type Scope = RequestScope & AuthScope & BodyScope & IdempotencyScope;
 
@@ -126,6 +128,7 @@ export function idempotency(deps: IdempotencyDeps): MiddlewareHandler<Scope> {
   const inProgressWaitMs = deps.inProgressWaitMs ?? IN_PROGRESS_WAIT_MS;
   return async (c, next) => {
     c.set('db', deps.db);
+    c.set('replayBody', undefined);
     if (!MUTATING.has(c.req.method)) {
       c.set('idempotencyKey', undefined);
       await next();
@@ -187,7 +190,7 @@ export function idempotency(deps: IdempotencyDeps): MiddlewareHandler<Scope> {
       return produced;
     }
 
-    const body = (await produced.clone().json()) as Record<string, unknown>;
+    const body = (c.get('replayBody') ?? (await produced.clone().json())) as Record<string, unknown>;
     try {
       await deps.db
         .insert(idempotencyKeys)

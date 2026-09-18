@@ -407,6 +407,7 @@
           },
           "embedToken": {
             "token": "<embed-token>",
+            "replayed": false,
             "flow": "identity",
             "userId": "usr_<id>",
             "expiresAt": "<instant>"
@@ -461,8 +462,36 @@
       "body": {
         "data": {
           "token": "<embed-token>",
+          "replayed": false,
           "flow": "wallet",
           "userId": "usr_<id>",
+          "expiresAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.tokens.create.replay",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/tokens",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "flow": "wallet"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "flow": "wallet",
+          "token": null,
+          "userId": "usr_<id>",
+          "replayed": true,
           "expiresAt": "<instant>"
         }
       }
@@ -850,6 +879,49 @@
                 "message": "percentages must sum to exactly 100"
               }
             ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.create.stake_limit",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "externalId": "x3",
+        "kind": "tournament",
+        "title": "Saturday doubles",
+        "asset": "POINTS",
+        "entryAmount": "50001",
+        "maxParticipants": 8,
+        "prizeStructure": {
+          "type": "percentage_split",
+          "percentages": [
+            50,
+            30,
+            20
+          ]
+        }
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "entry_amount_above_stake_limit",
+          "message": "An entry of 50001 is above the per-contest stake limit of 50000 in ruleset 2026.09.1",
+          "detail": {
+            "field": "entryAmount",
+            "entryAmount": "50001",
+            "perContest": 50000,
+            "rulesetVersion": "2026.09.1"
           }
         }
       }
@@ -1561,7 +1633,8 @@
             "state": "locked",
             "reasons": [
               "contest_not_open"
-            ]
+            ],
+            "rulesetVersion": "2026.09.1"
           }
         }
       }

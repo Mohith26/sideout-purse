@@ -170,13 +170,13 @@ describe('enterContest()', () => {
     const notOpen = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: draft.id, userId: user(0), idempotencyKey: key() }));
     expect(notOpen.code).toBe('contest_not_open');
     expect(notOpen.apiType).toBe('not_eligible');
-    expect(notOpen.detail).toMatchObject({ reasons: ['contest_not_open'], state: 'draft' });
+    expect(notOpen.detail).toMatchObject({ reasons: ['contest_not_open'], state: 'draft', rulesetVersion: '2026.09.1' });
 
     await advance(runtime.db, arena, draft.id, 'open');
     await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: draft.id, userId: user(0), idempotencyKey: key() });
     const full = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: draft.id, userId: user(1), idempotencyKey: key() }));
     expect(full.code).toBe('contest_full');
-    expect(full.detail).toMatchObject({ reasons: ['contest_full'], maxParticipants: 1 });
+    expect(full.detail).toMatchObject({ reasons: ['contest_full'], maxParticipants: 1, rulesetVersion: '2026.09.1' });
 
     const timed = await makeContest(runtime.db, arena, { locksAt: new Date('2026-09-17T12:00:00Z') });
     await advance(runtime.db, arena, timed.id, 'open');
@@ -184,7 +184,9 @@ describe('enterContest()', () => {
     expect(early.participant.state).toBe('entered');
     const late = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: timed.id, userId: user(1), idempotencyKey: key(), now: new Date('2026-09-17T12:00:00Z') }));
     expect(late.code).toBe('contest_not_open');
-    expect(late.detail).toMatchObject({ locksAt: '2026-09-17T12:00:00.000Z' });
+    expect(late.detail).toMatchObject({ locksAt: '2026-09-17T12:00:00.000Z', rulesetVersion: '2026.09.1' });
+    // Refused before the evaluator ran: the version is the contest's pin, and no decision row is written.
+    expect(await runtime.db.select({ n: count() }).from(eligibilityDecisions)).toEqual([{ n: 2 }]);
 
     // Funds: 250 minus two entries of 100 leaves 50, not enough for a third. The evaluator
     // sees the shortfall first and, it being the only reason, refuses as

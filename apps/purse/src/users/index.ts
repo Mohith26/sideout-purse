@@ -7,7 +7,6 @@ export { UsersError, USERS_ERROR_CODES, isUsersError, type UsersErrorCode } from
 export {
   upsertUser,
   getUser,
-  findUserByExternalId,
   getVerification,
   upsertUserSchema,
   locationInputSchema,
@@ -19,7 +18,6 @@ export { startVerification, REVERIFY_AFTER_DAYS, type StartVerificationInput, ty
 export {
   addRestriction,
   liftRestriction,
-  listRestrictions,
   activeRestrictions,
   actorRef,
   placedByUser,

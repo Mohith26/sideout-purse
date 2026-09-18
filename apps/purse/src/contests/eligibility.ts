@@ -3,7 +3,7 @@ import type { Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
 import type { Contest, User } from '../db/schema';
-import { decideEntry, rulesetForContest, type EntryDecision } from '../eligibility';
+import { decideEntry, rulesetForContest, type EntryDecision, type Ruleset } from '../eligibility';
 import type { RiskProvider } from '../providers/types';
 import { profileOf } from '../users';
 import { ContestError } from './errors';
@@ -37,6 +37,30 @@ export async function evaluateEntryEligibility(tx: DbOrTx, input: EntryEligibili
     ruleset,
     now: input.now,
     ...(input.risk === undefined ? {} : { risk: input.risk }),
+  });
+}
+
+/**
+ * The version a refusal made before the evaluator ran (`contest_not_open`, `contest_full`)
+ * reports: the one the contest pins, else the active one, as `rulesetForContest` judges.
+ */
+export async function rulesetVersionOf(db: DbOrTx, contest: Contest): Promise<string> {
+  return contest.eligibilityRulesetVersion ?? (await rulesetForContest(db, contest)).version;
+}
+
+/**
+ * A contest whose entry amount is above the per-contest stake limit of the ruleset its
+ * entries are judged under could never be entered, so it is refused at creation and at
+ * `open` as `invalid_request` rather than refusing every entrant `stake_limit_exceeded`.
+ */
+export function assertEntryAmountWithinLimit(contest: { entryAmount: bigint }, ruleset: Ruleset): void {
+  const limit = ruleset.stakeLimits.perContest;
+  if (limit === null || contest.entryAmount <= BigInt(limit)) return;
+  throw new ContestError('entry_amount_above_stake_limit', `An entry of ${contest.entryAmount} is above the per-contest stake limit of ${limit} in ruleset ${ruleset.version}`, {
+    field: 'entryAmount',
+    entryAmount: contest.entryAmount.toString(),
+    perContest: limit,
+    rulesetVersion: ruleset.version,
   });
 }
 

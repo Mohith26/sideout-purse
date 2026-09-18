@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { API_ERROR_STATUS, API_ERROR_TYPES, type ApiErrorType, type ContestResource, type EntryResource, type PreviewResource, type ResultsResource, type SettlementResource, type UserResource } from '@purse/types';
+import { API_ERROR_STATUS, API_ERROR_TYPES, type ApiErrorType, type ContestResource, type EmbedTokenResource, type EntryResource, type PreviewResource, type ResultsResource, type SettlementResource, type UserResource } from '@purse/types';
 import { type Id } from '@repo/ids';
 
 import { resetAuthCaches } from '../../src/auth';
@@ -79,13 +79,18 @@ describe('v1 contract', () => {
     // ---- verification and embed tokens ------------------------------------------------
     const verified = await op.record('users.verification.start', 'POST', `/v1/users/${anaId}/verification`, {});
     expect(verified.status).toBe(201);
-    expect(verified.data).toMatchObject({ verification: { state: 'verified', provider: 'dev' }, embedToken: { flow: 'identity', userId: anaId } });
+    expect(verified.data).toMatchObject({ verification: { state: 'verified', provider: 'dev' }, embedToken: { flow: 'identity', userId: anaId, replayed: false } });
     const alreadyVerified = await op.record('users.verification.invalid_state', 'POST', `/v1/users/${anaId}/verification`, {});
     expect(alreadyVerified.status).toBe(409);
     expect(alreadyVerified.error).toMatchObject({ type: 'invalid_state', code: 'already_verified' });
-    const embed = await op.record('embed.tokens.create', 'POST', '/v1/embed/tokens', { userId: anaId, flow: 'wallet' });
+    const embedKey = key('embed');
+    const embed = await op.record<EmbedTokenResource>('embed.tokens.create', 'POST', '/v1/embed/tokens', { userId: anaId, flow: 'wallet' }, { idempotencyKey: embedKey });
     expect(embed.status).toBe(201);
-    expect(embed.data).toMatchObject({ flow: 'wallet', userId: anaId });
+    expect(embed.data).toMatchObject({ flow: 'wallet', userId: anaId, replayed: false });
+    expect(embed.data?.token).toMatch(/^embt_/);
+    const embedReplay = await op.record<EmbedTokenResource>('embed.tokens.create.replay', 'POST', '/v1/embed/tokens', { userId: anaId, flow: 'wallet' }, { idempotencyKey: embedKey });
+    expect(embedReplay.headers.get('Idempotent-Replayed')).toBe('true');
+    expect(embedReplay.data).toEqual({ ...embed.data, token: null, replayed: true });
     const badFlow = await op.record('embed.tokens.validation_failed', 'POST', '/v1/embed/tokens', { userId: anaId, flow: 'admin' });
     expect(badFlow.error).toMatchObject({ type: 'invalid_request', code: 'validation_failed' });
 
@@ -118,6 +123,9 @@ describe('v1 contract', () => {
     const badStructure = await op.record('contests.create.validation_failed', 'POST', '/v1/contests', { ...definition, externalId: 'x2', prizeStructure: { type: 'percentage_split', percentages: [60, 60] } });
     expect(badStructure.status).toBe(400);
     expect(badStructure.error).toMatchObject({ type: 'invalid_request', code: 'invalid_prize_structure' });
+    const unstakeable = await op.record('contests.create.stake_limit', 'POST', '/v1/contests', { ...definition, externalId: 'x3', entryAmount: '50001' });
+    expect(unstakeable.status).toBe(400);
+    expect(unstakeable.error).toMatchObject({ type: 'invalid_request', code: 'entry_amount_above_stake_limit', detail: { perContest: 50_000, rulesetVersion: '2026.09.1' } });
     const fetched = await op.record<ContestResource>('contests.get', 'GET', `/v1/contests/${contestId}`);
     expect(fetched.data?.id).toBe(contestId);
 
@@ -181,7 +189,7 @@ describe('v1 contract', () => {
     expect(early.error).toMatchObject({ type: 'invalid_state', code: 'scores_not_accepted' });
     expect((await op.record<ContestResource>('contests.lock', 'POST', `/v1/contests/${contestId}/lock`, {})).data?.state).toBe('locked');
     const lateEntry = await op.record('contests.entries.not_eligible.closed', 'POST', `/v1/contests/${contestId}/entries`, { userId: diegoId });
-    expect(lateEntry.error).toMatchObject({ type: 'not_eligible', code: 'contest_not_open', detail: { reasons: ['contest_not_open'] } });
+    expect(lateEntry.error).toMatchObject({ type: 'not_eligible', code: 'contest_not_open', detail: { reasons: ['contest_not_open'], rulesetVersion: '2026.09.1' } });
     expect((await op.record<ContestResource>('contests.start', 'POST', `/v1/contests/${contestId}/start`, {})).data?.state).toBe('in_progress');
     const scored = await op.record<{ contest: ContestResource; scores: unknown[] }>('contests.scores.create', 'POST', `/v1/contests/${contestId}/scores`, {
       scores: [

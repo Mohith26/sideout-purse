@@ -59,7 +59,12 @@ export function userResource(profile: UserProfile): UserResource {
 }
 
 export function embedTokenResource(issued: IssuedEmbedToken): EmbedTokenResource {
-  return { token: issued.token, flow: issued.row.flow, userId: issued.row.userId, expiresAt: issued.row.expiresAt.toISOString() };
+  return { token: issued.token, replayed: false, flow: issued.row.flow, userId: issued.row.userId, expiresAt: issued.row.expiresAt.toISOString() };
+}
+
+/** The same resource as a replay returns it: the plaintext is handed out once and never stored. */
+export function replayedEmbedToken(resource: EmbedTokenResource): EmbedTokenResource {
+  return { ...resource, token: null, replayed: true };
 }
 
 export function contestResource(contest: Contest, escrow: bigint, participantCount: number): ContestResource {

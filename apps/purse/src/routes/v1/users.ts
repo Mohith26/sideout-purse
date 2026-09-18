@@ -6,14 +6,14 @@ import type { Id } from '@repo/ids';
 import { asset as assetEnum } from '../../db/schema';
 import { requireOperator } from '../../http/auth';
 import { parseBody } from '../../http/body';
-import { ok } from '../../http/envelope';
+import { ok, okOnce } from '../../http/envelope';
 import { findAccount, openAccount } from '../../ledger/accounts';
 import { balanceOf } from '../../ledger/balance';
 import { issuePromoPoints } from '../../ledger/flows';
 import { loadProfile, profileOf, startVerification, upsertUser, upsertUserSchema } from '../../users';
 import type { V1Deps, V1Scope } from './scope';
 import { param, positiveMoneySchema, userIdSchema } from './schemas';
-import { embedTokenResource, userResource, verificationResource } from './serialize';
+import { embedTokenResource, replayedEmbedToken, userResource, verificationResource } from './serialize';
 
 /**
  * `/v1/users` (spec 4.7): create or upsert by external id, read, start verification, read
@@ -72,7 +72,7 @@ export function usersRoutes(deps: V1Deps) {
       verification: verificationResource(started.verification),
       embedToken: embedTokenResource(started.embedToken),
     };
-    return ok(c, body, 201);
+    return okOnce(c, body, { ...body, embedToken: replayedEmbedToken(body.embedToken) }, 201);
   });
 
   routes.get('/:id/wallet', async (c) => {

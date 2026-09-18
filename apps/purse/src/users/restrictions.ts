@@ -120,11 +120,6 @@ export async function liftRestriction(db: DbOrTx, input: LiftRestrictionInput): 
   });
 }
 
-/** Every restriction ever placed on a user, oldest first. */
-export async function listRestrictions(db: DbOrTx, userId: string): Promise<UserRestriction[]> {
-  return db.select().from(userRestrictions).where(eq(userRestrictions.userId, userId)).orderBy(asc(userRestrictions.startsAt), asc(userRestrictions.id));
-}
-
 /** Restrictions in force at `now`: started, not ended, not lifted. */
 export async function activeRestrictions(db: DbOrTx, userId: string, now: Date = new Date()): Promise<UserRestriction[]> {
   const bound = now.toISOString();

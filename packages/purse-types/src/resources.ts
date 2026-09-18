@@ -111,8 +111,15 @@ export type CreditResource = {
   balance: Money;
 };
 
+/**
+ * A minted embed token. The plaintext is returned once, by the request that minted it,
+ * and is never stored: a replay under the same `Idempotency-Key` answers with the same
+ * resource but `token: null` and `replayed: true`. A partner that lost the token mints
+ * another under a fresh key.
+ */
 export type EmbedTokenResource = {
-  token: string;
+  token: string | null;
+  replayed: boolean;
   flow: EmbedFlow;
   userId: string;
   expiresAt: string;
