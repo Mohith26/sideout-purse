@@ -126,13 +126,18 @@ export async function runDraw(
       throw failure.invalidRequest('stage_not_applicable', 'Round robin has no bracket; the pool standings are the result.');
     }
 
-    const field = await fieldWithSeeds(tx, tournament.id, request.seeds, preview);
+    // Entry seeds are read only by the stage that places teams from the seed line: the pools,
+    // or the bracket of a single elimination. A pool-to-bracket bracket is seeded from standings.
+    const drawsFromEntrySeeds = request.stage === 'pools' || format === 'single_elim';
+    if (!drawsFromEntrySeeds && request.seeds !== undefined) {
+      throw failure.invalidRequest('seeds_not_applicable', 'The bracket of a pool-to-bracket event is seeded from pool standings; entry seeds belong to the pools stage.');
+    }
     const existing = await tx
       .select({ id: matches.id, poolId: matches.poolId, bracketPosition: matches.bracketPosition, status: matches.status, scheduledAt: matches.scheduledAt })
       .from(matches)
       .where(eq(matches.tournamentId, tournament.id));
 
-    if (request.stage === 'pools' || format === 'single_elim') {
+    if (drawsFromEntrySeeds) {
       // The first (or only) stage: registration must be closed and nothing may have been played.
       if (tournament.status !== 'registration_closed') {
         throw failure.invalidState('draw_stage_not_allowed', `The ${format === 'single_elim' ? 'bracket' : 'pools'} are drawn once registration is closed; the tournament is ${tournament.status}.`);
@@ -145,6 +150,7 @@ export async function runDraw(
 
     if (request.stage === 'pools') {
       if (format === 'single_elim') throw failure.invalidRequest('stage_not_applicable', 'Single elimination has no pool stage; draw the bracket.');
+      const field = await fieldWithSeeds(tx, tournament.id, request.seeds, preview);
       const config = poolsConfig(format, request);
       const draw = tryDraw(() =>
         drawPools({
@@ -162,6 +168,7 @@ export async function runDraw(
 
     // Bracket stage.
     if (format === 'single_elim') {
+      const field = await fieldWithSeeds(tx, tournament.id, request.seeds, preview);
       const config: DrawConfig = {
         version: DRAW_CONFIG_VERSION,
         format: 'single_elim',

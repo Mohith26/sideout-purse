@@ -250,8 +250,9 @@ export async function updateTournament(db: Db, id: string, input: UpdateTourname
  *
  * - reopening registration discards the draw (the field is about to change; nothing can
  *   have been played while registration was closed);
- * - `live` needs a draw that covers every team holding a place: a confirmed team left out
- *   means a redraw, a team still paying means waiting for the payment or the lapse;
+ * - `live` needs a draw that covers exactly the teams holding a place: a confirmed team
+ *   left out or a drawn team that has since withdrawn means a redraw, a team still paying
+ *   means waiting for the payment or the lapse;
  * - `awaiting_settlement` needs every match complete, and for the formats that end in a
  *   bracket, the bracket drawn.
  */
@@ -295,11 +296,18 @@ export async function transitionTournament(
   if (input.to === 'live') {
     const [drawn] = await tx.select({ n: count() }).from(matches).where(eq(matches.tournamentId, tournament.id));
     if ((drawn?.n ?? 0) === 0) throw failure.invalidState('draw_required', 'Draw the tournament before going live.');
-    const { notDrawn, unpaid } = await teamsOutsideDraw(tx, tournament.id, clock);
+    const { notDrawn, withdrawnFromDraw, unpaid } = await teamsOutsideDraw(tx, tournament.id, clock);
     if (notDrawn.length > 0) {
       throw failure.invalidState('teams_not_drawn', `${notDrawn.length} confirmed team(s) are not in the draw: ${notDrawn.map((t) => t.name).join(', ')}. Redraw first.`, {
         teams: notDrawn,
       });
+    }
+    if (withdrawnFromDraw.length > 0) {
+      throw failure.invalidState(
+        'teams_withdrawn_from_draw',
+        `${withdrawnFromDraw.length} drawn team(s) no longer hold a place: ${withdrawnFromDraw.map((t) => t.name).join(', ')}. Redraw first.`,
+        { teams: withdrawnFromDraw },
+      );
     }
     if (unpaid.length > 0) {
       throw failure.invalidState(
@@ -341,6 +349,8 @@ export async function transitionTournament(
 type TeamsOutsideDraw = {
   /** Confirmed teams no pool and no round-1 bracket match includes: the draw is stale. */
   notDrawn: Array<{ id: string; name: string }>;
+  /** Teams a pool or round-1 bracket match includes that hold no place any more: the draw is stale. */
+  withdrawnFromDraw: Array<{ id: string; name: string }>;
   /** Teams whose reservation has not lapsed but whose payment has not landed: not drawable yet. */
   unpaid: Array<{ id: string; name: string; reservationExpiresAt: string }>;
 };
@@ -360,8 +370,12 @@ async function teamsOutsideDraw(tx: DbOrTx, tournamentId: string, clock: Reserva
     .select({ teamAId: matches.teamAId, teamBId: matches.teamBId })
     .from(matches)
     .where(and(eq(matches.tournamentId, tournamentId), isNotNull(matches.bracketPosition), eq(matches.round, 1)));
-  const drawn = new Set<string | null>([...inPools.map((r) => r.teamId), ...inRoundOne.flatMap((m) => [m.teamAId, m.teamBId])]);
+  const drawn = new Set([...inPools.map((r) => r.teamId), ...inRoundOne.flatMap((m) => [m.teamAId, m.teamBId])].filter((id): id is string => id !== null));
   const outside = counted.filter((team) => !drawn.has(team.id));
+  const countedIds = new Set(counted.map((team) => team.id));
+  const staleIds = [...drawn].filter((id) => !countedIds.has(id));
+  const withdrawnFromDraw =
+    staleIds.length === 0 ? [] : await tx.select({ id: teams.id, name: teams.name }).from(teams).where(inArray(teams.id, staleIds)).orderBy(asc(teams.createdAt));
   const reserving = outside.filter((team) => !team.confirmed);
   const reservations =
     reserving.length === 0
@@ -374,6 +388,7 @@ async function teamsOutsideDraw(tx: DbOrTx, tournamentId: string, clock: Reserva
   const latestReservation = new Map(reservations.map((r) => [r.teamId, r.createdAt]));
   return {
     notDrawn: outside.filter((team) => team.confirmed).map((team) => ({ id: team.id, name: team.name })),
+    withdrawnFromDraw,
     unpaid: reserving.map((team) => ({
       id: team.id,
       name: team.name,

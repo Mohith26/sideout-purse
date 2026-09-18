@@ -441,11 +441,13 @@ was released without attempting to register.
 `registration_closed → registration_open` deletes the pools, pool memberships and matches of
 any draw (nothing can have been played while registration was closed; the transition refuses
 if anything has) and clears `draw_config`, with a `tournament.draw_discarded` audit row. The
-`live` transition additionally requires every team holding a place to appear in a pool or a
-round-1 bracket match, and says which remedy applies: `teams_not_drawn` lists confirmed teams
-the draw missed (redraw), `teams_unpaid` lists teams whose reservation has not lapsed but whose
-payment has not landed, each with its `reservationExpiresAt` (wait for the payment and redraw,
-or for the lapse). A team that paid after the draw means a redraw, not a silent exclusion.
+`live` transition additionally requires the draw to cover exactly the teams holding a place,
+and says which remedy applies: `teams_not_drawn` lists confirmed teams the draw missed
+(redraw), `teams_withdrawn_from_draw` lists drawn teams that no longer hold a place, such as an
+entry refunded after the draw (redraw), and `teams_unpaid` lists teams whose reservation has
+not lapsed but whose payment has not landed, each with its `reservationExpiresAt` (wait for the
+payment and redraw, or for the lapse). A team that paid after the draw means a redraw, not a
+silent exclusion, and a team that left after the draw means a redraw, not a walkover.
 
 Forfeits are recorded only while the tournament is `live` (`tournament_not_live` otherwise):
 before that the draw stays replaceable, and a team that pulls out is handled by a redraw rather
@@ -484,10 +486,10 @@ one. This keeps floating point out of the money path on both sides of the bounda
 `POST /api/dev/login` signs in as a seeded user without a code. Its file is
 `route.dev.ts`, and `next.config.ts` lists the `dev.ts` page extension only when
 `NODE_ENV !== 'production'`, so a production build has no such route rather than a disabled
-one. `test/auth/dev-login.test.ts` is a source-layout contract, and says so: it executes
-`pageExtensionsFor` and asserts the file naming under `src/app/api`, which is what the
-mechanism depends on, but it does not run Next. Phase 9 replaces it with a check against the
-production build's route manifest, which is the proof of runtime behaviour.
+one. `test/auth/dev-login.test.ts` executes `pageExtensionsFor` and proves that half; the
+file naming is not asserted from the source tree, because a listing of `src/app/api` proves
+nothing about what Next builds. The proof of runtime behaviour, a check that the production
+build's route manifest has no `/api/dev/login`, is phase 9's, alongside the deploy it guards.
 
 ### Client address behind proxies
 

@@ -5,8 +5,9 @@ import { centsToJson } from './money';
 /**
  * What the public API says about a tournament. Every field is listed by hand, so a new
  * column is private until someone adds it here, and no `purse_*` identifier can leak:
- * `test/api/public-shape.test.ts` walks every public response and asserts no key
- * mentions Purse. Cents are decimal strings (`money.ts`).
+ * `expectNoPurseKeys` in `test/helpers.ts` walks a public response and fails on any key
+ * that mentions Purse, and the route and seed tests apply it to every public shape. Cents
+ * are decimal strings (`money.ts`).
  */
 
 export type PublicBeneficiary = {

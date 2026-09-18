@@ -13,6 +13,8 @@ import { auditLog, donations, matches, pools, poolTeams, sets, teamMembers, team
 import { judgeMatch, type SetScore } from '../../src/domain/scoreline';
 import type { StandingRow } from '../../src/domain/standings';
 import { mintPurseExternalId } from '../../src/server/actor';
+import { applyStripeEvent } from '../../src/server/donations/service';
+import { stripeEventSchema } from '../../src/server/donations/stripe';
 import type { DrawOutcome } from '../../src/server/draw';
 import type { MatchView } from '../../src/server/matches';
 import type { PublicTournamentDetail } from '../../src/server/public-shape';
@@ -148,6 +150,13 @@ describe('draw, forfeit and standings', () => {
       expect(pool.standings[0]?.rank).toBe(1);
       expect(pool.standings.every((r, i, all) => i === 0 || (all[i - 1]?.wins ?? 0) >= r.wins)).toBe(true);
     }
+
+    // Entry seeds belong to the pools stage; the bracket is seeded from standings and refuses a list.
+    const misplacedSeeds = await runDraw(t.id, { stage: 'bracket', seeds: [{ teamId: teamIds[0] ?? '', seed: 1 }] });
+    expect(misplacedSeeds.status).toBe(400);
+    expect((await errorOf(misplacedSeeds)).code).toBe('seeds_not_applicable');
+    const seedsUntouched = await database.db.select({ id: teams.id, seed: teams.seed }).from(teams).where(eq(teams.tournamentId, t.id));
+    expect(seedsUntouched.filter((s) => s.seed !== null)).toEqual([{ id: teamIds[5], seed: 1 }]);
 
     const bracketPreview = await data<DrawOutcome>(await runDraw(t.id, { stage: 'bracket' }, true));
     expect(bracketPreview.persisted).toBe(false);
@@ -382,6 +391,48 @@ describe('draw, forfeit and standings', () => {
     expect((await errorOf(reopen)).code).toBe('draw_already_in_play');
     expect(await database.db.select().from(matches).where(eq(matches.tournamentId, t.id))).toHaveLength(3);
     expect((await database.db.select().from(tournaments).where(eq(tournaments.id, t.id)))[0]?.status).toBe('registration_closed');
+  });
+
+  it('refuses to go live while a drawn team has withdrawn, until the draw is made again', async () => {
+    const t = await create({ maxTeams: 8, format: 'pool_to_bracket' });
+    await transition(t.id, 'registration_open');
+    const [a, b, c, d] = await registerTeams(database, t.id, 4);
+    const captain = await createUser(database);
+    await database.db.insert(donations).values({
+      id: newId('don'),
+      tournamentId: t.id,
+      teamId: d ?? '',
+      userId: captain.id,
+      amountCents: 5000n,
+      currency: 'USD',
+      provider: 'stripe',
+      providerRef: 'pi_team_d',
+      status: 'succeeded',
+    });
+    await transition(t.id, 'registration_closed');
+    const drawn = await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 1, rngSeed: 1 }));
+    expect(drawn.pools.flatMap((p) => p.teamIds).sort()).toEqual([a, b, c, d].sort());
+
+    // The organizer refunds D's entry in Stripe; the webhook withdraws D but the draw still holds it.
+    const refunded = stripeEventSchema.parse({
+      id: 'evt_refund_team_d',
+      type: 'charge.refunded',
+      data: { object: { id: 'ch_team_d', object: 'charge', payment_intent: 'pi_team_d', amount_refunded: 5000, refunded: true } },
+    });
+    expect(await applyStripeEvent(database.db, refunded, { now: new Date(), reservationTtlMs: 30 * 60_000 })).toMatchObject({ applied: true, registration: 'withdrawn' });
+    expect((await database.db.select().from(teams).where(eq(teams.id, d ?? '')))[0]?.status).toBe('withdrawn');
+
+    const blocked = await transition(t.id, 'live');
+    expect(blocked.status).toBe(409);
+    const error = await errorOf(blocked);
+    expect(error.code).toBe('teams_withdrawn_from_draw');
+    expect(error.detail).toEqual({ teams: [{ id: d, name: 'Team 4' }] });
+    expect(error.message).toMatch(/Team 4.*Redraw/);
+    expect((await database.db.select().from(tournaments).where(eq(tournaments.id, t.id)))[0]?.status).toBe('registration_closed');
+
+    const redrawn = await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 1, rngSeed: 1 }));
+    expect(redrawn.pools.flatMap((p) => p.teamIds).sort()).toEqual([a, b, c].sort());
+    expect((await data<{ transition: { to: string } }>(await transition(t.id, 'live'))).transition.to).toBe('live');
   });
 
   it('draws only teams whose donation succeeded, and going live waits for a reservation that is still paying', async () => {

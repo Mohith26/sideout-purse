@@ -4,7 +4,8 @@ import type { NextConfig } from 'next';
  * Route files Next recognises. `route.dev.ts` files (today: `POST /api/dev/login`) are
  * routes only when `dev.ts` is listed, and it is listed only outside production, so a
  * production build has no such route at all rather than a disabled one.
- * `test/auth/dev-login.test.ts` proves both halves.
+ * `test/auth/dev-login.test.ts` proves the extension list; phase 9 checks the production
+ * build's route manifest (docs/decisions.md).
  */
 export function pageExtensionsFor(nodeEnv: string | undefined): string[] {
   return nodeEnv === 'production' ? ['ts', 'tsx'] : ['dev.ts', 'ts', 'tsx'];
