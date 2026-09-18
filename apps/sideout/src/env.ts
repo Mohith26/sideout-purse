@@ -23,6 +23,9 @@ export const DEVELOPMENT_SESSION_SECRET = 'sideout-development-session-secret-no
 
 export const SESSION_SECRET_MIN_LENGTH = 32;
 
+/** How long a registration with an unpaid donation holds its place (`server/field.ts`). */
+export const DEFAULT_RESERVATION_TTL_MINUTES = 30;
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -34,6 +37,7 @@ const schema = z.object({
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   STRIPE_SECRET_KEY: z.string().trim().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
+  RESERVATION_TTL_MINUTES: z.coerce.number().int().min(1).max(24 * 60).default(DEFAULT_RESERVATION_TTL_MINUTES),
 });
 
 export type SmsProviderName = 'log' | 'none';
@@ -55,6 +59,8 @@ export type Env = {
   /** Which donation provider is configured; `none` means registration refuses (production only). */
   donationProvider: DonationProviderSelection;
   stripe: { secretKey: string; webhookSecret: string } | undefined;
+  /** `RESERVATION_TTL_MINUTES` in milliseconds: how long an unpaid registration holds a place. */
+  reservationTtlMs: number;
 };
 
 export class EnvError extends Error {
@@ -104,6 +110,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     trustedProxyHops: raw.TRUSTED_PROXY_HOPS,
     donationProvider,
     stripe,
+    reservationTtlMs: raw.RESERVATION_TTL_MINUTES * 60_000,
   };
 }
 

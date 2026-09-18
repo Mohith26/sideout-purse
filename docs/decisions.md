@@ -357,11 +357,14 @@ account**: its test-mode (then live-mode) keys and a webhook endpoint pointed at
 
 ### Double elimination — follow-up, not built
 
-`double_elim` stays in the `tournament_format` enum so an organizer can create the event,
-but the draw engine refuses it at draw time with `double_elim_unsupported` (409) and writes
-nothing (`assertDrawableFormat` in `apps/sideout/src/domain/draw.ts`). A losers bracket with
-its crossover rounds and grand-final reset is a separate piece of engine work with its own
-property tests; it is a follow-up after phase 8.
+`double_elim` stays in the `tournament_format` enum, but the organizer API does not offer it:
+`createTournamentSchema` and `updateTournamentSchema` accept only `DRAWABLE_FORMATS`, so an
+event that the engine cannot draw can never be created, opened and paid into. The engine
+itself still refuses the value at draw time with `double_elim_unsupported` (409) and writes
+nothing (`assertDrawableFormat` in `apps/sideout/src/domain/draw.ts`), which is what any row
+that reaches it by another route gets. A losers bracket with its crossover rounds and
+grand-final reset is a separate piece of engine work with its own property tests; it is a
+follow-up after phase 8, at which point the schemas widen to the enum.
 
 ### The `forming` team status
 
@@ -370,7 +373,21 @@ registered: the captain creates it and names a partner by phone, the partner joi
 then does the captain register (make the donation). That gap needed a state, so `forming` was
 added ahead of `registered`. Only `registered` and `checked_in` teams count toward capacity,
 appear in public responses, or enter a draw. A donation that fails with no other live payment
-returns the team to `forming`; a refund withdraws it.
+returns the team to `forming`; a full refund withdraws it.
+
+A captain who mistyped the partner's number, or whose partner never came, is not locked out:
+`POST /api/teams` supersedes the caller's own still-`forming` team in that tournament (its
+invite is revoked and it is withdrawn, both audited) and creates the new one. A team that has
+registered is final for that captain: a second team gets `already_on_team`.
+
+### Partial refunds
+
+Stripe sends `charge.refunded` for partial refunds too. The receiver reads `refunded` and
+`amount_refunded` from the charge: only `refunded: true` moves the donation to `refunded` and
+withdraws the team. A partial refund leaves the donation `succeeded` and the team in place,
+and records the running total in `donations.refunded_cents`; the impact figures sum
+`amount_cents - refunded_cents` over succeeded donations, so a $5 goodwill refund lowers the
+total by $5 rather than removing the entry.
 
 ### Registration reserves the spot, the provider confirms it
 
@@ -382,20 +399,64 @@ Purse contest entry is not part of this route yet: `PurseContestEntry` in
 `apps/sideout/src/server/registration.ts` is the documented hook phase 7 fills, its default
 does nothing, and the response says `purseEntry: { status: 'not_wired' }`.
 
+### Unpaid reservations lapse
+
+A `pending` donation is a reservation, not a place. It holds the place for
+`RESERVATION_TTL_MINUTES` (env, default 30; the response carries `reservationExpiresAt`),
+judged lazily whenever capacity is read (`apps/sideout/src/server/field.ts`); there is no
+background job and the donation row is never touched by the clock, so a late Stripe event is
+still recognised. Capacity, the public team list and the "every team is in the draw" guard
+before `live` count teams whose donation succeeded (or whose entry was free) plus reservations
+that have not lapsed; a draw includes only teams whose donation succeeded. Once a reservation
+has lapsed the captain may register again for a fresh payment.
+
+A payment that succeeds after its reservation lapsed is honoured if there is still room. If
+the event is full by then, the donation stays `succeeded` (the money was taken), the team is
+withdrawn, and an audit row `donation.refund_due` names the amount, currency and provider
+reference the organizer must refund; the webhook response (and the dev provider's audit row)
+reports `registration: 'withdrawn_tournament_full'` rather than a silent success. Refunding
+through Stripe then flows back through `charge.refunded` as usual.
+
+### Reopening registration discards the draw; going live needs everyone drawn
+
+`registration_closed → registration_open` deletes the pools, pool memberships and matches of
+any draw (nothing can have been played while registration was closed; the transition refuses
+if anything has) and clears `draw_config`, with a `tournament.draw_discarded` audit row. The
+`live` transition additionally requires every team holding a place to appear in a pool or a
+round-1 bracket match, and names the missing teams in `teams_not_drawn`; a team that paid
+after the draw means a redraw, not a silent exclusion.
+
+### Moving `startsAt` moves the schedule
+
+Every match's `scheduled_at` is derived from the tournament's `startsAt` at draw time. When
+`startsAt` changes and matches exist, every scheduled match shifts by the same delta in the
+same transaction (`matchesRescheduled` is recorded on the `tournament.updated` audit row);
+once any match has started, the change is refused with `schedule_in_play`.
+
+### Settlement needs the bracket
+
+For `pool_to_bracket` and `single_elim`, `awaiting_settlement` requires the bracket to have
+been drawn (and, like every format, every match complete); a tournament whose pools finished
+but whose bracket was never drawn is refused with `bracket_not_drawn`, since there is no
+champion to settle. Round robin has no bracket and settles on its pool.
+
 ### Cents are decimal strings on the wire
 
-Every `*Cents` field in Sideout's API is a decimal string (`"5000"`), and request bodies
-accept a string or an integer. Inside the server every amount is a `bigint`; the JSON
-encoder (`server/http/respond.ts`) renders any stray `bigint` as a string so no response can
-fail on one. This keeps floating point out of the money path on both sides of the boundary.
+Every `*Cents` field in Sideout's API is a decimal string (`"5000"`), in both directions: a
+request body that sends a JSON number is refused with a validation error rather than parsed
+through a double. Inside the server every amount is a `bigint`; the JSON encoder
+(`server/http/respond.ts`) renders any stray `bigint` as a string so no response can fail on
+one. This keeps floating point out of the money path on both sides of the boundary.
 
 ### The dev-only login route is absent from production builds
 
 `POST /api/dev/login` signs in as a seeded user without a code. Its file is
 `route.dev.ts`, and `next.config.ts` lists the `dev.ts` page extension only when
 `NODE_ENV !== 'production'`, so a production build has no such route rather than a disabled
-one. `test/auth/dev-login.test.ts` asserts the extension list and the file naming, and the
-production build's route table confirms it.
+one. `test/auth/dev-login.test.ts` is a source-layout contract, and says so: it executes
+`pageExtensionsFor` and asserts the file naming under `src/app/api`, which is what the
+mechanism depends on, but it does not run Next. Phase 9 replaces it with a check against the
+production build's route manifest, which is the proof of runtime behaviour.
 
 ### Client address behind proxies
 

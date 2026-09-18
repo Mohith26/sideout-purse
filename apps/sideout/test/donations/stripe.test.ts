@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { newId } from '@repo/ids';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { GET as getImpact } from '../../src/app/api/tournaments/[slug]/impact/route';
 import { POST as webhook } from '../../src/app/api/webhooks/stripe/route';
 import { auditLog, donationProviderEvents, donations, teams, tournaments, type Charity, type User } from '../../src/db/schema';
 import { env, loadEnv } from '../../src/env';
@@ -10,7 +11,7 @@ import { resetAppContext } from '../../src/server/context';
 import { DonationProviderError } from '../../src/server/donations/provider';
 import { DONATION_TRANSITIONS } from '../../src/server/donations/service';
 import { interpretStripeEvent, signStripePayload, stripeDonationProvider, verifyStripeSignature } from '../../src/server/donations/stripe';
-import { createCharity, createUser, data, errorOf, testDatabase, truncateAll, type Database } from '../helpers';
+import { createCharity, createUser, data, errorOf, params, request, testDatabase, truncateAll, type Database } from '../helpers';
 
 const DEV_URL = 'postgres://sideout_app:secret@localhost:5432/sideout';
 const WEBHOOK_SECRET = 'whsec_test_fixture_secret';
@@ -42,7 +43,14 @@ const FIXTURES = {
     id: eventId,
     object: 'event',
     type: 'charge.refunded',
-    data: { object: { id: 'ch_fixture', object: 'charge', payment_intent: paymentIntentId, refunded: true } },
+    data: { object: { id: 'ch_fixture', object: 'charge', payment_intent: paymentIntentId, amount: 5000, amount_refunded: 5000, refunded: true } },
+  }),
+  /** Stripe sends the same event type for a partial refund; the charge says how much and that it is not fully refunded. */
+  partiallyRefunded: (paymentIntentId: string, amountRefunded: number, eventId = 'evt_fixture_partial_refund_1') => ({
+    id: eventId,
+    object: 'event',
+    type: 'charge.refunded',
+    data: { object: { id: 'ch_fixture', object: 'charge', payment_intent: paymentIntentId, amount: 5000, amount_refunded: amountRefunded, refunded: false } },
   }),
   unrelated: { id: 'evt_fixture_unrelated', object: 'event', type: 'customer.created', data: { object: { id: 'cus_1', object: 'customer' } } },
 };
@@ -90,7 +98,8 @@ describe('Stripe signature verification', () => {
   it('interprets the events that matter and ignores the rest', () => {
     expect(interpretStripeEvent(FIXTURES.succeeded('pi_1'))).toEqual({ paymentIntentId: 'pi_1', status: 'succeeded' });
     expect(interpretStripeEvent(FIXTURES.failed('pi_1'))).toEqual({ paymentIntentId: 'pi_1', status: 'failed' });
-    expect(interpretStripeEvent(FIXTURES.refunded('pi_1'))).toEqual({ paymentIntentId: 'pi_1', status: 'refunded' });
+    expect(interpretStripeEvent(FIXTURES.refunded('pi_1'))).toEqual({ paymentIntentId: 'pi_1', status: 'refunded', refundedCents: 5000n });
+    expect(interpretStripeEvent(FIXTURES.partiallyRefunded('pi_1', 500))).toEqual({ paymentIntentId: 'pi_1', status: 'succeeded', refundedCents: 500n });
     expect(interpretStripeEvent(FIXTURES.unrelated)).toBeNull();
   });
 
@@ -222,13 +231,13 @@ describe('POST /api/webhooks/stripe', () => {
     expect(await data(replayed)).toMatchObject({ duplicate: false, applied: false, reason: 'no_transition' });
   });
 
-  it('a failed payment releases the team, a later success restores it, and a refund withdraws it', async () => {
-    await deliver(FIXTURES.failed(paymentIntentId));
+  it('a failed payment releases the team, a later success restores it, and a full refund withdraws it', async () => {
+    expect(await data(await deliver(FIXTURES.failed(paymentIntentId)))).toMatchObject({ applied: true, registration: 'released' });
     expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]).toMatchObject({ status: 'forming', registeredAt: null });
-    await deliver(FIXTURES.succeeded(paymentIntentId));
+    expect(await data(await deliver(FIXTURES.succeeded(paymentIntentId)))).toMatchObject({ applied: true, registration: 'confirmed' });
     expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('registered');
-    await deliver(FIXTURES.refunded(paymentIntentId));
-    expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]?.status).toBe('refunded');
+    expect(await data(await deliver(FIXTURES.refunded(paymentIntentId)))).toMatchObject({ applied: true, to: 'refunded', refundedCents: '5000', registration: 'withdrawn' });
+    expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]).toMatchObject({ status: 'refunded', refundedCents: 5000n });
     expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('withdrawn');
     const teamTrail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, teamId)).orderBy(auditLog.createdAt, auditLog.id);
     expect(teamTrail.map((a) => (a.detail as { to: string; reason: string }))).toEqual([
@@ -236,6 +245,33 @@ describe('POST /api/webhooks/stripe', () => {
       expect.objectContaining({ to: 'registered', reason: 'donation_succeeded' }),
       expect.objectContaining({ to: 'withdrawn', reason: 'donation_refunded' }),
     ]);
+    const impact = await data<{ raisedCents: string; donationCount: number }>(await getImpact(request('GET', '/x'), params({ slug: 'hooked' })));
+    expect(impact).toMatchObject({ raisedCents: '0', donationCount: 0 });
+  });
+
+  it('a partial refund keeps the team and the donation, records the amount, and lowers the impact figure', async () => {
+    await deliver(FIXTURES.succeeded(paymentIntentId));
+    const partial = await deliver(FIXTURES.partiallyRefunded(paymentIntentId, 500));
+    expect(await data(partial)).toMatchObject({ applied: true, from: 'succeeded', to: 'succeeded', refundedCents: '500', registration: 'unchanged' });
+    expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]).toMatchObject({ status: 'succeeded', refundedCents: 500n });
+    expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('registered');
+    const trail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, donationId)).orderBy(auditLog.createdAt, auditLog.id);
+    expect(trail.map((a) => a.action)).toEqual(['donation.succeeded', 'donation.refund_recorded']);
+    expect(trail[1]?.detail).toMatchObject({ eventId: 'evt_fixture_partial_refund_1', from: 'succeeded', refundedCents: '500' });
+
+    const impact = await data<{ raisedCents: string; donationCount: number; donors: Array<{ amountCents: string }> }>(
+      await getImpact(request('GET', '/x'), params({ slug: 'hooked' })),
+    );
+    expect(impact).toMatchObject({ raisedCents: '4500', donationCount: 1 });
+    expect(impact.donors[0]?.amountCents).toBe('4500');
+
+    // A redelivered or older refund event never lowers the running total; a second partial raises it.
+    expect(await data(await deliver(FIXTURES.partiallyRefunded(paymentIntentId, 300, 'evt_fixture_partial_refund_0')))).toMatchObject({ applied: false, reason: 'no_transition' });
+    expect(await data(await deliver(FIXTURES.partiallyRefunded(paymentIntentId, 1200, 'evt_fixture_partial_refund_2')))).toMatchObject({ applied: true, refundedCents: '1200' });
+    expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]?.refundedCents).toBe(1200n);
+    // Refunding the rest is a full refund: the team withdraws.
+    expect(await data(await deliver(FIXTURES.refunded(paymentIntentId)))).toMatchObject({ applied: true, to: 'refunded', registration: 'withdrawn' });
+    expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('withdrawn');
   });
 
   it('rejects bad signatures, stale timestamps, missing headers and unknown intents; records unrelated events', async () => {

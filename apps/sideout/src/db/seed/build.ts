@@ -805,7 +805,9 @@ export function buildSeed(options: SeedOptions): SeedDataset {
       { status: 'registered', registeredFrom: b.at(-18 * DAY), registeredTo: b.at(-1 * DAY), seeded: 0 },
     );
     for (const team of registered) b.entryDonation(t, team, 'succeeded');
-    const [pendingTeam] = b.buildTeams(t, [pair(10)], { status: 'registered', registeredFrom: b.at(-2 * HOUR), registeredTo: b.at(-1 * HOUR), seeded: 0 });
+    // A checkout never finished: the reservation lapsed days ago, so the team holds no place
+    // until the captain registers again or the old payment lands (server/field.ts).
+    const [pendingTeam] = b.buildTeams(t, [pair(10)], { status: 'registered', registeredFrom: b.at(-4 * DAY), registeredTo: b.at(-4 * DAY + HOUR), seeded: 0 });
     if (pendingTeam !== undefined) b.entryDonation(t, pendingTeam, 'pending');
     const [failedTeam] = b.buildTeams(t, [pair(11)], { status: 'forming', registeredFrom: b.at(-3 * DAY), registeredTo: b.at(-2 * DAY), seeded: 0 });
     if (failedTeam !== undefined) {

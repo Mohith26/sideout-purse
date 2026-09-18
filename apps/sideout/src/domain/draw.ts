@@ -359,18 +359,23 @@ export function drawBracket(input: { seeds: readonly BracketSeedEntry[]; courts:
     }
   }
 
+  // Court queues with a round floor: a round's first slot is after the last slot of the
+  // round before it on any court, so no match is scheduled alongside one that feeds it.
   const courts = Math.max(1, Math.floor(input.courts));
   const nextSlot = new Map<string, number>();
-  for (const match of matches) {
-    if (match.isBye) {
-      match.courtLabel = courtLabel(0);
-      continue;
+  for (let round = 1; round <= rounds; round += 1) {
+    const roundFloor = Math.max(0, ...nextSlot.values());
+    for (const match of byRound(round)) {
+      if (match.isBye) {
+        match.courtLabel = courtLabel(0);
+        continue;
+      }
+      const label = courtLabel(match.indexInRound % courts);
+      match.courtLabel = label;
+      const slot = Math.max(roundFloor, nextSlot.get(label) ?? 0);
+      match.courtSlot = slot;
+      nextSlot.set(label, slot + 1);
     }
-    const label = courtLabel(match.indexInRound % courts);
-    match.courtLabel = label;
-    const slot = nextSlot.get(label) ?? 0;
-    match.courtSlot = slot;
-    nextSlot.set(label, slot + 1);
   }
 
   return { size, rounds, matches };

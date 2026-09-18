@@ -102,6 +102,9 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - Status changes go through `transitionTournament` / `forfeitMatch` (validated by
   `domain/state.ts`) and write `audit_log` in the same transaction. `final` and `disputed`
   are phase 7's consensus (system actor); no route sets them.
+- Who holds a place is `server/field.ts` (confirmed vs. an unlapsed reservation, judged
+  against a `ReservationClock`); capacity, public team lists, the live guard and the draw
+  go through it rather than filtering `teams.status` by hand.
 - Session: signed HttpOnly SameSite=Lax cookie (`server/auth/session.ts`); `requireUser` /
   `requireOrganizer` in handlers. `/api/admin/*` is organizer-only. `/api/dev/login` exists
   only outside production (`route.dev.ts` + `pageExtensions`).

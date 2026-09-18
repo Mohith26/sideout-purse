@@ -12,6 +12,7 @@ import { GET as getStandings } from '../../src/app/api/tournaments/[slug]/standi
 import { auditLog, matches, pools, poolTeams, sets, teamMembers, teams, tournaments, type Charity, type User } from '../../src/db/schema';
 import { judgeMatch, type SetScore } from '../../src/domain/scoreline';
 import type { StandingRow } from '../../src/domain/standings';
+import { mintPurseExternalId } from '../../src/server/actor';
 import type { DrawOutcome } from '../../src/server/draw';
 import type { MatchView } from '../../src/server/matches';
 import type { PublicTournamentDetail } from '../../src/server/public-shape';
@@ -281,10 +282,31 @@ describe('draw, forfeit and standings', () => {
   });
 
   it('refuses double elimination with a specific error, and too small a field', async () => {
-    const t = await create({ format: 'double_elim', maxTeams: 8 });
-    await transition(t.id, 'registration_open');
+    // The API no longer offers double_elim; a row that carries it (the enum value stays) is refused at draw time.
+    const [t] = await database.db
+      .insert(tournaments)
+      .values({
+        id: newId('trn'),
+        slug: 'double-trouble',
+        name: 'Double Trouble',
+        beneficiaryId: charity.id,
+        venueName: 'v',
+        venueCity: 'c',
+        venueRegion: 'r',
+        venueTimezone: 'UTC',
+        startsAt: new Date(Date.now() + 86_400_000),
+        endsAt: new Date(Date.now() + 90_000_000),
+        format: 'double_elim',
+        division: 'open',
+        maxTeams: 8,
+        entryDonationCents: 0n,
+        fundraisingGoalCents: 0n,
+        status: 'registration_closed',
+        purseExternalId: mintPurseExternalId('contest'),
+      })
+      .returning();
+    if (t === undefined) throw new Error('tournament insert failed');
     await registerTeams(database, t.id, 4);
-    await transition(t.id, 'registration_closed');
     const refused = await runDraw(t.id, { stage: 'bracket' });
     expect(refused.status).toBe(409);
     expect(await errorOf(refused)).toMatchObject({ type: 'invalid_state', code: 'double_elim_unsupported' });
@@ -297,6 +319,127 @@ describe('draw, forfeit and standings', () => {
     const tooFew = await runDraw(tiny.id, { stage: 'bracket' });
     expect(tooFew.status).toBe(400);
     expect((await errorOf(tooFew)).code).toBe('draw_too_few_teams');
+  });
+
+  it('reopening registration discards the draw, and going live needs every counted team drawn', async () => {
+    const t = await create({ maxTeams: 8, format: 'pool_to_bracket' });
+    await transition(t.id, 'registration_open');
+    await registerTeams(database, t.id, 6);
+    await transition(t.id, 'registration_closed');
+    await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 3, courts: 2, rngSeed: 1 }));
+    expect(await database.db.select().from(pools).where(eq(pools.tournamentId, t.id))).toHaveLength(2);
+
+    const reopened = await data<{ transition: { to: string } }>(await transition(t.id, 'registration_open'));
+    expect(reopened.transition.to).toBe('registration_open');
+    expect(await database.db.select().from(pools).where(eq(pools.tournamentId, t.id))).toEqual([]);
+    expect(await database.db.select().from(matches).where(eq(matches.tournamentId, t.id))).toEqual([]);
+    expect((await database.db.select().from(tournaments).where(eq(tournaments.id, t.id)))[0]?.drawConfig).toBeNull();
+    const discarded = await database.db.select().from(auditLog).where(and(eq(auditLog.subjectId, t.id), eq(auditLog.action, 'tournament.draw_discarded')));
+    expect(discarded).toHaveLength(1);
+    expect(discarded[0]?.detail).toEqual({ reason: 'registration_reopened', pools: 2, matches: 6 });
+
+    // A late team registers; without a draw there is no going live, and with a draw that
+    // misses a counted team the refusal names the team.
+    await registerTeams(database, t.id, 1);
+    await transition(t.id, 'registration_closed');
+    expect((await errorOf(await transition(t.id, 'live'))).code).toBe('draw_required');
+    await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 2, rngSeed: 1 }));
+    const [extra] = await registerTeams(database, t.id, 1);
+    await database.db.update(teams).set({ name: 'Latecomers' }).where(eq(teams.id, extra ?? ''));
+    const blocked = await transition(t.id, 'live');
+    expect(blocked.status).toBe(409);
+    const blockedError = await errorOf(blocked);
+    expect(blockedError.code).toBe('teams_not_drawn');
+    expect(blockedError.detail).toEqual({ teams: [{ id: extra, name: 'Latecomers' }] });
+    expect(blockedError.message).toContain('Latecomers');
+
+    const redrawn = await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 2, rngSeed: 2 }));
+    expect(redrawn.pools.flatMap((p) => p.teamIds)).toContain(extra);
+    expect((await data<{ transition: { to: string } }>(await transition(t.id, 'live'))).transition.to).toBe('live');
+  });
+
+  it('refuses to reopen registration once a drawn match has been decided', async () => {
+    const t = await create({ maxTeams: 8, format: 'round_robin' });
+    await transition(t.id, 'registration_open');
+    await registerTeams(database, t.id, 3);
+    await transition(t.id, 'registration_closed');
+    await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', courts: 1, rngSeed: 1 }));
+    const [first] = await database.db.select().from(matches).where(eq(matches.tournamentId, t.id));
+    await forfeit(request('POST', '/x', { body: { forfeitingTeamId: first?.teamAId }, cookie: cookie() }), params({ id: first?.id ?? '' }));
+    const reopen = await transition(t.id, 'registration_open');
+    expect(reopen.status).toBe(409);
+    expect((await errorOf(reopen)).code).toBe('draw_already_in_play');
+    expect(await database.db.select().from(matches).where(eq(matches.tournamentId, t.id))).toHaveLength(3);
+    expect((await database.db.select().from(tournaments).where(eq(tournaments.id, t.id)))[0]?.status).toBe('registration_closed');
+  });
+
+  it('redraws after a seeded team withdrew, and moving startsAt moves every scheduled match', async () => {
+    const t = await create({ maxTeams: 8, format: 'pool_to_bracket' });
+    await transition(t.id, 'registration_open');
+    const ids = await registerTeams(database, t.id, 6);
+    await transition(t.id, 'registration_closed');
+    await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 3, courts: 2, rngSeed: 1, seeds: [{ teamId: ids[0] ?? '', seed: 1 }, { teamId: ids[1] ?? '', seed: 2 }] }));
+
+    // A refund withdrew seed 2; the seed stays on the row until the next seeding replaces it.
+    await database.db.update(teams).set({ status: 'withdrawn' }).where(eq(teams.id, ids[1] ?? ''));
+    const reseeded = await data<DrawOutcome>(
+      await runDraw(t.id, { stage: 'pools', poolSize: 3, courts: 2, rngSeed: 1, seeds: [{ teamId: ids[0] ?? '', seed: 1 }, { teamId: ids[2] ?? '', seed: 2 }] }),
+    );
+    expect(reseeded.pools.flatMap((p) => p.teamIds)).not.toContain(ids[1]);
+    const seeds = await database.db.select({ id: teams.id, seed: teams.seed }).from(teams).where(eq(teams.tournamentId, t.id));
+    expect(seeds.filter((s) => s.seed !== null).sort((x, y) => (x.seed ?? 0) - (y.seed ?? 0))).toEqual([{ id: ids[0], seed: 1 }, { id: ids[2], seed: 2 }]);
+    const withdrawnSeed = await runDraw(t.id, { stage: 'pools', seeds: [{ teamId: ids[1] ?? '', seed: 1 }] });
+    expect((await errorOf(withdrawnSeed)).code).toBe('draw_invalid_seed_list');
+
+    // Moving the start shifts the derived schedule by the same delta, in the same transaction.
+    const before = await database.db.select({ id: matches.id, scheduledAt: matches.scheduledAt }).from(matches).where(eq(matches.tournamentId, t.id));
+    const [row] = await database.db.select().from(tournaments).where(eq(tournaments.id, t.id));
+    const shift = 90 * 60_000;
+    const moved = await patchTournament(
+      request('PATCH', '/x', {
+        body: { startsAt: new Date((row?.startsAt.getTime() ?? 0) + shift).toISOString(), endsAt: new Date((row?.endsAt.getTime() ?? 0) + shift).toISOString() },
+        cookie: cookie(),
+      }),
+      params({ id: t.id }),
+    );
+    expect(moved.status).toBe(200);
+    const after = await database.db.select({ id: matches.id, scheduledAt: matches.scheduledAt }).from(matches).where(eq(matches.tournamentId, t.id));
+    expect(after).toHaveLength(before.length);
+    for (const m of after) {
+      const was = before.find((b) => b.id === m.id)?.scheduledAt?.getTime();
+      expect(m.scheduledAt?.getTime()).toBe((was ?? 0) + shift);
+    }
+    const updated = await database.db.select().from(auditLog).where(and(eq(auditLog.subjectId, t.id), eq(auditLog.action, 'tournament.updated')));
+    expect(updated.at(-1)?.detail).toMatchObject({ scheduleShiftMs: shift, matchesRescheduled: before.length });
+    expect((updated.at(-1)?.detail as { fields: string[] }).fields.sort()).toEqual(['endsAt', 'startsAt']);
+
+    // Once a match has started the start time is fixed.
+    await transition(t.id, 'live');
+    const [played] = await database.db.select().from(matches).where(eq(matches.tournamentId, t.id));
+    await forfeit(request('POST', '/x', { body: { forfeitingTeamId: played?.teamAId }, cookie: cookie() }), params({ id: played?.id ?? '' }));
+    const fixed = await patchTournament(
+      request('PATCH', '/x', { body: { startsAt: new Date((row?.startsAt.getTime() ?? 0) + 2 * shift).toISOString() }, cookie: cookie() }),
+      params({ id: t.id }),
+    );
+    expect(fixed.status).toBe(409);
+    expect((await errorOf(fixed)).code).toBe('schedule_in_play');
+    const unchanged = await database.db.select({ id: matches.id, scheduledAt: matches.scheduledAt }).from(matches).where(eq(matches.tournamentId, t.id));
+    expect(unchanged.map((m) => m.scheduledAt?.getTime()).sort()).toEqual(after.map((m) => m.scheduledAt?.getTime()).sort());
+  });
+
+  it('will not settle a pool-to-bracket event whose bracket was never drawn', async () => {
+    const t = await create({ maxTeams: 8, format: 'pool_to_bracket' });
+    await transition(t.id, 'registration_open');
+    await registerTeams(database, t.id, 4);
+    await transition(t.id, 'registration_closed');
+    await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 1, rngSeed: 1 }));
+    await transition(t.id, 'live');
+    const poolMatches = await database.db.select().from(matches).where(eq(matches.tournamentId, t.id));
+    for (const m of poolMatches) await finishMatch(database, m.id, [{ setNumber: 1, teamAPoints: 21, teamBPoints: 12 }]);
+    const settle = await transition(t.id, 'awaiting_settlement');
+    expect(settle.status).toBe(409);
+    expect((await errorOf(settle)).code).toBe('bracket_not_drawn');
+    expect((await database.db.select().from(tournaments).where(eq(tournaments.id, t.id)))[0]?.status).toBe('live');
   });
 
   it('gates the draw and forfeit routes on organizers and validates the body', async () => {

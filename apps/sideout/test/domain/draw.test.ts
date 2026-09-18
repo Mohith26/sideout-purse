@@ -242,8 +242,36 @@ describe('drawBracket', () => {
           byCourt.set(m.courtLabel, [...(byCourt.get(m.courtLabel) ?? []), m.courtSlot]);
         }
         for (const slots of byCourt.values()) expect(new Set(slots).size).toBe(slots.length);
+        // A match is scheduled strictly after every played match that feeds it, whatever the court.
+        for (const m of draw.matches.filter((x) => !x.isBye && x.nextPosition !== null)) {
+          const next = draw.matches.find((x) => x.position === m.nextPosition);
+          expect(next?.courtSlot).toBeGreaterThan(m.courtSlot);
+        }
       }),
     );
+  });
+
+  it('never schedules a later round alongside the round that feeds it', () => {
+    const twelveOnFour = drawBracket({ seeds: seedsFor(12), courts: 4, bestOf: 3 });
+    const lastOf = (round: number) => Math.max(...twelveOnFour.matches.filter((m) => m.round === round && !m.isBye).map((m) => m.courtSlot));
+    const firstOf = (round: number) => Math.min(...twelveOnFour.matches.filter((m) => m.round === round && !m.isBye).map((m) => m.courtSlot));
+    expect(firstOf(2)).toBeGreaterThan(lastOf(1));
+    expect(firstOf(3)).toBeGreaterThan(lastOf(2));
+    expect(firstOf(4)).toBeGreaterThan(lastOf(3));
+
+    const eightOnThree = drawBracket({ seeds: seedsFor(8), courts: 3, bestOf: 3 });
+    const round1 = eightOnThree.matches.filter((m) => m.round === 1);
+    expect(round1.map((m) => [m.courtLabel, m.courtSlot])).toEqual([
+      ['Court 1', 0],
+      ['Court 2', 0],
+      ['Court 3', 0],
+      ['Court 1', 1],
+    ]);
+    expect(eightOnThree.matches.filter((m) => m.round === 2).map((m) => [m.courtLabel, m.courtSlot])).toEqual([
+      ['Court 1', 2],
+      ['Court 2', 2],
+    ]);
+    expect(eightOnThree.matches.filter((m) => m.round === 3).map((m) => [m.courtLabel, m.courtSlot])).toEqual([['Court 1', 3]]);
   });
 
   it('keeps seeds 1 and 2 in opposite halves', () => {

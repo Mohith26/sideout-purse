@@ -10,11 +10,17 @@ import { GET as getImpact } from '../../src/app/api/tournaments/[slug]/impact/ro
 import { POST as register } from '../../src/app/api/tournaments/[slug]/register/route';
 import { GET as getTournament } from '../../src/app/api/tournaments/[slug]/route';
 import { auditLog, donations, teams, type Charity, type User } from '../../src/db/schema';
+import { logger } from '../../src/lib/logger';
 import { resetAppContext } from '../../src/server/context';
 import { DEV_SETTLE_DELAY_MS, settleDueDevDonations } from '../../src/server/donations/dev';
 import { DonationProviderError, type DonationProvider } from '../../src/server/donations/provider';
+import { applyStripeEvent } from '../../src/server/donations/service';
+import { stripeEventSchema } from '../../src/server/donations/stripe';
+import { countedTeams, type ReservationClock } from '../../src/server/field';
 import type { MeSnapshot } from '../../src/server/me';
 import type { PublicTournamentDetail } from '../../src/server/public-shape';
+import { purseContestEntryNotWired, registerTeam as registerTeamService } from '../../src/server/registration';
+import { listPublicTournaments, tournamentDetail } from '../../src/server/tournaments';
 import { cookieFor, createCharity, createUser, data, errorOf, params, request, testDatabase, truncateAll, type Database } from '../helpers';
 import { tournamentBody } from './tournaments.test';
 
@@ -22,9 +28,25 @@ type TeamResponse = { team: { id: string; name: string; status: string; invitedP
 type RegistrationResponse = {
   team: { id: string; status: string; registeredAt: string | null };
   donation: { id: string; amountCents: string; currency: string; provider: string; status: string } | null;
+  reservationExpiresAt: string | null;
   clientSecret: string | null;
   purseEntry: { status: string };
 };
+
+const TTL_MS = 30 * 60_000;
+const MINUTE = 60_000;
+
+/** A Stripe-shaped provider that never reaches the network: the intent id is derived from the donation id. */
+const stripeLike: DonationProvider = {
+  name: 'stripe',
+  createPayment: async (req) => {
+    await Promise.resolve();
+    return { providerRef: `pi_${req.donationId}`, clientSecret: `pi_${req.donationId}_secret`, status: 'pending' };
+  },
+};
+
+const succeededEvent = (paymentIntentId: string) =>
+  stripeEventSchema.parse({ id: `evt_${paymentIntentId}_ok`, type: 'payment_intent.succeeded', data: { object: { id: paymentIntentId, object: 'payment_intent' } } });
 
 describe('teams and registration', () => {
   let database: Database;
@@ -96,14 +118,10 @@ describe('teams and registration', () => {
     expect(detail.teamCount).toBe(0);
   });
 
-  it('refuses self-invites, second teams, teams in closed tournaments, and needs a session', async () => {
+  it('refuses self-invites, unknown tournaments, teams in closed tournaments, and needs a session', async () => {
     expect((await createTeam(request('POST', '/api/teams', { body: { tournamentSlug: slug, name: 'Anon Pair', partnerPhone: '+14155550999' } }))).status).toBe(401);
     const self = await newTeam(captain, { tournamentSlug: slug, name: 'Solo', partnerPhone: captain.phoneE164 });
     expect((await errorOf(self)).code).toBe('partner_is_self');
-    expect((await newTeam(captain, { tournamentSlug: slug, name: 'One', partnerPhone: partner.phoneE164 })).status).toBe(201);
-    const second = await newTeam(captain, { tournamentSlug: slug, name: 'Two', partnerPhone: partner.phoneE164 });
-    expect(second.status).toBe(409);
-    expect((await errorOf(second)).code).toBe('already_on_team');
     const unknown = await newTeam(partner, { tournamentSlug: 'nope', name: 'Ghost Pair', partnerPhone: captain.phoneE164 });
     expect(unknown.status).toBe(404);
 
@@ -111,6 +129,42 @@ describe('teams and registration', () => {
     const closed = await newTeam(partner, { tournamentSlug: slug, name: 'Late', partnerPhone: captain.phoneE164 });
     expect(closed.status).toBe(409);
     expect((await errorOf(closed)).code).toBe('registration_not_open');
+  });
+
+  it('lets a captain recover from a mistyped invite by creating the team again, until the team is registered', async () => {
+    const wrongNumber = '+14155550999';
+    const { team: mistyped } = await data<TeamResponse>(await newTeam(captain, { tournamentSlug: slug, name: 'Delgado / ?', partnerPhone: wrongNumber }));
+    const cannotJoin = await join(partner, mistyped.id);
+    expect((await errorOf(cannotJoin)).code).toBe('not_invited');
+
+    const retried = await newTeam(captain, { tournamentSlug: slug, name: 'Delgado / Okafor', partnerPhone: partner.phoneE164 });
+    expect(retried.status).toBe(201);
+    const { team } = await data<TeamResponse>(retried);
+    expect(team.id).not.toBe(mistyped.id);
+    const [old] = await database.db.select().from(teams).where(eq(teams.id, mistyped.id));
+    expect(old).toMatchObject({ status: 'withdrawn', invitedPhoneE164: null });
+    const oldTrail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, mistyped.id)).orderBy(auditLog.createdAt, auditLog.id);
+    expect(oldTrail.map((a) => [a.action, a.actorUserId])).toEqual([
+      ['team.created', captain.id],
+      ['team.invite_revoked', captain.id],
+      ['team.status_changed', captain.id],
+    ]);
+    expect(oldTrail[1]?.detail).toMatchObject({ invitedPhoneE164: wrongNumber, reason: 'superseded' });
+    expect(oldTrail[2]?.detail).toMatchObject({ from: 'forming', to: 'withdrawn', reason: 'superseded' });
+
+    // The partner sees only the live invite; a player on a forming team cannot start their own.
+    const partnerMe = await data<MeSnapshot>(await me(request('GET', '/api/me', { cookie: cookieFor(partner) })));
+    expect(partnerMe.invites.map((i) => i.teamId)).toEqual([team.id]);
+    await join(partner, team.id);
+    const partnersOwn = await newTeam(partner, { tournamentSlug: slug, name: 'Okafor / Someone', partnerPhone: '+14155550998' });
+    expect((await errorOf(partnersOwn)).code).toBe('already_on_team');
+
+    // Once registered, the captain's team is final.
+    expect((await registerTeam(captain, team.id)).status).toBe(201);
+    const third = await newTeam(captain, { tournamentSlug: slug, name: 'Three', partnerPhone: '+14155550997' });
+    expect(third.status).toBe(409);
+    expect((await errorOf(third)).code).toBe('already_on_team');
+    expect((await database.db.select().from(teams).where(eq(teams.id, team.id)))[0]?.status).toBe('registered');
   });
 
   it('registers a complete team through the dev donation provider, which settles on the clock', async () => {
@@ -133,6 +187,7 @@ describe('teams and registration', () => {
     expect(result.donation).toMatchObject({ amountCents: '5000', currency: 'USD', provider: 'dev', status: 'pending' });
     expect(result.clientSecret).toBeNull();
     expect(result.purseEntry).toEqual({ status: 'not_wired' });
+    expect(new Date(result.reservationExpiresAt ?? '').getTime()).toBe(new Date(result.team.registeredAt ?? '').getTime() + TTL_MS);
 
     const [donation] = await database.db.select().from(donations).where(eq(donations.teamId, team.id));
     expect(donation?.providerRef).toMatch(/^dev_/);
@@ -142,8 +197,8 @@ describe('teams and registration', () => {
     const before = await data<{ raisedCents: string; donationCount: number }>(await getImpact(request('GET', '/x'), params({ slug })));
     expect(before).toMatchObject({ raisedCents: '0', donationCount: 0 });
     // ...until the dev provider's delay elapses on the clock.
-    expect(await settleDueDevDonations(database.db, new Date(Date.now() + DEV_SETTLE_DELAY_MS - 1000))).toEqual([]);
-    expect(await settleDueDevDonations(database.db, new Date(Date.now() + DEV_SETTLE_DELAY_MS + 1000))).toEqual([donation?.id]);
+    expect(await settleDueDevDonations(database.db, { now: new Date(Date.now() + DEV_SETTLE_DELAY_MS - 1000), reservationTtlMs: TTL_MS })).toEqual([]);
+    expect(await settleDueDevDonations(database.db, { now: new Date(Date.now() + DEV_SETTLE_DELAY_MS + 1000), reservationTtlMs: TTL_MS })).toEqual([donation?.id]);
     const after = await data<{ raisedCents: string; donationCount: number; progressPercent: number; donors: Array<{ displayName: string | null }> }>(
       await getImpact(request('GET', '/x'), params({ slug })),
     );
@@ -206,7 +261,7 @@ describe('teams and registration', () => {
     await patchTournament(request('PATCH', '/x', { body: { status: 'draft' }, cookie: cookieFor(organizer) }), params({ id: tournamentId })).catch(() => undefined);
     const free = await data<{ tournament: { id: string; slug: string } }>(
       await createTournament(
-        request('POST', '/api/admin/tournaments', { body: tournamentBody(charity, { slug: 'free-play', entryDonationCents: 0 }), cookie: cookieFor(organizer) }),
+        request('POST', '/api/admin/tournaments', { body: tournamentBody(charity, { slug: 'free-play', entryDonationCents: '0' }), cookie: cookieFor(organizer) }),
       ),
     );
     await patchTournament(request('PATCH', '/x', { body: { status: 'registration_open' }, cookie: cookieFor(organizer) }), params({ id: free.tournament.id }));
@@ -260,5 +315,109 @@ describe('teams and registration', () => {
     const rows = await database.db.select().from(donations).where(eq(donations.teamId, team.id));
     expect(rows.map((d) => d.status).sort()).toEqual(['failed', 'pending']);
     expect(rows.find((d) => d.status === 'pending')?.providerRef).toMatch(/^pi_don_/);
+  });
+
+  describe('unpaid reservations, under an injected clock', () => {
+    /** The injected clock starts a minute past the wall clock, so it sorts after the rows the route handlers stamp. */
+    let t0 = new Date();
+    const at = (minutes: number): ReservationClock => ({ now: new Date(t0.getTime() + minutes * MINUTE), reservationTtlMs: TTL_MS });
+    const deps = () => ({ db: database.db, provider: stripeLike, purseEntry: purseContestEntryNotWired, log: logger('error'), reservationTtlMs: TTL_MS });
+    const reserve = (user: User, teamId: string, minutes: number) =>
+      registerTeamService(deps(), { tournamentSlug: slug, teamId, user, requestId: `req-${minutes}`, now: at(minutes).now });
+    const pay = (donationId: string, minutes: number) => applyStripeEvent(database.db, succeededEvent(`pi_${donationId}`), at(minutes));
+
+    async function completeTeam(name: string): Promise<{ captain: User; teamId: string }> {
+      const c = await createUser(database, { displayName: `${name} captain` });
+      const p = await createUser(database, { displayName: `${name} partner` });
+      const { team } = await data<TeamResponse>(await newTeam(c, { tournamentSlug: slug, name, partnerPhone: p.phoneE164 }));
+      await join(p, team.id);
+      return { captain: c, teamId: team.id };
+    }
+
+    beforeEach(() => {
+      resetAppContext({ donationProvider: stripeLike });
+      t0 = new Date(Date.now() + MINUTE);
+    });
+
+    it('holds the place for the TTL, then releases it without touching the donation', async () => {
+      const a = await completeTeam('Alpha');
+      const reserved = await reserve(a.captain, a.teamId, 0);
+      expect(reserved.reservationExpiresAt).toEqual(at(30).now);
+      expect(await countedTeams(database.db, tournamentId, at(29))).toBe(1);
+      expect((await tournamentDetail(database.db, slug, at(29)))?.teams.map((t) => t.id)).toEqual([a.teamId]);
+      expect(await countedTeams(database.db, tournamentId, at(30))).toBe(0);
+      const detail = await tournamentDetail(database.db, slug, at(31));
+      expect(detail?.teams).toEqual([]);
+      expect(detail?.teamCount).toBe(0);
+      expect((await listPublicTournaments(database.db, {}, at(31))).find((t) => t.slug === slug)?.teamCount).toBe(0);
+      const [row] = await database.db.select().from(donations).where(eq(donations.id, reserved.donation?.id ?? ''));
+      expect(row?.status).toBe('pending');
+      expect((await database.db.select().from(teams).where(eq(teams.id, a.teamId)))[0]?.status).toBe('registered');
+
+      // Paying within the TTL confirms the place for good.
+      const b = await completeTeam('Bravo');
+      const bravo = await reserve(b.captain, b.teamId, 0);
+      expect((await pay(bravo.donation?.id ?? '', 5))).toMatchObject({ applied: true, registration: 'confirmed' });
+      expect(await countedTeams(database.db, tournamentId, at(500))).toBe(1);
+    });
+
+    it('lets a lapsed reservation be taken by another team, and the lapsed captain register again', async () => {
+      const a = await completeTeam('Alpha');
+      const b = await completeTeam('Bravo');
+      const c = await completeTeam('Charlie');
+      const alpha = await reserve(a.captain, a.teamId, 0);
+      await reserve(b.captain, b.teamId, 0);
+      await expect(reserve(c.captain, c.teamId, 10)).rejects.toMatchObject({ error: { code: 'tournament_full' } });
+      await expect(reserve(a.captain, a.teamId, 10)).rejects.toMatchObject({ error: { code: 'already_registered' } });
+
+      // Alpha and Bravo lapse; Charlie takes a place, and Alpha reserves again with a fresh payment.
+      const charlie = await reserve(c.captain, c.teamId, 31);
+      expect(charlie.team.status).toBe('registered');
+      const alphaAgain = await reserve(a.captain, a.teamId, 32);
+      expect(alphaAgain.donation?.id).not.toBe(alpha.donation?.id);
+      expect(alphaAgain.reservationExpiresAt).toEqual(at(62).now);
+      expect(await countedTeams(database.db, tournamentId, at(33))).toBe(2);
+      const trail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, a.teamId)).orderBy(auditLog.createdAt, auditLog.id);
+      expect(trail.map((x) => x.action)).toEqual(['team.created', 'team.member_joined', 'team.status_changed', 'team.reservation_renewed']);
+      expect(trail[3]?.detail).toMatchObject({ from: 'registered', to: 'registered', donationId: alphaAgain.donation?.id });
+    });
+
+    it('honours a late payment while there is room, and withdraws the team with a refund due once the event is full', async () => {
+      const a = await completeTeam('Alpha');
+      const b = await completeTeam('Bravo');
+      const c = await completeTeam('Charlie');
+      const alpha = await reserve(a.captain, a.teamId, 0);
+      const bravo = await reserve(b.captain, b.teamId, 0);
+      const charlie = await reserve(c.captain, c.teamId, 31);
+      expect(await pay(charlie.donation?.id ?? '', 32)).toMatchObject({ applied: true, registration: 'confirmed' });
+
+      // Alpha's late payment still fits: two places, one taken.
+      expect(await pay(alpha.donation?.id ?? '', 33)).toMatchObject({ applied: true, from: 'pending', to: 'succeeded', registration: 'confirmed' });
+      expect((await database.db.select().from(teams).where(eq(teams.id, a.teamId)))[0]?.status).toBe('registered');
+      expect(await countedTeams(database.db, tournamentId, at(34))).toBe(2);
+
+      // Bravo's does not: the money stays, the team goes, and the organizer is told what to refund.
+      expect(await pay(bravo.donation?.id ?? '', 35)).toMatchObject({ applied: true, from: 'pending', to: 'succeeded', registration: 'withdrawn_tournament_full' });
+      const [bravoDonation] = await database.db.select().from(donations).where(eq(donations.id, bravo.donation?.id ?? ''));
+      expect(bravoDonation?.status).toBe('succeeded');
+      expect((await database.db.select().from(teams).where(eq(teams.id, b.teamId)))[0]?.status).toBe('withdrawn');
+      const refundDue = await database.db.select().from(auditLog).where(eq(auditLog.action, 'donation.refund_due'));
+      expect(refundDue).toHaveLength(1);
+      expect(refundDue[0]).toMatchObject({ actorKind: 'system', subjectType: 'donation', subjectId: bravo.donation?.id });
+      expect(refundDue[0]?.detail).toMatchObject({
+        reason: 'tournament_full',
+        teamId: b.teamId,
+        tournamentId,
+        amountCents: '5000',
+        currency: 'USD',
+        provider: 'stripe',
+        providerRef: `pi_${bravo.donation?.id ?? ''}`,
+      });
+      const bravoTrail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, b.teamId)).orderBy(auditLog.createdAt, auditLog.id);
+      expect(bravoTrail.at(-1)?.detail).toMatchObject({ from: 'registered', to: 'withdrawn', reason: 'tournament_full', donationId: bravo.donation?.id });
+      expect(await countedTeams(database.db, tournamentId, at(36))).toBe(2);
+      const detail = await tournamentDetail(database.db, slug, at(36));
+      expect(detail?.teams.map((t) => t.id).sort()).toEqual([a.teamId, c.teamId].sort());
+    });
   });
 });

@@ -180,8 +180,14 @@ describe('seed dataset', () => {
     const list = await data<{ tournaments: PublicTournament[] }>(await listTournaments(request('GET', '/api/tournaments')));
     expect(list.tournaments.map((t) => t.slug).sort()).toEqual(Object.values(SEED_SLUGS).sort());
     expect(list.tournaments.find((t) => t.slug === SEED_SLUGS.live)?.teamCount).toBe(24);
-    expect(list.tournaments.find((t) => t.slug === SEED_SLUGS.upcoming)?.teamCount).toBe(11);
+    // Ten paid teams; the lapsed pending reservation holds no place.
+    expect(list.tournaments.find((t) => t.slug === SEED_SLUGS.upcoming)?.teamCount).toBe(10);
     expectNoPurseKeys(list);
+    const upcoming = await data<PublicTournamentDetail>(await getTournament(request('GET', '/x'), params({ slug: SEED_SLUGS.upcoming })));
+    const pendingTeamIds = dataset.donations.filter((d) => d.status === 'pending').map((d) => d.teamId);
+    expect(pendingTeamIds).toHaveLength(1);
+    expect(upcoming.teams.map((t) => t.id)).not.toContain(pendingTeamIds[0]);
+    expect(upcoming.teams).toHaveLength(10);
 
     for (const slug of Object.values(SEED_SLUGS)) {
       const detail = await data<PublicTournamentDetail>(await getTournament(request('GET', '/x'), params({ slug })));

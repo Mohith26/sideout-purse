@@ -69,23 +69,25 @@ export function createAuthService(deps: AuthServiceDeps) {
 
       const code = generateCode();
       const expiresAt = new Date(input.now.getTime() + CODE_TTL_SECONDS * 1000);
-      await deps.db.transaction(async (tx) => {
-        await tx.insert(authCodes).values({
-          id: newId('otp'),
-          phoneE164: input.phoneE164,
-          codeHash: hashCode(code, input.phoneE164, deps.sessionSecret),
-          expiresAt,
-          createdAt: input.now,
-        });
-        try {
-          await deps.sms.send({ to: input.phoneE164, body: `Your Sideout sign-in code is ${code}. It expires in 10 minutes.` });
-        } catch (error) {
-          if (error instanceof SmsUnavailableError) {
-            throw failure.internal('sms_unavailable', 'Sign-in by SMS is not available right now.').withStatus(503);
-          }
-          throw error;
-        }
+      const id = newId('otp');
+      await deps.db.insert(authCodes).values({
+        id,
+        phoneE164: input.phoneE164,
+        codeHash: hashCode(code, input.phoneE164, deps.sessionSecret),
+        expiresAt,
+        createdAt: input.now,
       });
+      // The provider's network call happens with no database connection held; a code that
+      // could not be delivered is consumed at once so it can never be guessed.
+      try {
+        await deps.sms.send({ to: input.phoneE164, body: `Your Sideout sign-in code is ${code}. It expires in 10 minutes.` });
+      } catch (error) {
+        await deps.db.update(authCodes).set({ consumedAt: input.now }).where(eq(authCodes.id, id));
+        if (error instanceof SmsUnavailableError) {
+          throw failure.internal('sms_unavailable', 'Sign-in by SMS is not available right now.').withStatus(503);
+        }
+        throw error;
+      }
 
       return deps.echoCodes ? { expiresAt, code } : { expiresAt };
     },

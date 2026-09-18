@@ -1,0 +1,2 @@
+ALTER TABLE "donations" ADD COLUMN "refunded_cents" bigint DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "donations" ADD CONSTRAINT "donations_refunded_within_amount" CHECK ("donations"."refunded_cents" >= 0 AND "donations"."refunded_cents" <= "donations"."amount_cents");

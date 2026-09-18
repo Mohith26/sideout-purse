@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq, lte } from 'drizzle-orm';
+import { and, asc, eq, lte } from 'drizzle-orm';
 
 import type { Db } from '../../db/client';
 import { donations } from '../../db/schema';
 import { SYSTEM_ACTOR } from '../actor';
 import { writeAudit } from '../audit';
+import type { ReservationClock } from '../field';
 import type { DonationProvider } from './provider';
 import { applyDonationStatus } from './service';
 
@@ -27,21 +28,24 @@ export const devDonationProvider: DonationProvider = {
 };
 
 /**
- * Settle every pending dev donation whose delay has elapsed as of `now`. The read paths
- * that report donation status call this first, which is the same "reconcile before you
- * report" step a production deploy performs against the provider's own records.
+ * Settle every pending dev donation whose delay has elapsed as of the clock, oldest
+ * first. The read paths that report donation status call this first, which is the same
+ * "reconcile before you report" step a production deploy performs against the provider's
+ * own records.
  */
-export async function settleDueDevDonations(db: Db, now: Date): Promise<string[]> {
+export async function settleDueDevDonations(db: Db, clock: ReservationClock): Promise<string[]> {
+  const now = clock.now;
   const cutoff = new Date(now.getTime() - DEV_SETTLE_DELAY_MS);
   return db.transaction(async (tx) => {
     const due = await tx
       .select({ id: donations.id })
       .from(donations)
       .where(and(eq(donations.provider, 'dev'), eq(donations.status, 'pending'), lte(donations.createdAt, cutoff)))
+      .orderBy(asc(donations.createdAt), asc(donations.id))
       .for('update');
     const settled: string[] = [];
     for (const { id } of due) {
-      const result = await applyDonationStatus(tx, { donationId: id, status: 'succeeded', now });
+      const result = await applyDonationStatus(tx, { donationId: id, status: 'succeeded', clock });
       if (result.changed) {
         settled.push(id);
         await writeAudit(tx, {
@@ -49,7 +53,7 @@ export async function settleDueDevDonations(db: Db, now: Date): Promise<string[]
           action: 'donation.succeeded',
           subjectType: 'donation',
           subjectId: id,
-          detail: { provider: 'dev', reason: 'dev provider delay elapsed' },
+          detail: { provider: 'dev', reason: 'dev provider delay elapsed', registration: result.registration },
           at: now,
         });
       }

@@ -7,8 +7,9 @@ import { appContext } from '../../../../../server/context';
 import type { RouteContext } from '../../../../../server/http/input';
 import { parseJsonBody } from '../../../../../server/http/input';
 import { handle, ok } from '../../../../../server/http/respond';
+import { countedTeams } from '../../../../../server/field';
 import { toPublicTournament } from '../../../../../server/public-shape';
-import { countedTeams, updateTournament, updateTournamentSchema } from '../../../../../server/tournaments';
+import { updateTournament, updateTournamentSchema } from '../../../../../server/tournaments';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -21,10 +22,11 @@ export async function PATCH(request: Request, context: RouteContext<{ id: string
     const organizer = await requireOrganizer(request, { db, sessionSecret: env.sessionSecret, now });
     const { id } = await context.params;
     const body = await parseJsonBody(request, updateTournamentSchema);
-    const result = await updateTournament(db, id, body, actorFor(organizer), now);
+    const clock = { now, reservationTtlMs: env.reservationTtlMs };
+    const result = await updateTournament(db, id, body, actorFor(organizer), clock);
     const [beneficiary] = await db.select().from(charities).where(eq(charities.id, result.tournament.beneficiaryId));
     if (beneficiary === undefined) throw new Error('beneficiary vanished');
-    const teamCount = await countedTeams(db, result.tournament.id);
+    const teamCount = await countedTeams(db, result.tournament.id, clock);
     return ok({
       tournament: { ...toPublicTournament(result.tournament, beneficiary, teamCount), drawConfig: result.tournament.drawConfig },
       changedFields: result.changedFields,

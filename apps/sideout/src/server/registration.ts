@@ -10,15 +10,17 @@ import { actorFor } from './actor';
 import { writeAudit } from './audit';
 import { applyDonationStatus } from './donations/service';
 import { DonationProviderError, type DonationProvider } from './donations/provider';
+import { countedTeams, reservationExpiresAt, teamHoldsPlace, type ReservationClock } from './field';
 import { failure } from './http/errors';
 import { DONATION_CURRENCY } from './money';
-import { countedTeams } from './tournaments';
 
 /**
  * Tournament registration: a complete two-member team, an open window, capacity, then the
- * charitable donation through the provider. The Purse contest entry, the visually
- * distinct second step of the Register screen (spec 5.3 item 4), is phase 7 and enters
- * through `PurseContestEntry` below.
+ * charitable donation through the provider. Registering reserves the place; the pending
+ * donation holds it for the reservation TTL (`server/field.ts`), after which the captain
+ * may register again for a fresh payment. The Purse contest entry, the visually distinct
+ * second step of the Register screen (spec 5.3 item 4), is phase 7 and enters through
+ * `PurseContestEntry` below.
  */
 
 export const registerTeamSchema = z.object({ teamId: z.string().startsWith('tm_') });
@@ -43,11 +45,14 @@ export type RegistrationDeps = {
   provider: DonationProvider | null;
   purseEntry: PurseContestEntry;
   log: Logger;
+  reservationTtlMs: number;
 };
 
 export type RegistrationResult = {
   team: Team;
   donation: Donation | null;
+  /** When the place is released if the donation is still pending; null for free entry or a settled payment. */
+  reservationExpiresAt: Date | null;
   /** What the browser needs to complete a Stripe payment; null for the dev provider or free entry. */
   clientSecret: string | null;
   purseEntry: { status: 'not_wired' };
@@ -58,6 +63,7 @@ export async function registerTeam(
   input: { tournamentSlug: string; teamId: string; user: User; requestId: string; now: Date },
 ): Promise<RegistrationResult> {
   const { db, now, user } = { db: deps.db, now: input.now, user: input.user };
+  const clock: ReservationClock = { now, reservationTtlMs: deps.reservationTtlMs };
 
   // Step 1: validate and reserve the spot, without holding any lock across a network call.
   const reserved = await db.transaction(async (tx) => {
@@ -75,11 +81,12 @@ export async function registerTeam(
     const members = await tx.select().from(teamMembers).where(eq(teamMembers.teamId, team.id));
     const me = members.find((m) => m.userId === user.id);
     if (me?.role !== 'captain') throw failure.permission('captain_required', 'Only the team captain can register the team.');
-    if (team.status !== 'forming') throw failure.invalidState('already_registered', `${team.name} is already ${team.status}.`);
+    const reservationLapsed = team.status === 'registered' && !(await teamHoldsPlace(tx, team.id, clock));
+    if (team.status !== 'forming' && !reservationLapsed) throw failure.invalidState('already_registered', `${team.name} is already ${team.status}.`);
     const roster = checkTeamRoster(members.map((m) => ({ userId: m.userId, role: m.role })));
     if (!roster.ok) throw failure.invalidState('team_incomplete', roster.reason);
 
-    const registered = await countedTeams(tx, tournament.id);
+    const registered = await countedTeams(tx, tournament.id, clock);
     if (registered >= tournament.maxTeams) {
       throw failure.invalidState('tournament_full', `${tournament.name} is full (${tournament.maxTeams} teams).`);
     }
@@ -128,10 +135,10 @@ export async function registerTeam(
     }
     await writeAudit(tx, {
       actor: actorFor(user),
-      action: 'team.status_changed',
+      action: reservationLapsed ? 'team.reservation_renewed' : 'team.status_changed',
       subjectType: 'team',
       subjectId: team.id,
-      detail: { from: 'forming', to: 'registered', reason: 'registration', donationId: donation?.id ?? null, purseEntry: 'not_wired' },
+      detail: { from: team.status, to: 'registered', reason: 'registration', donationId: donation?.id ?? null, purseEntry: 'not_wired' },
       at: now,
     });
     return { tournament, team: updatedTeam, donation };
@@ -159,7 +166,7 @@ export async function registerTeam(
         const [withRef] = await tx.update(donations).set({ providerRef: payment.providerRef, updatedAt: now }).where(eq(donations.id, donationId)).returning();
         if (withRef === undefined) throw new Error('donation update returned no row');
         if (payment.status === 'succeeded') {
-          const result = await applyDonationStatus(tx, { donationId, status: 'succeeded', now });
+          const result = await applyDonationStatus(tx, { donationId, status: 'succeeded', clock });
           await writeAudit(tx, {
             actor: actorFor(user),
             action: 'donation.succeeded',
@@ -175,7 +182,7 @@ export async function registerTeam(
     } catch (error) {
       deps.log.error('donation provider failed', { donationId, ...errorFields(error) });
       await db.transaction(async (tx) => {
-        const failed = await applyDonationStatus(tx, { donationId, status: 'failed', now });
+        const failed = await applyDonationStatus(tx, { donationId, status: 'failed', clock });
         await writeAudit(tx, {
           actor: actorFor(user),
           action: 'donation.failed',
@@ -192,5 +199,6 @@ export async function registerTeam(
   const [team] = await db.select().from(teams).where(eq(teams.id, reserved.team.id));
   const captain = user;
   const purseEntry = await deps.purseEntry({ tournament: reserved.tournament, team: team ?? reserved.team, captain });
-  return { team: team ?? reserved.team, donation, clientSecret, purseEntry };
+  const expiresAt = donation?.status === 'pending' ? reservationExpiresAt(donation, clock) : null;
+  return { team: team ?? reserved.team, donation, reservationExpiresAt: expiresAt, clientSecret, purseEntry };
 }

@@ -114,9 +114,10 @@ Sideout's environment, beyond the database URLs (`apps/sideout/.env.example`):
 `SESSION_SECRET` (32+ chars, required in production), `SMS_PROVIDER=log` (outside production
 only; production without a provider refuses sign-in), `TRUSTED_PROXY_HOPS` (Railway: 1),
 `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (together or not at all; unset outside
-production selects the dev donation provider, unset in production refuses registration). The
-SMS provider and the Stripe account are the captain's calls before public deploy
-([`docs/decisions.md`](docs/decisions.md)).
+production selects the dev donation provider, unset in production refuses registration), and
+`RESERVATION_TTL_MINUTES` (default 30: how long a registration whose donation is still
+pending holds its place). The SMS provider and the Stripe account are the captain's calls
+before public deploy ([`docs/decisions.md`](docs/decisions.md)).
 
 Send `X-Request-Id: anything-you-like` to either and it comes back on the response and in
 that service's JSON log line, which is how a Sideout request will be traced into the Purse

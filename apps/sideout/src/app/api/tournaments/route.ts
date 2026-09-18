@@ -9,8 +9,9 @@ export const runtime = 'nodejs';
 /** Every non-draft tournament, optionally filtered by `?status=`. */
 export async function GET(request: Request): Promise<Response> {
   return handle(request, async () => {
-    const { db } = appContext();
+    const { db, env } = appContext();
     const query = parseQuery(request, listTournamentsQuerySchema);
-    return ok({ tournaments: await listPublicTournaments(db, { status: query.status }) });
+    const clock = { now: new Date(), reservationTtlMs: env.reservationTtlMs };
+    return ok({ tournaments: await listPublicTournaments(db, { status: query.status }, clock) });
   });
 }

@@ -10,9 +10,9 @@ export const runtime = 'nodejs';
 /** A tournament with its teams, pools (with standings), bracket and sponsors. Drafts are 404. */
 export async function GET(request: Request, context: RouteContext<{ slug: string }>): Promise<Response> {
   return handle(request, async () => {
-    const { db } = appContext();
+    const { db, env } = appContext();
     const { slug } = await context.params;
-    const detail = await tournamentDetail(db, slug);
+    const detail = await tournamentDetail(db, slug, { now: new Date(), reservationTtlMs: env.reservationTtlMs });
     if (detail === null) throw failure.notFound('tournament_not_found', 'No such tournament.');
     return ok(detail);
   });

@@ -12,11 +12,11 @@ export const runtime = 'nodejs';
 /** Raised against goal and recent donors, derived from `donations` rows only. */
 export async function GET(request: Request, context: RouteContext<{ slug: string }>): Promise<Response> {
   return handle(request, async () => {
-    const { db, donationProvider } = appContext();
+    const { db, env, donationProvider } = appContext();
     const { slug } = await context.params;
     const found = await findPublicTournament(db, slug);
     if (found === null) throw failure.notFound('tournament_not_found', 'No such tournament.');
-    if (donationProvider?.name === 'dev') await settleDueDevDonations(db, new Date());
+    if (donationProvider?.name === 'dev') await settleDueDevDonations(db, { now: new Date(), reservationTtlMs: env.reservationTtlMs });
     return ok(await tournamentImpact(db, found.tournament));
   });
 }

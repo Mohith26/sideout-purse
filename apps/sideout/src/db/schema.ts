@@ -501,7 +501,10 @@ export type NewSetRow = typeof sets.$inferInsert;
  * reconciled against the provider's own reporting. This is the only table in either
  * service whose currency is a real one, and it has no foreign key to, and no query or
  * code path shared with, anything Purse-related (spec 4.2.6, acceptance criterion 21).
- * `amount_cents` is strictly positive; a refund is a status, not a negative row.
+ * `amount_cents` is strictly positive; a refund is never a negative row. A full refund is
+ * the `refunded` status; a partial one leaves the status `succeeded` and records the
+ * running total in `refunded_cents`, so what a donation still counts for is
+ * `amount_cents - refunded_cents`.
  */
 export const donations = pgTable(
   'donations',
@@ -519,6 +522,8 @@ export const donations = pgTable(
     /** The provider's own id for the payment (a Stripe PaymentIntent id, or a dev reference). */
     providerRef: text('provider_ref').notNull(),
     status: donationStatus('status').notNull().default('pending'),
+    /** Cents the provider has refunded so far, in `currency`; never more than `amount_cents`. */
+    refundedCents: cents('refunded_cents').notNull().default(sql`0`),
     ...timestamps,
   },
   (table) => [
@@ -528,6 +533,7 @@ export const donations = pgTable(
     index('donations_status_idx').on(table.status),
     uniqueIndex('donations_provider_ref_key').on(table.provider, table.providerRef),
     check('donations_amount_positive', sql`${table.amountCents} > 0`),
+    check('donations_refunded_within_amount', sql`${table.refundedCents} >= 0 AND ${table.refundedCents} <= ${table.amountCents}`),
     check('donations_currency_shape', sql`${table.currency} ~ '^[A-Z]{3}$'`),
   ],
 );

@@ -32,9 +32,9 @@ import { isMatchComplete } from '../domain/state';
 import type { Actor } from './actor';
 import { writeAudit } from './audit';
 import type { DbOrTx } from './db';
+import { confirmedTeamsFilter } from './field';
 import { failure } from './http/errors';
 import { loadPoolStage, standingsForStage } from './standings';
-import { COUNTED_TEAM_STATUSES } from './tournaments';
 
 /**
  * The draw service: reads the field, runs the pure engine, persists the result and the
@@ -235,32 +235,45 @@ function poolsConfig(format: 'pool_to_bracket' | 'round_robin', request: DrawReq
 }
 
 /**
- * The counted teams with their entry seeds, after applying the request's seed list. In a
- * preview the list is applied to the in-memory field only.
+ * The confirmed teams (entry donation succeeded, or free entry) with their entry seeds,
+ * after applying the request's seed list. In a preview the list is applied to the
+ * in-memory field only.
  */
 async function fieldWithSeeds(tx: DbOrTx, tournamentId: string, seedList: DrawRequest['seeds'], preview: boolean): Promise<DrawTeam[]> {
-  const rows = await tx
-    .select({ id: teams.id, seed: teams.seed })
-    .from(teams)
-    .where(and(eq(teams.tournamentId, tournamentId), inArray(teams.status, [...COUNTED_TEAM_STATUSES])))
-    .orderBy(asc(teams.createdAt));
+  const rows = await tx.select({ id: teams.id, seed: teams.seed }).from(teams).where(confirmedTeamsFilter(tournamentId)).orderBy(asc(teams.createdAt));
   if (seedList === undefined) return rows;
 
   const byId = new Map(rows.map((r) => [r.id, r]));
   const seen = new Set<number>();
   for (const entry of seedList) {
-    if (!byId.has(entry.teamId)) throw failure.invalidRequest('draw_invalid_seed_list', `Team ${entry.teamId} is not registered in this tournament.`);
+    if (!byId.has(entry.teamId)) throw failure.invalidRequest('draw_invalid_seed_list', `Team ${entry.teamId} is not a confirmed entry in this tournament.`);
     if (seen.has(entry.seed)) throw failure.invalidRequest('draw_invalid_seed_list', `Seed ${entry.seed} is assigned twice.`);
     seen.add(entry.seed);
   }
   const seeded = new Map(seedList.map((s) => [s.teamId, s.seed]));
   const field = rows.map((r) => ({ id: r.id, seed: seeded.get(r.id) ?? null }));
   if (!preview) {
-    // Clear first so a seed moving between teams never trips the unique index mid-way.
-    await tx.update(teams).set({ seed: null }).where(and(eq(teams.tournamentId, tournamentId), inArray(teams.status, [...COUNTED_TEAM_STATUSES])));
+    // Clear every team's seed first (withdrawn ones included) so a seed moving between
+    // teams never trips the unique index mid-way.
+    await tx.update(teams).set({ seed: null }).where(eq(teams.tournamentId, tournamentId));
     for (const entry of seedList) await tx.update(teams).set({ seed: entry.seed }).where(eq(teams.id, entry.teamId));
   }
   return field;
+}
+
+/** Remove every pool, pool membership, match and set of a tournament, and say how many of each went. */
+export async function deleteDraw(tx: DbOrTx, tournamentId: string): Promise<{ matches: number; pools: number }> {
+  const matchIds = (await tx.select({ id: matches.id }).from(matches).where(eq(matches.tournamentId, tournamentId))).map((m) => m.id);
+  if (matchIds.length > 0) {
+    await tx.delete(sets).where(inArray(sets.matchId, matchIds));
+    await tx.delete(matches).where(eq(matches.tournamentId, tournamentId));
+  }
+  const poolIds = (await tx.select({ id: pools.id }).from(pools).where(eq(pools.tournamentId, tournamentId))).map((p) => p.id);
+  if (poolIds.length > 0) {
+    await tx.delete(poolTeams).where(inArray(poolTeams.poolId, poolIds));
+    await tx.delete(pools).where(eq(pools.tournamentId, tournamentId));
+  }
+  return { matches: matchIds.length, pools: poolIds.length };
 }
 
 function poolsOutcome(config: DrawConfig, draw: PoolDraw, startsAt: Date, preview: boolean): DrawOutcome {
@@ -327,16 +340,7 @@ async function persistPools(
 ): Promise<void> {
   const { tournament, now } = input;
   // Replace any earlier draw wholesale; the guard above proved nothing has been played.
-  const existingMatchIds = (await tx.select({ id: matches.id }).from(matches).where(eq(matches.tournamentId, tournament.id))).map((m) => m.id);
-  if (existingMatchIds.length > 0) {
-    await tx.delete(sets).where(inArray(sets.matchId, existingMatchIds));
-    await tx.delete(matches).where(eq(matches.tournamentId, tournament.id));
-  }
-  const existingPoolIds = (await tx.select({ id: pools.id }).from(pools).where(eq(pools.tournamentId, tournament.id))).map((p) => p.id);
-  if (existingPoolIds.length > 0) {
-    await tx.delete(poolTeams).where(inArray(poolTeams.poolId, existingPoolIds));
-    await tx.delete(pools).where(eq(pools.tournamentId, tournament.id));
-  }
+  const replaced = await deleteDraw(tx, tournament.id);
 
   const poolIds = new Map<number, string>();
   for (const pool of input.draw.pools) {
@@ -370,7 +374,7 @@ async function persistPools(
     action: 'tournament.drawn',
     subjectType: 'tournament',
     subjectId: tournament.id,
-    detail: { stage: 'pools', config: input.config, pools: input.draw.pools.length, matches: input.outcome.matches.length, replaced: existingMatchIds.length > 0 },
+    detail: { stage: 'pools', config: input.config, pools: input.draw.pools.length, matches: input.outcome.matches.length, replaced: replaced.matches > 0 },
     at: now,
   });
 }

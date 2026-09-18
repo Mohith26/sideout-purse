@@ -36,6 +36,13 @@ describe('env', () => {
     expect(production.sessionSecret).toBe('s'.repeat(32));
   });
 
+  it('reads the reservation TTL in minutes, defaulting to 30, and refuses nonsense', () => {
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).reservationTtlMs).toBe(30 * 60_000);
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, RESERVATION_TTL_MINUTES: '5' }).reservationTtlMs).toBe(5 * 60_000);
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, RESERVATION_TTL_MINUTES: '0' })).toThrow(EnvError);
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, RESERVATION_TTL_MINUTES: 'soon' })).toThrow(EnvError);
+  });
+
   it('requires the two Stripe variables together and selects the provider accordingly', () => {
     expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).stripe).toBeUndefined();
     expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, STRIPE_WEBHOOK_SECRET: 'whsec' })).toThrow(/set together/);

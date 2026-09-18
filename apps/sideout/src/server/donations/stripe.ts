@@ -143,19 +143,32 @@ export const stripeEventSchema = z.object({
       object: z.string(),
       id: z.string().optional(),
       payment_intent: z.string().nullable().optional(),
+      /** On a charge: whether the whole amount has been refunded. */
+      refunded: z.boolean().optional(),
+      /** On a charge: the running total refunded so far, in minor units. */
+      amount_refunded: z.number().int().min(0).optional(),
     }),
   }),
 });
 
 export type StripeEvent = z.infer<typeof stripeEventSchema>;
 
+export type StripeEventEffect = {
+  paymentIntentId: string;
+  status: 'succeeded' | 'failed' | 'refunded';
+  /** Set by `charge.refunded`: Stripe's cumulative `amount_refunded` for the charge. */
+  refundedCents?: bigint;
+};
+
 /**
  * The PaymentIntent id an event is about, and the donation status it implies. Events
  * about anything else are recorded and ignored. A `payment_failed` is not terminal for
  * Stripe (the customer may retry on the same intent), which is why `failed → succeeded`
- * is an allowed donation transition in `service.ts`.
+ * is an allowed donation transition in `service.ts`. Stripe sends `charge.refunded` for
+ * partial refunds too: only `refunded: true` means the donation is refunded; otherwise the
+ * donation stays `succeeded` and the running `amount_refunded` is recorded against it.
  */
-export function interpretStripeEvent(event: StripeEvent): { paymentIntentId: string; status: 'succeeded' | 'failed' | 'refunded' } | null {
+export function interpretStripeEvent(event: StripeEvent): StripeEventEffect | null {
   const object = event.data.object;
   switch (event.type) {
     case 'payment_intent.succeeded':
@@ -163,8 +176,10 @@ export function interpretStripeEvent(event: StripeEvent): { paymentIntentId: str
     case 'payment_intent.payment_failed':
     case 'payment_intent.canceled':
       return object.id === undefined ? null : { paymentIntentId: object.id, status: 'failed' };
-    case 'charge.refunded':
-      return typeof object.payment_intent === 'string' ? { paymentIntentId: object.payment_intent, status: 'refunded' } : null;
+    case 'charge.refunded': {
+      if (typeof object.payment_intent !== 'string' || object.refunded === undefined || object.amount_refunded === undefined) return null;
+      return { paymentIntentId: object.payment_intent, status: object.refunded ? 'refunded' : 'succeeded', refundedCents: BigInt(object.amount_refunded) };
+    }
     default:
       return null;
   }

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { newId } from '@repo/ids';
 import { z } from 'zod';
 
@@ -7,20 +7,24 @@ import {
   charities,
   DIVISIONS,
   matches,
+  pools,
+  poolTeams,
   sponsors,
   teamMembers,
   teams,
-  TOURNAMENT_FORMATS,
   TOURNAMENT_STATUSES,
   tournaments,
   users,
   type Tournament,
   type TournamentStatus,
 } from '../db/schema';
+import { DRAWABLE_FORMATS } from '../domain/draw';
 import { isMatchComplete, validateTournamentTransition } from '../domain/state';
 import { mintPurseExternalId, type Actor } from './actor';
 import { writeAudit } from './audit';
 import type { DbOrTx } from './db';
+import { deleteDraw } from './draw';
+import { COUNTED_TEAM_STATUSES, countedTeams, countedTeamsFilter, placeHoldingTeam, type ReservationClock } from './field';
 import { failure } from './http/errors';
 import { centsSchema } from './money';
 import {
@@ -34,9 +38,6 @@ import {
   type PublicTournamentDetail,
 } from './public-shape';
 import { loadPoolStage, standingsForStage } from './standings';
-
-/** Team statuses that count toward capacity and appear publicly. */
-export const COUNTED_TEAM_STATUSES = ['registered', 'checked_in'] as const;
 
 const isoDate = z.iso.datetime({ offset: true }).transform((value) => new Date(value));
 const timezone = z.string().min(1).refine((zone) => isValidTimezone(zone), 'must be an IANA time zone');
@@ -59,7 +60,8 @@ export const createTournamentSchema = z
     venue: z.object({ name: z.string().trim().min(1).max(120), city: z.string().trim().min(1).max(80), region: z.string().trim().min(1).max(80), timezone }),
     startsAt: isoDate,
     endsAt: isoDate,
-    format: z.enum(TOURNAMENT_FORMATS),
+    /** Only formats the engine can draw are offered; `double_elim` stays in the enum for the follow-up. */
+    format: z.enum(DRAWABLE_FORMATS),
     division: z.enum(DIVISIONS),
     maxTeams: z.number().int().min(2).max(128),
     entryDonationCents: centsSchema,
@@ -128,7 +130,7 @@ export const updateTournamentSchema = z
       .optional(),
     startsAt: isoDate.optional(),
     endsAt: isoDate.optional(),
-    format: z.enum(TOURNAMENT_FORMATS).optional(),
+    format: z.enum(DRAWABLE_FORMATS).optional(),
     division: z.enum(DIVISIONS).optional(),
     maxTeams: z.number().int().min(2).max(128).optional(),
     entryDonationCents: centsSchema.optional(),
@@ -144,7 +146,14 @@ const DRAFT_ONLY_FIELDS = ['beneficiaryId', 'format', 'division', 'entryDonation
 
 export type UpdateResult = { tournament: Tournament; changedFields: string[]; transition: { from: TournamentStatus; to: TournamentStatus } | null };
 
-export async function updateTournament(db: Db, id: string, input: UpdateTournamentInput, actor: Actor, now: Date): Promise<UpdateResult> {
+/**
+ * Edit fields, then apply a status change, in one transaction. Moving `startsAt` shifts
+ * every scheduled match by the same delta, because their times were derived from it at
+ * draw time and a derived figure must not go stale; once a match has started the start
+ * time is fixed.
+ */
+export async function updateTournament(db: Db, id: string, input: UpdateTournamentInput, actor: Actor, clock: ReservationClock): Promise<UpdateResult> {
+  const now = clock.now;
   return db.transaction(async (tx) => {
     const [current] = await tx.select().from(tournaments).where(eq(tournaments.id, id)).for('update');
     if (current === undefined) throw failure.notFound('tournament_not_found', 'No such tournament.');
@@ -167,7 +176,7 @@ export async function updateTournament(db: Db, id: string, input: UpdateTourname
         }
       }
       if (fields.maxTeams !== undefined) {
-        const registered = await countedTeams(tx, current.id);
+        const registered = await countedTeams(tx, current.id, clock);
         if (fields.maxTeams < registered) {
           throw failure.invalidState('max_teams_below_registered', `${registered} teams are already registered; maxTeams cannot be ${fields.maxTeams}.`);
         }
@@ -175,6 +184,24 @@ export async function updateTournament(db: Db, id: string, input: UpdateTourname
       const startsAt = fields.startsAt ?? current.startsAt;
       const endsAt = fields.endsAt ?? current.endsAt;
       if (endsAt.getTime() < startsAt.getTime()) throw failure.invalidRequest('ends_before_start', 'endsAt must not be before startsAt.');
+
+      const shiftMs = startsAt.getTime() - current.startsAt.getTime();
+      let rescheduled = 0;
+      if (shiftMs !== 0) {
+        const drawn = await tx.select({ id: matches.id, status: matches.status }).from(matches).where(eq(matches.tournamentId, current.id));
+        const started = drawn.filter((m) => m.status !== 'scheduled' && m.status !== 'bye');
+        if (started.length > 0) {
+          throw failure.invalidState('schedule_in_play', `${started.length} match(es) have started; startsAt can no longer move.`, {
+            matches: started.map((m) => ({ id: m.id, status: m.status })),
+          });
+        }
+        const shifted = await tx
+          .update(matches)
+          .set({ scheduledAt: sql`${matches.scheduledAt} + (${shiftMs}::bigint * interval '1 millisecond')`, updatedAt: now })
+          .where(and(eq(matches.tournamentId, current.id), isNotNull(matches.scheduledAt)))
+          .returning({ id: matches.id });
+        rescheduled = shifted.length;
+      }
 
       await tx
         .update(tournaments)
@@ -200,14 +227,14 @@ export async function updateTournament(db: Db, id: string, input: UpdateTourname
         action: 'tournament.updated',
         subjectType: 'tournament',
         subjectId: id,
-        detail: { fields: changedFields },
+        detail: { fields: changedFields, ...(shiftMs === 0 ? {} : { scheduleShiftMs: shiftMs, matchesRescheduled: rescheduled }) },
         at: now,
       });
     }
 
     let transition: UpdateResult['transition'] = null;
     if (nextStatus !== undefined) {
-      transition = await transitionTournament(tx, { tournament: current, to: nextStatus, actor, now });
+      transition = await transitionTournament(tx, { tournament: current, to: nextStatus, actor, clock });
     }
 
     const [updated] = await tx.select().from(tournaments).where(eq(tournaments.id, id));
@@ -218,30 +245,70 @@ export async function updateTournament(db: Db, id: string, input: UpdateTourname
 
 /**
  * The single place a tournament's status changes. Validates the transition matrix for
- * the actor, applies the guards that depend on rows (a draw before `live`, every match
- * complete before `awaiting_settlement`), and writes the audit row.
+ * the actor, applies the guards that depend on rows, and writes the audit row:
+ *
+ * - reopening registration discards the draw (the field is about to change; nothing can
+ *   have been played while registration was closed);
+ * - `live` needs a draw that covers every team holding a place;
+ * - `awaiting_settlement` needs every match complete, and for the formats that end in a
+ *   bracket, the bracket drawn.
  */
 export async function transitionTournament(
   tx: DbOrTx,
-  input: { tournament: Tournament; to: TournamentStatus; actor: Actor; now: Date },
+  input: { tournament: Tournament; to: TournamentStatus; actor: Actor; clock: ReservationClock },
 ): Promise<{ from: TournamentStatus; to: TournamentStatus }> {
-  const from = input.tournament.status;
+  const { tournament, clock } = input;
+  const now = clock.now;
+  const from = tournament.status;
   const verdict = validateTournamentTransition(from, input.to, input.actor.kind);
   if (!verdict.ok) {
     const type = verdict.code === 'actor_not_permitted' ? failure.permission : failure.invalidState;
     throw type(`transition_${verdict.code}`, verdict.message, { from, to: input.to });
   }
 
+  if (from === 'registration_closed' && input.to === 'registration_open') {
+    const played = await tx
+      .select({ id: matches.id, status: matches.status })
+      .from(matches)
+      .where(and(eq(matches.tournamentId, tournament.id), ne(matches.status, 'scheduled'), ne(matches.status, 'bye')));
+    if (played.length > 0) {
+      throw failure.invalidState('draw_already_in_play', `${played.length} match(es) have started; registration cannot reopen.`, {
+        matches: played.map((m) => ({ id: m.id, status: m.status })),
+      });
+    }
+    const discarded = await deleteDraw(tx, tournament.id);
+    if (discarded.matches > 0 || discarded.pools > 0) {
+      await tx.update(tournaments).set({ drawConfig: null, updatedAt: now }).where(eq(tournaments.id, tournament.id));
+      await writeAudit(tx, {
+        actor: input.actor,
+        action: 'tournament.draw_discarded',
+        subjectType: 'tournament',
+        subjectId: tournament.id,
+        detail: { reason: 'registration_reopened', pools: discarded.pools, matches: discarded.matches },
+        at: now,
+      });
+    }
+  }
+
   if (input.to === 'live') {
-    const [drawn] = await tx.select({ n: count() }).from(matches).where(eq(matches.tournamentId, input.tournament.id));
+    const [drawn] = await tx.select({ n: count() }).from(matches).where(eq(matches.tournamentId, tournament.id));
     if ((drawn?.n ?? 0) === 0) throw failure.invalidState('draw_required', 'Draw the tournament before going live.');
+    const missing = await teamsNotDrawn(tx, tournament.id, clock);
+    if (missing.length > 0) {
+      throw failure.invalidState('teams_not_drawn', `${missing.length} team(s) holding a place are not in the draw: ${missing.map((t) => t.name).join(', ')}. Redraw first.`, {
+        teams: missing,
+      });
+    }
   }
   if (input.to === 'awaiting_settlement') {
     const open = await tx
-      .select({ id: matches.id, status: matches.status })
+      .select({ id: matches.id, status: matches.status, bracketPosition: matches.bracketPosition })
       .from(matches)
-      .where(eq(matches.tournamentId, input.tournament.id));
+      .where(eq(matches.tournamentId, tournament.id));
     if (open.length === 0) throw failure.invalidState('no_matches', 'There are no matches to settle.');
+    if (tournament.format !== 'round_robin' && !open.some((m) => m.bracketPosition !== null)) {
+      throw failure.invalidState('bracket_not_drawn', 'The bracket has not been drawn; there is no champion to settle.');
+    }
     const unresolved = open.filter((m) => !isMatchComplete(m.status));
     if (unresolved.length > 0) {
       throw failure.invalidState('matches_unresolved', `${unresolved.length} match(es) are not complete.`, {
@@ -250,24 +317,32 @@ export async function transitionTournament(
     }
   }
 
-  await tx.update(tournaments).set({ status: input.to, updatedAt: input.now }).where(eq(tournaments.id, input.tournament.id));
+  await tx.update(tournaments).set({ status: input.to, updatedAt: now }).where(eq(tournaments.id, tournament.id));
   await writeAudit(tx, {
     actor: input.actor,
     action: 'tournament.status_changed',
     subjectType: 'tournament',
-    subjectId: input.tournament.id,
+    subjectId: tournament.id,
     detail: { from, to: input.to },
-    at: input.now,
+    at: now,
   });
   return { from, to: input.to };
 }
 
-export async function countedTeams(db: DbOrTx, tournamentId: string): Promise<number> {
-  const [row] = await db
-    .select({ n: count() })
-    .from(teams)
-    .where(and(eq(teams.tournamentId, tournamentId), inArray(teams.status, [...COUNTED_TEAM_STATUSES])));
-  return row?.n ?? 0;
+/** Teams holding a place that no pool and no round-1 bracket match includes. */
+async function teamsNotDrawn(tx: DbOrTx, tournamentId: string, clock: ReservationClock): Promise<Array<{ id: string; name: string }>> {
+  const counted = await tx.select({ id: teams.id, name: teams.name }).from(teams).where(countedTeamsFilter(tournamentId, clock)).orderBy(asc(teams.createdAt));
+  const inPools = await tx
+    .select({ teamId: poolTeams.teamId })
+    .from(poolTeams)
+    .innerJoin(pools, eq(pools.id, poolTeams.poolId))
+    .where(eq(pools.tournamentId, tournamentId));
+  const inRoundOne = await tx
+    .select({ teamAId: matches.teamAId, teamBId: matches.teamBId })
+    .from(matches)
+    .where(and(eq(matches.tournamentId, tournamentId), isNotNull(matches.bracketPosition), eq(matches.round, 1)));
+  const drawn = new Set<string | null>([...inPools.map((r) => r.teamId), ...inRoundOne.flatMap((m) => [m.teamAId, m.teamBId])]);
+  return counted.filter((team) => !drawn.has(team.id));
 }
 
 // ---- Public reads -------------------------------------------------------------------------
@@ -277,23 +352,28 @@ export const listTournamentsQuerySchema = z.object({
 });
 
 /** Non-draft tournaments, soonest first, optionally filtered by status. */
-export async function listPublicTournaments(db: DbOrTx, filter: { status?: TournamentStatus | undefined }): Promise<PublicTournament[]> {
+export async function listPublicTournaments(
+  db: DbOrTx,
+  filter: { status?: TournamentStatus | undefined },
+  clock: ReservationClock,
+): Promise<PublicTournament[]> {
   const rows = await db
     .select({ tournament: tournaments, beneficiary: charities })
     .from(tournaments)
     .innerJoin(charities, eq(charities.id, tournaments.beneficiaryId))
     .where(filter.status === undefined ? ne(tournaments.status, 'draft') : eq(tournaments.status, filter.status))
     .orderBy(desc(tournaments.startsAt));
-  const counts = await teamCounts(db, rows.map((r) => r.tournament.id));
+  const ids = rows.map((r) => r.tournament.id);
+  const counts = await teamCounts(db, ids, clock);
   return rows.map((r) => toPublicTournament(r.tournament, r.beneficiary, counts.get(r.tournament.id) ?? 0));
 }
 
-async function teamCounts(db: DbOrTx, tournamentIds: string[]): Promise<Map<string, number>> {
+async function teamCounts(db: DbOrTx, tournamentIds: string[], clock: ReservationClock): Promise<Map<string, number>> {
   if (tournamentIds.length === 0) return new Map();
   const rows = await db
     .select({ tournamentId: teams.tournamentId, n: count() })
     .from(teams)
-    .where(and(inArray(teams.tournamentId, tournamentIds), inArray(teams.status, [...COUNTED_TEAM_STATUSES])))
+    .where(and(inArray(teams.tournamentId, tournamentIds), inArray(teams.status, [...COUNTED_TEAM_STATUSES]), placeHoldingTeam(clock)))
     .groupBy(teams.tournamentId);
   return new Map(rows.map((r) => [r.tournamentId, r.n]));
 }
@@ -310,16 +390,12 @@ export async function findPublicTournament(db: DbOrTx, slug: string): Promise<{ 
 
 type Charity = typeof charities.$inferSelect;
 
-export async function tournamentDetail(db: DbOrTx, slug: string): Promise<PublicTournamentDetail | null> {
+export async function tournamentDetail(db: DbOrTx, slug: string, clock: ReservationClock): Promise<PublicTournamentDetail | null> {
   const found = await findPublicTournament(db, slug);
   if (found === null) return null;
   const { tournament, beneficiary } = found;
 
-  const teamRows = await db
-    .select()
-    .from(teams)
-    .where(and(eq(teams.tournamentId, tournament.id), inArray(teams.status, [...COUNTED_TEAM_STATUSES])))
-    .orderBy(asc(teams.seed), asc(teams.createdAt));
+  const teamRows = await db.select().from(teams).where(countedTeamsFilter(tournament.id, clock)).orderBy(asc(teams.seed), asc(teams.createdAt));
   const teamIds = teamRows.map((t) => t.id);
   const memberRows =
     teamIds.length === 0

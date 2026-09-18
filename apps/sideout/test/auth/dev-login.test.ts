@@ -6,10 +6,14 @@ import { describe, expect, it } from 'vitest';
 import { pageExtensionsFor } from '../../next.config';
 
 /**
- * `POST /api/dev/login` must be provably absent from a production build. The route file is
- * `route.dev.ts`; Next treats `route.<ext>` as a route only for the extensions in
- * `pageExtensions`, and `dev.ts` is listed only outside production. Both halves are
- * asserted here, so neither a rename nor a config edit can quietly ship the route.
+ * Source-layout contract for `POST /api/dev/login`, which must be absent from a production
+ * build. The mechanism has two halves: the route file is `route.dev.ts`, and Next treats
+ * `route.<ext>` as a route only for the extensions in `pageExtensions`, where `dev.ts` is
+ * listed only outside production. The first test executes `pageExtensionsFor`; the other
+ * two assert the file naming under `src/app/api` with a matcher that mirrors Next's rule,
+ * so neither a rename nor a config edit can quietly ship the route. This is deliberately a
+ * layout contract, not proof of runtime behaviour: it does not run Next. Phase 9 replaces
+ * it with a check against the production build's route manifest (docs/decisions.md).
  */
 const APP_DIR = path.resolve(import.meta.dirname, '../../src/app');
 const DEV_DIR = path.join(APP_DIR, 'api', 'dev');

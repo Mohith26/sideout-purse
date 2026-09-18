@@ -9,7 +9,7 @@ import { auditLog, authCodes, users } from '../../src/db/schema';
 import { env } from '../../src/env';
 import { CODE_MAX_ATTEMPTS } from '../../src/server/auth/codes';
 import { issueSession, sessionCookieHeader } from '../../src/server/auth/session';
-import { unavailableSmsSender } from '../../src/server/auth/sms';
+import { unavailableSmsSender, type SmsSender } from '../../src/server/auth/sms';
 import { AUTH_RATE_LIMITS, resetAppContext } from '../../src/server/context';
 import { cookieFor, createUser, data, errorOf, nextPhone, request, testDatabase, truncateAll, type Database } from '../helpers';
 
@@ -137,6 +137,33 @@ describe('phone sign-in', () => {
     expect(response.status).toBe(503);
     expect(await errorOf(response)).toMatchObject({ type: 'internal_error', code: 'sms_unavailable' });
     expect(await database.db.select().from(authCodes).where(eq(authCodes.phoneE164, phone))).toHaveLength(0);
+  });
+
+  it('consumes a code the provider could not deliver, so it can never be verified', async () => {
+    const delivered: string[] = [];
+    const flaky: SmsSender = {
+      name: 'log',
+      send: async ({ body }) => {
+        await Promise.resolve();
+        if (delivered.length === 0) {
+          delivered.push('failed');
+          throw new Error('provider timeout');
+        }
+        delivered.push(body);
+      },
+    };
+    resetAppContext({ sms: flaky });
+    const phone = nextPhone();
+    const failed = await requestCode(request('POST', '/api/auth/request-code', { body: { phone } }));
+    expect(failed.status).toBe(500);
+    const [row] = await database.db.select().from(authCodes).where(eq(authCodes.phoneE164, phone));
+    expect(row?.consumedAt).not.toBeNull();
+
+    const issued = await data<CodeResponse>(await requestCode(request('POST', '/api/auth/request-code', { body: { phone } })));
+    expect(delivered).toHaveLength(2);
+    expect(delivered[1]).toContain(issued.code ?? 'never');
+    const verified = await verify(request('POST', '/api/auth/verify', { body: { phone, code: issued.code } }));
+    expect(verified.status).toBe(200);
   });
 
   it('rejects a missing, forged or expired session on a protected route', async () => {

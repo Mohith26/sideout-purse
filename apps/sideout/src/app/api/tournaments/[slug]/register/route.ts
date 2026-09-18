@@ -21,7 +21,7 @@ export async function POST(request: Request, context: RouteContext<{ slug: strin
     const { slug } = await context.params;
     const body = await parseJsonBody(request, registerTeamSchema);
     const result = await registerTeam(
-      { db, provider: donationProvider, purseEntry, log },
+      { db, provider: donationProvider, purseEntry, log, reservationTtlMs: env.reservationTtlMs },
       { tournamentSlug: slug, teamId: body.teamId, user, requestId, now },
     );
     return ok(
@@ -37,6 +37,7 @@ export async function POST(request: Request, context: RouteContext<{ slug: strin
                 provider: result.donation.provider,
                 status: result.donation.status,
               },
+        reservationExpiresAt: result.reservationExpiresAt?.toISOString() ?? null,
         clientSecret: result.clientSecret,
         purseEntry: result.purseEntry,
       },

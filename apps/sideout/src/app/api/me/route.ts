@@ -13,7 +13,7 @@ export async function GET(request: Request): Promise<Response> {
     const { db, env, donationProvider } = appContext();
     const now = new Date();
     const user = await requireUser(request, { db, sessionSecret: env.sessionSecret, now });
-    if (donationProvider?.name === 'dev') await settleDueDevDonations(db, now);
+    if (donationProvider?.name === 'dev') await settleDueDevDonations(db, { now, reservationTtlMs: env.reservationTtlMs });
     return ok(await meSnapshot(db, user));
   });
 }

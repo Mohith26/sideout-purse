@@ -38,7 +38,7 @@ export function tournamentBody(charity: Charity, overrides: Record<string, unkno
     division: 'open',
     maxTeams: 24,
     entryDonationCents: '5000',
-    fundraisingGoalCents: 500000,
+    fundraisingGoalCents: '500000',
     ...overrides,
   };
 }
@@ -121,6 +121,16 @@ describe('organizer tournaments', () => {
     const unknownCharity = await create(tournamentBody(charity, { beneficiaryId: 'chr_00000000-0000-7000-8000-000000000000' }));
     expect((await errorOf(unknownCharity)).code).toBe('beneficiary_unknown');
 
+    // Cents are decimal strings on the wire; a JSON number never enters the money path.
+    const numericCents = await create(tournamentBody(charity, { fundraisingGoalCents: 500000 }));
+    expect(numericCents.status).toBe(400);
+    expect(JSON.stringify((await errorOf(numericCents)).detail)).toMatch(/fundraisingGoalCents/);
+
+    // Only formats the engine can draw are offered.
+    const undrawable = await create(tournamentBody(charity, { format: 'double_elim' }));
+    expect(undrawable.status).toBe(400);
+    expect(JSON.stringify((await errorOf(undrawable)).detail)).toMatch(/format/);
+
     expect((await create(tournamentBody(charity))).status).toBe(201);
     const duplicate = await create(tournamentBody(charity));
     expect(duplicate.status).toBe(409);
@@ -193,6 +203,8 @@ describe('organizer tournaments', () => {
     const edited = await data<AdminTournament>(await patch(tournament.id, { name: 'Sandbar Classic II', maxTeams: 32, entryDonationCents: '2500' }));
     expect(edited.changedFields?.sort()).toEqual(['entryDonationCents', 'maxTeams', 'name']);
     expect(edited.tournament).toMatchObject({ name: 'Sandbar Classic II', maxTeams: 32, entryDonationCents: '2500' });
+    expect((await patch(tournament.id, { entryDonationCents: 2500 })).status).toBe(400);
+    expect((await patch(tournament.id, { format: 'double_elim' })).status).toBe(400);
 
     await patch(tournament.id, { status: 'registration_open' });
     const locked = await patch(tournament.id, { format: 'single_elim' });

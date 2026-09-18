@@ -3,10 +3,12 @@ import { z } from 'zod';
 /**
  * Cents cross the JSON boundary as decimal strings, in both directions, so no client is
  * tempted into floating-point arithmetic on a donation and no server path ever holds a
- * `number` of cents. Inside the server everything is `bigint`.
+ * `number` of cents: a JSON number is refused rather than parsed through a double.
+ * Inside the server everything is `bigint`.
  */
 export const centsSchema = z
-  .union([z.string().regex(/^\d{1,18}$/, 'cents must be a non-negative integer string'), z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)])
+  .string()
+  .regex(/^\d{1,18}$/, 'cents must be a non-negative integer string')
   .transform((value) => BigInt(value));
 
 export function centsToJson(value: bigint): string {

@@ -14,7 +14,10 @@ import { failure } from './http/errors';
 /**
  * Team creation and the partner invite. A captain names their partner by phone number;
  * the partner signs in with that number and joins. Registration (the donation) is a
- * separate step in `registration.ts` and needs the roster complete first.
+ * separate step in `registration.ts` and needs the roster complete first. A captain who
+ * mistyped the number, or whose partner never came, simply creates the team again: their
+ * own still-forming team is withdrawn and its invite revoked. Once a team is registered
+ * there is no second team.
  */
 
 export const createTeamSchema = z.object({
@@ -52,7 +55,13 @@ export async function createTeam(db: Db, input: CreateTeamInput, user: User, now
   return db.transaction(async (tx) => {
     const tournament = await requireOpenTournament(tx, input.tournamentSlug);
     const existing = await activeTeamFor(tx, tournament.id, user.id);
-    if (existing !== null) throw failure.conflict('already_on_team', `You are already on ${existing.name} in this tournament.`);
+    if (existing !== null) {
+      const [membership] = await tx.select().from(teamMembers).where(and(eq(teamMembers.teamId, existing.id), eq(teamMembers.userId, user.id)));
+      if (existing.status !== 'forming' || membership?.role !== 'captain') {
+        throw failure.conflict('already_on_team', `You are already on ${existing.name} in this tournament.`);
+      }
+      await supersedeFormingTeam(tx, existing, user, now);
+    }
 
     const [team] = await tx
       .insert(teams)
@@ -81,6 +90,26 @@ export async function createTeam(db: Db, input: CreateTeamInput, user: User, now
       at: now,
     });
     return { team, members: [captain] };
+  });
+}
+
+async function supersedeFormingTeam(tx: DbOrTx, team: Team, captain: User, now: Date): Promise<void> {
+  await tx.update(teams).set({ status: 'withdrawn', invitedPhoneE164: null, updatedAt: now }).where(eq(teams.id, team.id));
+  await writeAudit(tx, {
+    actor: actorFor(captain),
+    action: 'team.invite_revoked',
+    subjectType: 'team',
+    subjectId: team.id,
+    detail: { invitedPhoneE164: team.invitedPhoneE164, reason: 'superseded' },
+    at: now,
+  });
+  await writeAudit(tx, {
+    actor: actorFor(captain),
+    action: 'team.status_changed',
+    subjectType: 'team',
+    subjectId: team.id,
+    detail: { from: team.status, to: 'withdrawn', reason: 'superseded' },
+    at: now,
   });
 }
 

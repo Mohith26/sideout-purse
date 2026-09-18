@@ -34,7 +34,7 @@ export async function POST(request: Request): Promise<Response> {
     const event = stripeEventSchema.safeParse(parsed);
     if (!event.success) throw failure.invalidRequest('malformed_event', 'The event does not look like a Stripe event.');
 
-    const outcome = await applyStripeEvent(db, event.data, new Date());
+    const outcome = await applyStripeEvent(db, event.data, { now: new Date(), reservationTtlMs: env.reservationTtlMs });
     log.info('stripe webhook', { eventId: event.data.id, type: event.data.type, ...outcome });
     return ok({ received: true, eventId: event.data.id, ...outcome });
   });
