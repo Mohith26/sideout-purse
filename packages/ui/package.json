@@ -1,0 +1,36 @@
+{
+  "name": "@sideout/ui",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Design tokens and primitives from system spec section 6, shared by Sideout, the Purse embed app and the operator console.",
+  "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./styles.css": "./src/styles/index.css",
+    "./tokens.css": "./src/styles/tokens.css",
+    "./theme.css": "./src/styles/theme.css",
+    "./components.css": "./src/styles/components.css"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "vitest": "^5.0.1"
+  }
+}

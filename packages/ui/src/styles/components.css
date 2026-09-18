@@ -1,0 +1,133 @@
+/*
+ * Base styles and the first primitives, written against the tokens so that any consumer
+ * (Sideout now, the Purse embed and console later) renders them identically without
+ * configuring Tailwind to scan this package.
+ */
+
+/* ---- Base ------------------------------------------------------------------------ */
+
+html {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: var(--leading-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: var(--text-body);
+}
+
+/* Any changing number gets tabular digits so it never jitters (spec 6.2). */
+.tabular,
+[data-tabular] {
+  font-variant-numeric: tabular-nums;
+}
+
+.display {
+  font-family: var(--font-display);
+  font-stretch: var(--display-stretch);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--leading-display);
+  text-transform: uppercase;
+}
+
+.label {
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  line-height: 1.2;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* 6.4: one focus treatment everywhere, 2px volt ring at 2px offset. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--focus-ring-width) solid var(--volt);
+  outline-offset: var(--focus-ring-offset);
+}
+
+::selection {
+  background: var(--volt);
+  color: var(--on-volt);
+}
+
+/* ---- AppShell -------------------------------------------------------------------- */
+
+.so-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.so-shell__header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--bg-base) 88%, transparent);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.so-shell__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 56px;
+  padding: 0 var(--gutter);
+  margin: 0 auto;
+  max-width: var(--content-max);
+}
+
+.so-shell__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 1.125rem;
+}
+
+.so-shell__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.so-shell__main {
+  flex: 1;
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-5) var(--gutter) var(--space-8);
+  box-sizing: border-box;
+}
+
+.so-shell__footer {
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: var(--text-label);
+}
+
+.so-shell__footer > div {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-4) var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+@media (min-width: 768px) {
+  .so-shell__main {
+    padding-top: var(--space-6);
+  }
+}

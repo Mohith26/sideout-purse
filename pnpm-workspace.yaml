@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm blocks install scripts by default; these are the only packages allowed to run them
+# (both install a prebuilt native binary for the host platform).
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true

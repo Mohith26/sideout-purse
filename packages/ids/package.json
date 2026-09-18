@@ -1,0 +1,25 @@
+{
+  "name": "@repo/ids",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Typed-prefix UUID v7 identifiers shared by Purse and Sideout (system spec section 4.1).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "uuid": "^14.0.2"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*",
+    "fast-check": "^4.10.1",
+    "vitest": "^5.0.1"
+  }
+}

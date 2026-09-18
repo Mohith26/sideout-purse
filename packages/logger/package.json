@@ -1,0 +1,23 @@
+{
+  "name": "@repo/logger",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Structured JSON logging and build-sha resolution shared by both apps, so the log line shape spec section 10 traces across the boundary is defined once.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*",
+    "@types/node": "^22.20.3",
+    "vitest": "^5.0.1"
+  }
+}

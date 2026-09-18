@@ -1,0 +1,36 @@
+{
+  "name": "sideout-purse",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Sideout, a charity beach volleyball tournament product, on Purse, the competition-infrastructure platform it runs on.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=22.9 <23",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "dev": "pnpm --recursive --parallel --filter \"./apps/*\" run dev",
+    "build": "pnpm --recursive run build",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:setup": "tsx scripts/db-setup.ts",
+    "db:migrate": "pnpm --filter @purse/api run db:migrate && pnpm --filter @sideout/web run db:migrate",
+    "db:seed": "pnpm --filter @purse/api run db:seed",
+    "db:generate": "pnpm --filter @purse/api run db:generate && pnpm --filter @sideout/web run db:generate",
+    "clean": "pnpm --recursive run clean && rm -rf node_modules/.cache"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*",
+    "@types/node": "^22.20.3",
+    "eslint": "^10.10.0",
+    "postgres": "^3.4.9",
+    "tsx": "^4.23.13",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^5.0.1"
+  }
+}

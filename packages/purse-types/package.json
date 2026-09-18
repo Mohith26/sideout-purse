@@ -1,0 +1,22 @@
+{
+  "name": "@purse/types",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Public Purse types: the API error taxonomy and header names. The only Purse package besides @purse/sdk that a partner app may import.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@repo/config": "workspace:*",
+    "vitest": "^5.0.1"
+  }
+}
