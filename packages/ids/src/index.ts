@@ -31,6 +31,12 @@ export const ID_PREFIXES = {
   // Purse contests (system spec 4.1). A participant row is the spec's "entry" (`ent`, above).
   contestScore: 'sco',
   contestResult: 'res',
+  // Purse identity, eligibility and API access (system spec 4.1, 4.5, 4.6)
+  restriction: 'rst',
+  eligibilityDecision: 'eld',
+  operatorFlag: 'flg',
+  apiKey: 'key',
+  embedToken: 'emb',
   // Sideout (system spec 5.1). Sideout's local account is `sou`, never `usr`: the two
   // identities are linked by an opaque external id (decision D8), not by sharing a prefix.
   charity: 'chr',

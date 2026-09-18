@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
 /**
+ * Which implementation may fill each provider seam (spec 4.5). Only `dev` exists today; a
+ * vendor integration adds its name here and a branch in `src/providers/index.ts`. Declared
+ * here rather than in `src/providers` so this module keeps no local imports: the
+ * repository-level `test/env-isolation.test.ts` compiles it on its own.
+ */
+export const PROVIDER_IMPLEMENTATIONS = ['dev'] as const;
+export type ProviderImplementation = (typeof PROVIDER_IMPLEMENTATIONS)[number];
+
+/**
  * Everything Purse reads from the environment, validated once.
  *
  * This module is the only place the connection strings are named. It knows
@@ -8,13 +17,24 @@ import { z } from 'zod';
  * (the owner role, `purse_migrator`, used only by `db:migrate`, `db:seed` and the test
  * reset) and nothing about Sideout's; decision D2 says the two apps' strings are never
  * loaded into one process, and `test/env-isolation.test.ts` at the repository root proves
- * `loadEnv` ignores Sideout's even when both are present.
+ * `loadEnv` ignores Sideout's even when both are present. The provider seams, the dev
+ * identity lists and the rate limit are read here too; `docs/providers.md` documents them.
  */
 
 const postgresUrl = z
   .string()
   .url()
   .refine((value) => /^postgres(ql)?:\/\//.test(value), 'must be a postgres:// URL');
+
+const commaList = z
+  .string()
+  .default('')
+  .transform((value) =>
+    value
+      .split(',')
+      .map((each) => each.trim())
+      .filter((each) => each !== ''),
+  );
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -26,6 +46,23 @@ const schema = z.object({
   PURSE_MIGRATOR_DATABASE_URL: postgresUrl.optional(),
   PURSE_MIGRATOR_DATABASE_URL_TEST: postgresUrl.optional(),
   INTERNAL_API_TOKEN: z.string().trim().min(16, 'must be at least 16 characters').optional(),
+  // Provider seams (spec 4.5). Only `dev` exists; a vendor adds its name in src/providers.
+  IDENTITY_PROVIDER: z.enum(PROVIDER_IMPLEMENTATIONS).default('dev'),
+  GEO_PROVIDER: z.enum(PROVIDER_IMPLEMENTATIONS).default('dev'),
+  RISK_PROVIDER: z.enum(PROVIDER_IMPLEMENTATIONS).default('dev'),
+  // Production refuses to start on a dev provider unless this is set on purpose.
+  ALLOW_DEV_PROVIDERS: z.enum(['true', 'false']).default('false'),
+  // The dev identity provider's seeded lists: comma-separated external ids.
+  DEV_IDENTITY_ALLOW: commaList,
+  DEV_IDENTITY_DENY: commaList,
+  DEV_IDENTITY_PENDING: commaList,
+  // Per-key token bucket for /v1 (spec 4.7 `rate_limited`).
+  RATE_LIMIT_BURST: z.coerce.number().int().min(1).max(100_000).default(100),
+  RATE_LIMIT_PER_SECOND: z.coerce.number().positive().max(100_000).default(20),
+  // How many proxies in front of Purse append to X-Forwarded-For; the client address the
+  // failed-authentication limit counts is taken that many entries from the header's right.
+  // 0 (the default) trusts no header and uses the socket's address; the hosted deploy sets 1.
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
 });
 
 export type Env = {
@@ -42,6 +79,16 @@ export type Env = {
   migratorDatabaseUrl: string | undefined;
   /** Bearer token for `GET /internal/reconcile`. Unset means the route is closed outside tests. */
   internalApiToken: string | undefined;
+  providers: {
+    identity: ProviderImplementation;
+    geo: ProviderImplementation;
+    risk: ProviderImplementation;
+    allowDevProviders: boolean;
+    devIdentity: { allow: string[]; deny: string[]; pending: string[] };
+  };
+  rateLimit: { burst: number; perSecond: number };
+  /** Proxies whose `X-Forwarded-For` entry is trusted for the client address; 0 means the socket's address. */
+  trustedProxyHops: number;
 };
 
 export class EnvError extends Error {
@@ -74,6 +121,15 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     databaseUrl,
     migratorDatabaseUrl: test ? raw.PURSE_MIGRATOR_DATABASE_URL_TEST : raw.PURSE_MIGRATOR_DATABASE_URL,
     internalApiToken: raw.INTERNAL_API_TOKEN,
+    providers: {
+      identity: raw.IDENTITY_PROVIDER,
+      geo: raw.GEO_PROVIDER,
+      risk: raw.RISK_PROVIDER,
+      allowDevProviders: raw.ALLOW_DEV_PROVIDERS === 'true',
+      devIdentity: { allow: raw.DEV_IDENTITY_ALLOW, deny: raw.DEV_IDENTITY_DENY, pending: raw.DEV_IDENTITY_PENDING },
+    },
+    rateLimit: { burst: raw.RATE_LIMIT_BURST, perSecond: raw.RATE_LIMIT_PER_SECOND },
+    trustedProxyHops: raw.TRUSTED_PROXY_HOPS,
   };
 }
 

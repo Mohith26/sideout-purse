@@ -7,6 +7,7 @@ import { connect } from './db/client';
 import { env } from './env';
 import { assertRuntimeRole } from './ledger';
 import { MIGRATIONS_FOLDER } from './paths';
+import { createProviders, type Providers } from './providers';
 
 const config = env();
 const logger = createLogger({ service: 'purse-api', level: config.logLevel });
@@ -28,7 +29,19 @@ if (config.internalApiToken === undefined && config.nodeEnv === 'production') {
   logger.warn('INTERNAL_API_TOKEN is not set; GET /internal/reconcile is closed');
 }
 
-const app = createApp({
+// The three provider seams (spec 4.5). Production on a dev provider is refused unless
+// ALLOW_DEV_PROVIDERS=true was set deliberately.
+let providers: Providers;
+try {
+  providers = createProviders({ ...config.providers, nodeEnv: config.nodeEnv, devIdentity: config.providers.devIdentity });
+  logger.info('providers configured', { identity: providers.identity.name, geo: providers.geo.name, risk: providers.risk.name, allowDevProviders: config.providers.allowDevProviders });
+} catch (error) {
+  logger.error('provider configuration refused', errorFields(error));
+  await database.close();
+  process.exit(1);
+}
+
+const { app } = createApp({
   sql: database.sql,
   db: database.db,
   logger,
@@ -36,6 +49,9 @@ const app = createApp({
   sha,
   nodeEnv: config.nodeEnv,
   internalApiToken: config.internalApiToken,
+  providers,
+  rateLimit: config.rateLimit,
+  trustedProxyHops: config.trustedProxyHops,
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

@@ -1,12 +1,30 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Id } from '@repo/ids';
 
+import { createApiKey, revokeApiKey, type CreatedApiKey } from '../auth/api-keys';
 import { closeContest, createContest, enterContest, getContest, previewSettlement, submitScores, transition } from '../contests';
+import { publishRuleset, SPEC_EXAMPLE_RULESET } from '../eligibility';
 import { findAccount, openAccount } from '../ledger/accounts';
 import type { Actor } from '../ledger/audit';
 import { issuePromoPoints } from '../ledger/flows';
+import { devIdentityProvider } from '../providers';
+import { addRestriction, getVerification, recordLocation, refreshFingerprint, startVerification } from '../users';
 import type { Db, DbOrTx } from './client';
-import { asset, contests, tenants, type Account, type AccountKind, type Contest, type Tenant } from './schema';
+import {
+  apiKeys,
+  asset,
+  contests,
+  tenants,
+  userVerification,
+  users,
+  type Account,
+  type AccountKind,
+  type ApiKey,
+  type Contest,
+  type RulesetRow,
+  type Tenant,
+  type User,
+} from './schema';
 
 /**
  * Reference data Purse cannot run without, applied by `pnpm db:seed` after migrations.
@@ -66,12 +84,25 @@ export async function seedPlatformAccounts(db: Db, tenantId: string): Promise<Pl
   return { accounts: opened, created };
 }
 
-// ---- Contests (phase 2) --------------------------------------------------------------
+// ---- Ruleset (phase 3) ---------------------------------------------------------------
+
+/** The spec 4.5 example is the first active version. Stored once; a rerun finds it. */
+export async function seedRuleset(db: Db): Promise<{ ruleset: RulesetRow; created: boolean }> {
+  return publishRuleset(db, { body: SPEC_EXAMPLE_RULESET, activate: true });
+}
+
+// ---- Users (phase 3) -----------------------------------------------------------------
 
 /**
  * Six users the seed contests are played by. Stable ids, like the tenant's, so every
- * environment agrees; phase 3 gives them `users` rows under the same ids. Their wallets
- * are funded with promo points through the ledger like anyone else's.
+ * environment agrees, and stable external ids the way a partner would link them. Their
+ * wallets are funded with promo points through the ledger like anyone else's.
+ *
+ * Between them they exercise every verification state (acceptance criterion 29) and the
+ * risk controls: three verified (demographics supplied, permitted regions), one left
+ * pending by the dev identity provider, one rejected by it, one who has never started and
+ * has excluded themself; the last two share a name and date of birth, which raises the
+ * duplicate-identity flag the operator console reviews.
  */
 export const SEED_USER_IDS: ReadonlyArray<Id<'usr'>> = [
   'usr_01a0b278-93be-70eb-9f0e-c4bfefda6f93',
@@ -81,6 +112,135 @@ export const SEED_USER_IDS: ReadonlyArray<Id<'usr'>> = [
   'usr_01a0b278-93be-70eb-9f0e-d790d453c2f0',
   'usr_01a0b278-93be-70eb-9f0e-da1121d7a116',
 ];
+
+export type SeedUser = {
+  id: Id<'usr'>;
+  externalId: string;
+  displayName: string;
+  dateOfBirth: string;
+  phoneE164: string;
+  region: string | null;
+  /** What the dev identity provider is seeded to answer, and what the seed drives the user to. */
+  verification: 'verified' | 'pending' | 'rejected' | 'unstarted';
+  selfExcluded?: boolean;
+};
+
+export const SEED_USERS: readonly SeedUser[] = [
+  { id: SEED_USER_IDS[0] ?? 'usr_', externalId: 'seed:user-1', displayName: 'Ana Reyes', dateOfBirth: '1994-03-12', phoneE164: '+15125550101', region: 'US-TX', verification: 'verified' },
+  { id: SEED_USER_IDS[1] ?? 'usr_', externalId: 'seed:user-2', displayName: 'Marcus Lee', dateOfBirth: '1991-07-30', phoneE164: '+13105550102', region: 'US-CA', verification: 'verified' },
+  { id: SEED_USER_IDS[2] ?? 'usr_', externalId: 'seed:user-3', displayName: 'Priya Natarajan', dateOfBirth: '1998-11-05', phoneE164: '+19195550103', region: 'US-NC', verification: 'verified' },
+  { id: SEED_USER_IDS[3] ?? 'usr_', externalId: 'seed:user-4', displayName: 'Diego Alvarez', dateOfBirth: '1989-01-22', phoneE164: '+17135550104', region: null, verification: 'pending' },
+  { id: SEED_USER_IDS[4] ?? 'usr_', externalId: 'seed:user-5', displayName: 'Sam Okafor', dateOfBirth: '1996-09-09', phoneE164: '+12125550105', region: 'US-NY', verification: 'rejected' },
+  { id: SEED_USER_IDS[5] ?? 'usr_', externalId: 'seed:user-6', displayName: 'Sam Okafor', dateOfBirth: '1996-09-09', phoneE164: '+12125550106', region: 'US-NY', verification: 'unstarted', selfExcluded: true },
+];
+
+/** The dev identity provider as the seed drives it: the same lists `DEV_IDENTITY_*` would carry. */
+export const SEED_IDENTITY_LISTS = {
+  allow: SEED_USERS.filter((user) => user.verification === 'verified').map((user) => user.externalId),
+  deny: SEED_USERS.filter((user) => user.verification === 'rejected').map((user) => user.externalId),
+  pending: SEED_USERS.filter((user) => user.verification === 'pending').map((user) => user.externalId),
+};
+
+export const SEED_SELF_EXCLUSION_DAYS = 30;
+
+export type SeedUsersResult = { users: Array<{ id: string; externalId: string; verification: string; created: boolean }>; duplicateFlags: number };
+
+/**
+ * Upsert the six users by their stable ids (a phase 2 database has placeholder rows for
+ * them from the migration backfill), then bring each to its verification state through
+ * the same state machine the API runs, record locations, fingerprints and the one
+ * self-exclusion. Every step is idempotent: a rerun changes nothing.
+ */
+export async function seedUsers(db: Db, tenantId: Id<'tnt'>): Promise<SeedUsersResult> {
+  const identity = devIdentityProvider(SEED_IDENTITY_LISTS);
+  const results: SeedUsersResult['users'] = [];
+  let duplicateFlags = 0;
+  for (const seed of SEED_USERS) {
+    const { user, created } = await db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(users).where(eq(users.id, seed.id));
+      const [row] = await tx
+        .insert(users)
+        .values({ id: seed.id, tenantId, externalId: seed.externalId, displayName: seed.displayName, dateOfBirth: seed.dateOfBirth, phoneE164: seed.phoneE164 })
+        .onConflictDoUpdate({
+          target: users.id,
+          set: { externalId: seed.externalId, displayName: seed.displayName, dateOfBirth: seed.dateOfBirth, phoneE164: seed.phoneE164, updatedAt: sql`now()` },
+        })
+        .returning();
+      if (row === undefined) throw new Error(`users upsert of ${seed.id} returned no row`);
+      await tx.insert(userVerification).values({ userId: row.id }).onConflictDoNothing({ target: userVerification.userId });
+      const { flags } = await refreshFingerprint(tx, row);
+      duplicateFlags += flags.length;
+      if (seed.region !== null) {
+        await recordLocation(tx, { user: row, resolution: { region: seed.region, confidence: 0.6, source: 'declared' }, actor: SEED_OPERATOR });
+      }
+      return { user: row, created: existing?.externalId !== seed.externalId };
+    });
+
+    const verification = await getVerification(db, user.id);
+    if (seed.verification !== 'unstarted' && verification.state === 'unstarted') {
+      await startVerification(db, { tenantId, userId: user.id, identity, actor: SEED_OPERATOR });
+    }
+    if (seed.selfExcluded === true) await seedSelfExclusion(db, tenantId, user);
+
+    results.push({ id: user.id, externalId: user.externalId, verification: (await getVerification(db, user.id)).state, created });
+  }
+  return { users: results, duplicateFlags };
+}
+
+async function seedSelfExclusion(db: Db, tenantId: Id<'tnt'>, user: User): Promise<void> {
+  const [active] = await db.execute<{ id: string }>(sql`
+    select id from user_restrictions
+    where user_id = ${user.id} and kind = 'self_exclusion' and lifted_at is null and (ends_at is null or ends_at > now())
+    limit 1
+  `);
+  if (active !== undefined) return;
+  await addRestriction(db, {
+    tenantId,
+    userId: user.id,
+    kind: 'self_exclusion',
+    reason: 'seed: self-excluded for a month',
+    endsAt: new Date(Date.now() + SEED_SELF_EXCLUSION_DAYS * 86_400_000),
+    actor: { kind: 'user', ref: user.id },
+  });
+}
+
+// ---- API keys (phase 3) --------------------------------------------------------------
+
+/**
+ * One sandbox secret key with the operator scope (Sideout's server issues credits and
+ * closes tournaments with it) and one sandbox publishable key (the iframe bootstrap),
+ * labelled so a rerun finds them. The plaintext exists only in the return value of the run
+ * that created a key; `pnpm db:seed -- --print-keys` prints it then and never again, and
+ * `--rotate-keys` revokes the seed keys and mints new ones.
+ */
+export const SEED_API_KEYS = [
+  { label: 'seed:sideout:secret:sandbox', kind: 'secret', environment: 'sandbox', scopes: ['operator'] },
+  { label: 'seed:sideout:publishable:sandbox', kind: 'publishable', environment: 'sandbox', scopes: [] },
+] as const;
+
+export type SeedApiKeysResult = { keys: Array<{ key: Omit<ApiKey, 'keyHash'>; plaintext: string | null; created: boolean }> };
+
+export async function seedApiKeys(db: Db, tenantId: Id<'tnt'>, options: { rotate?: boolean } = {}): Promise<SeedApiKeysResult> {
+  const keys: SeedApiKeysResult['keys'] = [];
+  for (const spec of SEED_API_KEYS) {
+    const created = await db.transaction(async (tx): Promise<{ key: ApiKey; plaintext: string | null; created: boolean }> => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`seed-api-key:${tenantId}:${spec.label}`}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(apiKeys)
+        .where(and(eq(apiKeys.tenantId, tenantId), eq(apiKeys.label, spec.label), isNull(apiKeys.revokedAt)));
+      if (existing !== undefined && options.rotate !== true) return { key: existing, plaintext: null, created: false };
+      if (existing !== undefined) await revokeApiKey(tx, { tenantId, keyId: existing.id, actor: SEED_OPERATOR });
+      const made: CreatedApiKey = await createApiKey(tx, { tenantId, kind: spec.kind, environment: spec.environment, scopes: [...spec.scopes], label: spec.label, actor: SEED_OPERATOR });
+      return { key: made.key, plaintext: made.plaintext, created: true };
+    });
+    const { keyHash: _hash, ...key } = created.key;
+    keys.push({ key, plaintext: created.plaintext, created: created.created });
+  }
+  return { keys };
+}
+
+// ---- Contests (phase 2) --------------------------------------------------------------
 
 export const SEED_PROMO_POINTS = 1000n;
 export const SEED_ENTRY_AMOUNT = 100n;

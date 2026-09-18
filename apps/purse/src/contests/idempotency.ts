@@ -13,7 +13,7 @@ import { ContestError } from './errors';
  * anything that is an entry; this does it for the contest mutations, which may create
  * several rows or, on an empty contest, no journal entry at all.
  *
- * One row per (tenant, key) in `idempotency_keys` records the operation, a hash of the
+ * One `service` row per (tenant, key) in `idempotency_keys` records the operation, a hash of the
  * request and a small JSON `record` of the ids the operation produced. A replay with the
  * same request reloads the result from those ids; a different request under a used key is
  * a conflict; two concurrent calls under one key serialise on an advisory lock so the
@@ -51,12 +51,12 @@ export async function idempotent<T, R extends Record<string, unknown>>(
   validateRequestKey(scope.key);
   const hash = requestHash({ operation: scope.operation, request: scope.request });
 
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`idem:${scope.tenantId}:${scope.key}`}, 0))`);
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`idem:service:${scope.tenantId}:${scope.key}`}, 0))`);
 
   const [existing] = await tx
     .select()
     .from(idempotencyKeys)
-    .where(and(eq(idempotencyKeys.tenantId, scope.tenantId), eq(idempotencyKeys.key, scope.key)));
+    .where(and(eq(idempotencyKeys.tenantId, scope.tenantId), eq(idempotencyKeys.scope, 'service'), eq(idempotencyKeys.key, scope.key)));
   if (existing !== undefined) {
     if (existing.requestHash !== hash) {
       throw new ContestError('idempotency_conflict', `idempotency key ${scope.key} was already used for a different request`, {
@@ -70,6 +70,7 @@ export async function idempotent<T, R extends Record<string, unknown>>(
   const { value, record } = await ops.run();
   await tx.insert(idempotencyKeys).values({
     tenantId: scope.tenantId,
+    scope: 'service',
     key: scope.key,
     operation: scope.operation,
     requestHash: hash,

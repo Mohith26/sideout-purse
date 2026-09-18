@@ -1,21 +1,29 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
+import { authenticateApiKey, resetAuthCaches } from '../src/auth';
 import { listParticipants, listResults } from '../src/contests';
 import type { Database } from '../src/db/client';
-import { accounts, auditLog, contests, tenants } from '../src/db/schema';
+import { accounts, apiKeys, auditLog, contests, operatorFlags, rulesets, tenants, userLocations, userRestrictions, users } from '../src/db/schema';
 import {
   PLATFORM_ACCOUNT_KINDS,
+  SEED_API_KEYS,
   SEED_CONTESTS,
   SEED_USER_IDS,
+  SEED_USERS,
   SIDEOUT_TENANT_ID,
   SIDEOUT_TENANT_NAME,
+  seedApiKeys,
   seedContests,
   seedPlatformAccounts,
+  seedRuleset,
   seedSideoutTenant,
+  seedUsers,
 } from '../src/db/seed';
+import { SPEC_EXAMPLE_RULESET } from '../src/eligibility';
 import { balanceOf, findAccount, reconcile } from '../src/ledger';
+import { getVerification } from '../src/users';
 import { connectMigrator, connectRuntime } from './helpers';
 import { wipeLedger } from './ledger/fixtures';
 
@@ -90,9 +98,95 @@ describe('db:seed', () => {
     expect(audit.every((row) => row.action === 'account.opened' && row.actorKind === 'system')).toBe(true);
   });
 
+  it('publishes the spec example ruleset as the active version, once', async () => {
+    const first = await seedRuleset(database.db);
+    expect(first.created).toBe(true);
+    expect(first.ruleset).toMatchObject({ version: SPEC_EXAMPLE_RULESET.version, active: true, body: SPEC_EXAMPLE_RULESET });
+    const second = await seedRuleset(database.db);
+    expect(second.created).toBe(false);
+    expect(await database.db.select().from(rulesets)).toHaveLength(1);
+  });
+
+  it('seeds six users covering every verification state, their locations, one self-exclusion and the duplicate-identity flag, idempotently', async () => {
+    const { tenant } = await seedSideoutTenant(database.db);
+    await seedRuleset(database.db);
+    const first = await seedUsers(database.db, tenant.id as Id<'tnt'>);
+    expect(first.users.map((user) => [user.externalId, user.verification, user.created])).toEqual(SEED_USERS.map((user) => [user.externalId, user.verification, true]));
+    expect(first.users.map((user) => user.id)).toEqual([...SEED_USER_IDS]);
+    expect(new Set(first.users.map((user) => user.verification))).toEqual(new Set(['verified', 'pending', 'rejected', 'unstarted']));
+    // Users 5 and 6 share a name and a date of birth: one duplicate-identity flag for the pair.
+    expect(first.duplicateFlags).toBe(1);
+    const flags = await runtime.db.select().from(operatorFlags);
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ kind: 'duplicate_identity', status: 'open', dedupeKey: `pair:${SEED_USER_IDS[4]}:${SEED_USER_IDS[5]}` });
+    // Locations for the five who declared one; a self-exclusion on the sixth.
+    expect(await runtime.db.select().from(userLocations)).toHaveLength(SEED_USERS.filter((user) => user.region !== null).length);
+    const restrictions = await runtime.db.select().from(userRestrictions);
+    expect(restrictions).toHaveLength(1);
+    expect(restrictions[0]).toMatchObject({ userId: SEED_USER_IDS[5], kind: 'self_exclusion', createdBy: `user:${SEED_USER_IDS[5]}`, liftedAt: null });
+    // The verified users carry a provider reference and a re-verify date, never anything else.
+    const verified = await getVerification(runtime.db, SEED_USER_IDS[0] ?? '');
+    expect(verified).toMatchObject({ state: 'verified', provider: 'dev' });
+    expect(verified.providerRef).toMatch(/^dev-[0-9a-f]{24}$/);
+    expect(verified.reverifyAfter?.getTime()).toBeGreaterThan(Date.now());
+
+    // A rerun creates and changes nothing.
+    const second = await seedUsers(database.db, tenant.id as Id<'tnt'>);
+    expect(second.users.map((user) => [user.externalId, user.verification, user.created])).toEqual(SEED_USERS.map((user) => [user.externalId, user.verification, false]));
+    expect(second.duplicateFlags).toBe(0);
+    expect(await runtime.db.select().from(users)).toHaveLength(6);
+    expect(await runtime.db.select().from(operatorFlags)).toHaveLength(1);
+    expect(await runtime.db.select().from(userRestrictions)).toHaveLength(1);
+  });
+
+  it('completes the placeholder users a phase 2 database was left with, keeping their wallets', async () => {
+    const { tenant } = await seedSideoutTenant(database.db);
+    await seedRuleset(database.db);
+    // What the 0007 migration backfills for a wallet that predates the users table.
+    const legacy = SEED_USER_IDS[0] ?? '';
+    await database.db.insert(users).values({ id: legacy, tenantId: tenant.id, externalId: `legacy:${legacy}` });
+    await seedUsers(database.db, tenant.id as Id<'tnt'>);
+    const [row] = await runtime.db.select().from(users).where(eq(users.id, legacy));
+    expect(row).toMatchObject({ externalId: 'seed:user-1', displayName: 'Ana Reyes' });
+    expect(await runtime.db.select().from(users)).toHaveLength(6);
+  });
+
+  it('mints one sandbox secret key with the operator scope and one publishable key, authenticates the secret, and rotates on request', async () => {
+    const { tenant } = await seedSideoutTenant(database.db);
+    resetAuthCaches();
+    const first = await seedApiKeys(database.db, tenant.id as Id<'tnt'>);
+    expect(first.keys.map((each) => [each.key.label, each.key.kind, each.key.environment, each.key.scopes, each.created])).toEqual(
+      SEED_API_KEYS.map((each) => [each.label, each.kind, each.environment, [...each.scopes], true]),
+    );
+    const secret = first.keys[0];
+    expect(secret?.plaintext).toMatch(/^sk_sandbox_[A-Za-z0-9]{32}$/);
+    expect(first.keys[1]?.plaintext).toMatch(/^pk_sandbox_[A-Za-z0-9]{32}$/);
+    const auth = await authenticateApiKey(runtime.db, secret?.plaintext ?? '');
+    expect(auth.tenant.id).toBe(tenant.id);
+    expect(auth.actor).toEqual({ kind: 'operator', ref: secret?.key.id });
+
+    // A rerun finds the keys and has no plaintext to give.
+    const second = await seedApiKeys(database.db, tenant.id as Id<'tnt'>);
+    expect(second.keys.map((each) => [each.key.id, each.plaintext, each.created])).toEqual(first.keys.map((each) => [each.key.id, null, false]));
+    expect(await runtime.db.select().from(apiKeys)).toHaveLength(2);
+
+    // Rotation revokes the seed keys and mints new ones; the old secret stops working.
+    const rotated = await seedApiKeys(database.db, tenant.id as Id<'tnt'>, { rotate: true });
+    expect(rotated.keys.every((each) => each.created && each.plaintext !== null)).toBe(true);
+    expect(await runtime.db.select().from(apiKeys)).toHaveLength(4);
+    // The old secret stops working at once (the verified cache is cleared with the revocation), and the revocation is audited like any other.
+    await expect(authenticateApiKey(runtime.db, secret?.plaintext ?? '')).rejects.toMatchObject({ code: 'api_key_revoked' });
+    const revoked = await runtime.db.select().from(auditLog).where(and(eq(auditLog.action, 'api_key.revoked'), eq(auditLog.subject, secret?.key.id ?? '')));
+    expect(revoked).toHaveLength(1);
+    expect(revoked[0]).toMatchObject({ actorKind: 'operator', actorRef: 'seed' });
+    await expect(authenticateApiKey(runtime.db, rotated.keys[0]?.plaintext ?? '')).resolves.toMatchObject({ key: { label: 'seed:sideout:secret:sandbox' } });
+  });
+
   it('seeds one contest per reachable state, idempotently, and the settled one reconciles', async () => {
     const { tenant } = await seedSideoutTenant(database.db);
     await seedPlatformAccounts(database.db, tenant.id);
+    await seedRuleset(database.db);
+    await seedUsers(database.db, tenant.id as Id<'tnt'>);
     const first = await seedContests(database.db, tenant.id as Id<'tnt'>);
     expect(first.contests.map((c) => [c.externalId, c.state, c.created])).toEqual([
       [SEED_CONTESTS.draft, 'draft', true],

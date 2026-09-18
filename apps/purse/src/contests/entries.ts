@@ -1,13 +1,18 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
+import type { EligibilityDecision } from '@purse/types';
 import { isId, newId, type Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
-import { contestParticipants, type Contest, type ContestParticipant } from '../db/schema';
+import { contestParticipants, eligibilityDecisions, type Contest, type ContestParticipant, type EligibilityDecisionRow } from '../db/schema';
+import { flagRiskReview, recordDecision, type RecordDecisionInput } from '../eligibility';
 import { findAccount, openAccount } from '../ledger/accounts';
 import { recordAudit, SYSTEM_ACTOR, type Actor } from '../ledger/audit';
+import { balanceOf } from '../ledger/balance';
 import { escrowEntry, refundEscrow } from '../ledger/flows';
 import { getEntry, linesOf, type PostedEntry } from '../ledger/post';
-import { evaluateEntryEligibility, type EligibilityDecision } from './eligibility';
+import type { GeoProvider, RiskProvider } from '../providers/types';
+import { getUser, resolveAndRecordLocation, type LocationInput } from '../users';
+import { evaluateEntryEligibility, notEligible, rulesetVersionOf } from './eligibility';
 import { ContestError } from './errors';
 import { idempotent, ledgerKey } from './idempotency';
 import { findParticipant, getContest, getParticipant, lockContest } from './load';
@@ -22,6 +27,18 @@ import { findParticipant, getContest, getParticipant, lockContest } from './load
  * is open and before `locks_at`: the same row is reactivated with a fresh escrow entry and
  * the `team_ref` and `seed` of the new request, since a player who lost a partner comes
  * back with another (docs/decisions.md).
+ *
+ * Eligibility (spec 4.5) is decided under the contest lock and a per-user entry lock (so
+ * two simultaneous entries by one user to different contests see each other's velocity),
+ * with the wallet balance and the journal's rolling totals as they stand at that instant.
+ * A `location` the request carries is resolved through the geo seam and recorded before
+ * the entry's transaction opens, so it stands whatever the decision. Every attempt the
+ * evaluator judges leaves one `eligibility_decisions` row: an allowed decision commits
+ * with the entry; a refusal is written after the entry's transaction has rolled back, so
+ * the record of the refusal and the location survive and nothing else does. A contest
+ * that is not open or is full is refused before the evaluator runs, under the same
+ * `not_eligible` shape (its reason and the version the contest is judged under) and with
+ * no decision row.
  */
 export type EnterContestInput = {
   tenantId: Id<'tnt'>;
@@ -31,10 +48,14 @@ export type EnterContestInput = {
   teamRef?: string | null;
   /** Seed for the `higher_seed_wins` tie-break; lower is better. */
   seed?: number | null;
+  /** What the partner knows of where the user is now; resolved through the geo seam and recorded before the entry is attempted. */
+  location?: LocationInput | null;
+  /** The seams consulted at entry. Without them no location is resolved and no risk signals are gathered. */
+  providers?: { geo?: GeoProvider; risk?: RiskProvider };
   idempotencyKey: string;
   actor?: Actor;
   requestId?: string;
-  /** The clock `locks_at` is checked against. Defaults to now. */
+  /** The clock `locks_at`, restrictions and velocity are checked against. Defaults to now. */
   now?: Date;
 };
 
@@ -44,6 +65,8 @@ export type EnteredContest = {
   /** The escrow entry that took the stake. */
   entry: PostedEntry;
   eligibility: EligibilityDecision;
+  /** The persisted decision (spec 4.5: the ruleset version is on every one). */
+  decision: EligibilityDecisionRow;
   replayed: boolean;
 };
 
@@ -61,19 +84,32 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
   }
   const actor = input.actor ?? SYSTEM_ACTOR;
   const now = input.now ?? new Date();
+  const requestId = input.requestId === undefined ? {} : { requestId: input.requestId };
 
-  return db.transaction(async (tx) => {
-    const { value, replayed } = await idempotent<Omit<EnteredContest, 'replayed'>, { contestId: string; participantId: string; entryId: string; rulesetVersion: string }>(
+  if (input.location !== undefined && input.location !== null) {
+    const geo = input.providers?.geo;
+    if (geo === undefined) throw new ContestError('invalid_input', 'a location was given but no geolocation provider is configured', { field: 'location' });
+    const user = await getUser(db, input.tenantId, input.userId);
+    await resolveAndRecordLocation(db, { user, location: input.location, geo, actor, now, ...requestId });
+  }
+
+  // A refusal is recorded after the transaction that would have escrowed the stake rolls back.
+  let refusal: RecordDecisionInput | undefined;
+
+  const attempt = db.transaction(async (tx) => {
+    const { value, replayed } = await idempotent<Omit<EnteredContest, 'replayed'>, { contestId: string; participantId: string; entryId: string; decisionId: string }>(
       tx,
       { tenantId: input.tenantId, key: input.idempotencyKey, operation: 'contest.enter', request: { contestId: input.contestId, userId: input.userId, teamRef, seed } },
       {
         run: async () => {
+          const user = await getUser(tx, input.tenantId, input.userId);
           const contest = await lockContest(tx, input.tenantId, input.contestId);
           if (contest.state !== 'open') {
             throw new ContestError('contest_not_open', `Contest ${contest.id} is ${contest.state}, not open for entries`, {
               contestId: contest.id,
               state: contest.state,
               reasons: ['contest_not_open'],
+              rulesetVersion: await rulesetVersionOf(tx, contest),
             });
           }
           if (contest.locksAt !== null && contest.locksAt.getTime() <= now.getTime()) {
@@ -81,6 +117,7 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
               contestId: contest.id,
               locksAt: contest.locksAt.toISOString(),
               reasons: ['contest_not_open'],
+              rulesetVersion: await rulesetVersionOf(tx, contest),
             });
           }
 
@@ -104,32 +141,40 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
                 contestId: contest.id,
                 maxParticipants: contest.maxParticipants,
                 reasons: ['contest_full'],
+                rulesetVersion: await rulesetVersionOf(tx, contest),
               });
             }
           }
 
-          // Phase 3 replaces this hook with the eligibility engine; today it always allows.
-          const eligibility = evaluateEntryEligibility({ userId: input.userId, contest });
-          if (!eligibility.allowed) {
-            throw new ContestError('not_eligible', `User ${input.userId} is not eligible to enter contest ${contest.id}`, {
-              contestId: contest.id,
-              userId: input.userId,
-              reasons: eligibility.reasons,
-              ...(eligibility.requiredAction === undefined ? {} : { requiredAction: eligibility.requiredAction }),
-              rulesetVersion: eligibility.rulesetVersion,
-            });
-          }
+          // One entry decision per user at a time, whatever the contest, so the velocity one
+          // reads includes the stake the other is about to take. Taken after the contest lock
+          // in every path, so the two orders never cross.
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`user-entry:${user.id}`}, 0))`);
 
-          // A wallet that does not exist holds nothing; open it so the refusal is
-          // `insufficient_funds`, not `account_not_found`. Rolled back with the rest on failure.
-          const { account: wallet } = await openAccount(tx, {
+          // A wallet that does not exist holds nothing; open it so the decision can read a
+          // balance and a refusal is `insufficient_balance`, not `account_not_found`. Rolled
+          // back with the rest on failure.
+          const { account: wallet } = await openAccount(tx, { tenantId: input.tenantId, kind: 'user_wallet', ownerRef: user.id, asset: contest.asset, actor, ...requestId });
+          const walletBalance = await balanceOf(tx, wallet.id);
+
+          const evaluated = await evaluateEntryEligibility(tx, {
             tenantId: input.tenantId,
-            kind: 'user_wallet',
-            ownerRef: input.userId,
-            asset: contest.asset,
-            actor,
-            ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+            user,
+            contest,
+            walletBalance,
+            now,
+            ...(input.providers?.risk === undefined ? {} : { risk: input.providers.risk }),
           });
+          const eligibility = evaluated.decision;
+          const toRecord: RecordDecisionInput = { tenantId: input.tenantId, userId: user.id, contestId: contest.id, decision: eligibility, context: evaluated.context, ...requestId };
+          if (!eligibility.allowed) {
+            refusal = toRecord;
+            throw notEligible(contest, user.id, eligibility, walletBalance);
+          }
+          const decision = await recordDecision(tx, toRecord);
+          if (evaluated.risk !== null && input.providers?.risk !== undefined) {
+            await flagRiskReview(tx, { tenantId: input.tenantId, userId: user.id, contestId: contest.id, risk: evaluated.risk, provider: input.providers.risk.name });
+          }
 
           const entry = await escrowEntry(tx, {
             tenantId: input.tenantId,
@@ -139,7 +184,7 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
             amount: contest.entryAmount,
             contestId: contest.id as Id<'cnt'>,
             idempotencyKey: ledgerKey('contest-entry', input.idempotencyKey),
-            description: `Entry of ${input.userId} to contest ${contest.externalId}`,
+            description: `Entry of ${user.id} to contest ${contest.externalId}`,
           });
 
           const [participant] =
@@ -149,7 +194,7 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
                   .values({
                     id: newId('ent'),
                     contestId: contest.id,
-                    userId: input.userId,
+                    userId: user.id,
                     teamRef,
                     seed,
                     entryJournalEntryId: entry.entry.id,
@@ -168,25 +213,42 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
             action: existing === undefined ? 'contest.entry.created' : 'contest.entry.reentered',
             subject: participant.id,
             before: existing ?? null,
-            after: { ...participant, rulesetVersion: eligibility.rulesetVersion },
-            ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+            after: { ...participant, rulesetVersion: eligibility.rulesetVersion, decisionId: decision.id },
+            ...requestId,
           });
 
           return {
-            value: { contest, participant, entry, eligibility },
-            record: { contestId: contest.id, participantId: participant.id, entryId: entry.entry.id, rulesetVersion: eligibility.rulesetVersion },
+            value: { contest, participant, entry, eligibility, decision },
+            record: { contestId: contest.id, participantId: participant.id, entryId: entry.entry.id, decisionId: decision.id },
           };
         },
-        replay: async (record) => ({
-          contest: await getContest(tx, input.tenantId, record.contestId),
-          participant: await getParticipant(tx, record.participantId),
-          entry: await loadEntry(tx, record.entryId),
-          eligibility: { allowed: true, rulesetVersion: record.rulesetVersion },
-        }),
+        replay: async (record) => {
+          const decision = await loadDecision(tx, record.decisionId);
+          return {
+            contest: await getContest(tx, input.tenantId, record.contestId),
+            participant: await getParticipant(tx, record.participantId),
+            entry: await loadEntry(tx, record.entryId),
+            eligibility: { allowed: true, rulesetVersion: decision.rulesetVersion },
+            decision,
+          };
+        },
       },
     );
     return { ...value, replayed };
   });
+
+  try {
+    return await attempt;
+  } catch (error) {
+    if (refusal !== undefined) await recordDecision(db, refusal);
+    throw error;
+  }
+}
+
+async function loadDecision(db: DbOrTx, decisionId: string): Promise<EligibilityDecisionRow> {
+  const [row] = await db.select().from(eligibilityDecisions).where(eq(eligibilityDecisions.id, decisionId));
+  if (row === undefined) throw new Error(`Eligibility decision ${decisionId} recorded but not found`);
+  return row;
 }
 
 export type WithdrawEntryInput = {

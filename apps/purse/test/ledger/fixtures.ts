@@ -1,20 +1,33 @@
+import { eq } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
 import type { Database, DbOrTx } from '../../src/db/client';
 import {
   accounts,
+  apiKeys,
   auditLog,
   contestParticipants,
   contestResults,
   contestScores,
   contests,
+  eligibilityDecisions,
+  embedTokens,
   idempotencyKeys,
+  idempotencyReservations,
+  identityFingerprints,
   journalEntries,
   journalLines,
+  operatorFlags,
+  rulesets,
   tenants,
+  userLocations,
+  userRestrictions,
+  userVerification,
+  users,
   type Account,
   type AccountKind,
   type Asset,
+  type User,
 } from '../../src/db/schema';
 import { openAccount } from '../../src/ledger';
 
@@ -22,20 +35,63 @@ import { openAccount } from '../../src/ledger';
  * Ledger test fixtures. Rows are created through the same code the platform uses
  * (`openAccount`), through whichever connection the test hands in; wiping is the one
  * thing only the owner role can do, so `wipeLedger` takes the migrator connection.
+ * A wallet needs a user (phase 3 made `accounts.user_id` a foreign key), so `openWallet`
+ * creates one when handed an id it has not seen.
  */
 
-/** Delete every ledger and contest row, in foreign-key order. Owner role only. */
+/** Delete every ledger, contest and identity row, in foreign-key order. Owner role only. */
 export async function wipeLedger(migrator: Database): Promise<void> {
+  await migrator.db.delete(eligibilityDecisions);
+  await migrator.db.delete(embedTokens);
+  await migrator.db.delete(operatorFlags);
+  await migrator.db.delete(identityFingerprints);
+  await migrator.db.delete(userLocations);
+  await migrator.db.delete(userRestrictions);
   await migrator.db.delete(contestResults);
   await migrator.db.delete(contestScores);
   await migrator.db.delete(contestParticipants);
   await migrator.db.delete(journalLines);
   await migrator.db.delete(journalEntries);
   await migrator.db.delete(contests);
+  await migrator.db.delete(rulesets);
   await migrator.db.delete(idempotencyKeys);
+  await migrator.db.delete(idempotencyReservations);
   await migrator.db.delete(auditLog);
   await migrator.db.delete(accounts);
+  await migrator.db.delete(userVerification);
+  await migrator.db.delete(users);
+  await migrator.db.delete(apiKeys);
   await migrator.db.delete(tenants);
+}
+
+export type CreateUserOptions = {
+  id?: Id<'usr'>;
+  externalId?: string;
+  displayName?: string | null;
+  dateOfBirth?: string | null;
+  phoneE164?: string | null;
+};
+
+/** A bare user row (and its `unstarted` verification row), the way the identity services would have made it. */
+export async function createUser(db: DbOrTx, tenantId: Id<'tnt'>, options: CreateUserOptions = {}): Promise<User> {
+  const id = options.id ?? newId('usr');
+  const [row] = await db
+    .insert(users)
+    .values({
+      id,
+      tenantId,
+      externalId: options.externalId ?? `ext-${id.slice(4)}`,
+      displayName: options.displayName === undefined ? `User ${id.slice(-6)}` : options.displayName,
+      dateOfBirth: options.dateOfBirth === undefined ? '1990-01-01' : options.dateOfBirth,
+      phoneE164: options.phoneE164 ?? null,
+    })
+    .onConflictDoNothing({ target: users.id })
+    .returning();
+  await db.insert(userVerification).values({ userId: id }).onConflictDoNothing({ target: userVerification.userId });
+  if (row !== undefined) return row;
+  const [existing] = await db.select().from(users).where(eq(users.id, id));
+  if (existing === undefined) throw new Error(`user ${id} was neither inserted nor found`);
+  return existing;
 }
 
 export async function createTenant(db: DbOrTx, name?: string): Promise<Id<'tnt'>> {
@@ -49,7 +105,8 @@ export async function openPlatform(db: DbOrTx, tenantId: Id<'tnt'>, kind: Accoun
   return (await openAccount(db, { tenantId, kind, ownerRef: null, asset })).account;
 }
 
-export async function openWallet(db: DbOrTx, tenantId: Id<'tnt'>, asset: Asset = 'POINTS', userId = newId('usr')): Promise<Account> {
+export async function openWallet(db: DbOrTx, tenantId: Id<'tnt'>, asset: Asset = 'POINTS', userId: Id<'usr'> = newId('usr')): Promise<Account> {
+  await createUser(db, tenantId, { id: userId });
   return (await openAccount(db, { tenantId, kind: 'user_wallet', ownerRef: userId, asset })).account;
 }
 

@@ -298,11 +298,11 @@ entry at all, so they need their own record. Phase 2 lands spec 4.1's `idempoten
 table keyed on (`tenant_id`, `key`) with the operation, a hash of the request and a small
 JSON record of the ids the operation produced; a replay reloads the original result from
 those ids rather than storing a response body, so the replay is exact and typed and the
-table is append-only for the runtime. Phase 3's HTTP idempotency middleware can add the
-response columns the spec lists or wrap these same services; either way partner keys are
-per tenant, as the ledger's already are. The 30-day TTL purge is a phase 9 job running as
-the owner. Request keys are at most 200 characters so the ledger keys derived from them
-(`contest-entry:<key>`, `contest-withdraw:<key>`) fit the journal's 255.
+table is append-only for the runtime. Partner keys are per tenant, as the ledger's
+already are. (Phase 3 has since added the HTTP layer's response columns to this table
+under a `scope` column and the 30-day purge as `db:purge`; see "Two layers of
+idempotency, one table".) Request keys are at most 200 characters so the ledger keys
+derived from them (`contest-entry:<key>`, `contest-withdraw:<key>`) fit the journal's 255.
 
 ### Money moved by settlement and void is keyed by the contest, not the request
 
@@ -315,6 +315,8 @@ request's key.
 
 ### The phase 3 hooks left in place
 
+(Phase 3 has since replaced the hook and mounted the routes; see "Phase 3 decisions".)
+
 `apps/purse/src/contests/eligibility.ts` is the one named hook `enterContest` calls; it
 always allows and is marked as phase 3's to replace. `contest_not_open`, `contest_full`
 and `insufficient_balance` (as the ledger's `insufficient_funds`) are already enforced at
@@ -323,6 +325,209 @@ entry without it. `contest_participants.user_id` is a typed id with no foreign k
 public routes, `GET /contests/:id/preview` included, are phase 3's and mount on
 `previewSettlement` and `closeContest`, which already exercise the preview-hash mechanism
 end to end at the service level; phase 2 adds no HTTP surface for it.
+
+## Phase 3 decisions
+
+### The operator scope is a flag on a secret key, not a third key kind
+
+Spec 4.1 seals `api_keys.kind` as `secret | publishable` and spec 4.7 marks
+`POST /users/:id/credits` "operator scope only". Phase 3 keeps the two kinds and adds
+`scopes text[]` to `api_keys`, whose only value today is `operator`; a publishable key may
+carry none (a CHECK holds both). A request on an operator-scoped key acts as an
+`operator` actor (`audit_log.actor_kind = 'operator'`, `actor_ref` = the key id), which is
+also what lets it close an `operator_close` contest (spec 4.3 MUST) and drive `finish`
+and `void`; a plain secret key acts as the `tenant` and is refused those with
+`permission_error` (`operator_scope_required` for credits, `operator_required` for a
+close). This mirrors how real platforms model restricted keys and keeps the console's
+"create, reveal once, revoke" flow (phase 5) on one table. The seed's Sideout secret key
+carries the scope, because Sideout's server is the operator of its own tournaments.
+
+### Key format and lookup
+
+A key is `sk_` or `pk_`, the environment, and 32 characters from `[A-Za-z0-9]`
+(`sk_sandbox_...`), so the environment is visible in the prefix a console shows and a log
+redacts. `key_prefix` is the type, the environment and the first eight random characters,
+indexed; authentication finds the candidates by prefix and verifies the argon2id hash
+(OWASP's 19 MiB / 2 iterations / 1 lane) of the presented key, so a prefix alone opens
+nothing and the database holds only hashes (a CHECK refuses anything but an
+`$argon2id$` string). Verified plaintexts are remembered in process by their SHA-256 for
+five minutes so a hot key is not re-hashed per request, and `last_used_at` is written at
+most once a minute per key. Sandbox and live keys are tags in v1: the two environments
+share one database and the tag is carried on the actor and in the logs; partitioning data
+by environment is a phase 9 hosting concern.
+
+### Embed tokens are stored as SHA-256, not argon2
+
+An embed token is 32 random bytes (`embt_` plus base64url): a high-entropy secret that no
+one types, so a plain digest is the right hash and argon2's cost buys nothing. It is
+single-use, scoped to one user and one flow, and expires in five minutes (spec 4.8 rule
+5); consuming it is one `UPDATE ... WHERE consumed_at IS NULL`, so two frames racing for
+one token cannot both win, and a trigger refuses un-consuming for every role.
+`POST /users/:id/verification` mints the identity flow's token; `POST /embed/tokens` mints
+any flow's. Consumed and expired tokens are kept a day for support and then purged. The
+plaintext is returned once and rests nowhere: the v1 idempotency layer stores those two
+responses with `token: null` and `replayed: true` in place of the token (`okOnce`), so a
+replay under the same key returns everything else unchanged and a partner that lost the
+token mints another under a fresh key.
+
+### Two layers of idempotency, one table
+
+Phase 2's `idempotency_keys` rows are the service layer's (the ids an operation produced,
+committed with its effects). Phase 3 adds the HTTP layer the spec describes (endpoint,
+request hash, response status and body) to the same table under a `scope` column that is
+part of the primary key, so a partner's key is recorded twice, once per layer, and the
+two never collide. The v1 middleware holds no transaction across a request: it claims the
+key in `idempotency_reservations` (one row per key, expiring after a minute), runs the
+handler against the pool, and then stores the `http` row. Every service commits its own
+transaction, so the identity provider is called with no row lock and no pool connection
+held, and a refused entry's decision record commits with the 403 that reported it. A
+concurrent request under a live claim waits for the stored response (up to five seconds,
+then `conflict` / `idempotency_key_in_progress` with `Retry-After`); a crash between the
+claim and the store leaves a claim that expires, after which the key may be retried. A
+2xx and every 4xx but 429 are stored, because a refusal is the answer to that request
+(Stripe's rule); a 5xx and a 429 store nothing and release the claim, so the partner
+retries the same key and the request is performed then. The stored body is jsonb, so a
+replay is the original response as JSON (key order may differ). Keys are remembered for
+at least 30 days; `pnpm --filter @purse/api db:purge` removes older rows and their claims as
+the owner, after which a key is fresh.
+
+### A refusal for funds alone is `insufficient_funds`
+
+Spec 4.5 lists `insufficient_balance` among the eligibility reasons and spec 4.7 lists
+`insufficient_funds` among the error types. The evaluator reports the shortfall as a
+reason (with `add_funds` as the action) and records it like every decision; the entry
+route reports a decision whose only reason is the shortfall as `insufficient_funds` (402,
+the money type a partner routes to funding), and any other refusal, including a shortfall
+alongside a compliance reason, as `not_eligible` (403). Both carry `reasons[]`,
+`requiredAction` and `rulesetVersion` in `detail`. A contest that is not open or is full
+is refused before the evaluator runs, as `not_eligible` with `contest_not_open` or
+`contest_full` as its one reason and the version the contest is judged under, and writes
+no decision row. The ledger's own non-negative wallet guard stands behind the evaluator for
+the race it cannot see.
+
+### An entry amount no one could stake is refused at creation and at open
+
+The per-contest stake limit is a rule about the contest, not the entrant: a contest whose
+`entryAmount` is above the `perContest` limit of the ruleset its entries are judged under
+would refuse every entrant `stake_limit_exceeded`. `createContest` refuses it against the
+active ruleset (the one it is about to pin) and `open` refuses it against the pinned one
+(a draft may have been edited, or the pin may predate the limit), both as
+`invalid_request` / `entry_amount_above_stake_limit`. The evaluator keeps its own check
+for a contest opened before this rule, or one with no pin whose active fallback changed
+after it opened.
+
+### Velocity is gross, per asset, from the journal
+
+Rolling 24-hour and 7-day totals (spec 4.6) are the sum of every `escrow` entry's debit
+of the user's wallet in the contest's asset, bounded on `posted_at`. A stake that was
+later refunded still counted as staked at the time (enter-and-withdraw does not reset a
+limit), and the limits in the ruleset apply per asset in that asset's minor units. The
+decision includes the entry being attempted, and `enterContest` takes a per-user advisory
+lock after the contest lock so two simultaneous entries by one user to different contests
+see each other's stake. Every decision, allowed or refused, is one `eligibility_decisions`
+row carrying the ruleset version and the evaluator's input as it stood; a refusal's row is
+written after the entry's transaction has rolled back, so the refusal is recorded and
+nothing else is.
+
+### Which ruleset judges an entry
+
+A contest pins the active ruleset version at creation (spec 4.1
+`eligibility_ruleset_version`), and every entry to it is judged under that version; a
+contest from before any ruleset existed falls back to the active one. Rulesets are global
+(not per tenant), a version's body never changes once stored (a trigger holds it), and
+exactly one version is active (a partial unique index holds it). The spec's example is
+seeded as `2026.09.1` with phase 3's one addition, `collusion` (`minMeetings`,
+`oneSidedShare`), optional with defaults so the spec's JSON validates unchanged.
+
+### The evaluator's input carries `asOf`
+
+Spec 4.5's `evaluate` input has no clock, but a pure function must be told the instant
+to judge an age and a restriction's window against. `asOf` (ISO 8601) is the one field
+added to the input shape. Two readings the spec leaves open are fixed with it: an age is
+checked whenever the date of birth is known, for any asset; an unknown date of birth is
+refused only where identity is required (`identity_unverified` with
+`provide_demographics`), since verification is what establishes it, so a free-to-play
+entry with no demographics is allowed, which is the asymmetry the spec asks for. All
+applicable reasons are reported in a fixed priority order and the first one's action is the
+decision's, so a terminal reason (a block, a self-exclusion, a rejected identity, an
+under-age user) never comes with "add funds". The stake and velocity limits rank above the
+shortfall for the same reason: no amount of funds admits an entry above the per-contest
+limit, and only time clears a velocity overrun, so a user refused for both is told nothing
+rather than "add funds".
+
+### `rejected` is terminal for the user
+
+The verification machine is `unstarted -> pending -> verified | rejected`, with
+`verified -> pending` once `reverify_after` has passed (365 days after verification unless
+the provider says otherwise). Spec 5.3 shows a refusal as a plain terminal explanation
+with a support path and no retry button, so a rejected user cannot start again through the
+API (`invalid_state` / `verification_rejected`); the database admits `rejected ->
+unstarted` for the operator reset phase 5 builds. `pending` may be started again (a fresh
+embed token for an abandoned iframe). The provider is called between two short
+transactions, never under the row lock, and its answer is applied only if the user is still
+`pending` when it arrives. The geo seam is held to the same rule: `upsertUser` and
+`enterContest` ask it before their transactions open.
+
+### Risk signals are surfaced, never enforced
+
+The `RiskProvider` seam is consulted at entry alongside the evaluator. Its dev
+implementation applies the spec 4.6 velocity and duplicate-account rules as signals
+(`velocity_near_24h_limit`, `duplicate_identity_open`, `new_account_max_stake`, ...) and
+answers `review`, never `deny`; a `review` becomes an `operator_flags` row (`risk_review`)
+and the entry goes through. The evaluator enforces the limits themselves. Duplicate
+identities (SHA-256 of the normalised name and the date of birth) are flagged per pair
+within a tenant, once, and never auto-block; a user missing either part gets a fingerprint
+of their own id so a cleared field cannot leave a stale match behind, and two users
+written at once with one identity serialise on the fingerprint so the pair is still
+flagged. The head-to-head collusion signal is checked inside every head-to-head
+settlement for the pair it involved, and nowhere else; a meeting is a settled head-to-head
+contest with a strict winner, and a qualifying pair is flagged once. A restriction's
+`reason` reaches the partner only when the user placed the restriction on themself
+(`created_by` is `user:<id>`, whatever the kind); an operator's or the platform's reason
+stays in Purse. A `location` sent with an entry is recorded before the entry is attempted,
+so it stands whether or not the entry is refused.
+
+### Routes beyond the 4.7 list
+
+Spec 4.7 lists `open` and `lock`; `start` (`in_progress`) and `finish`
+(`awaiting_settlement`) are mounted the same way, because scores are accepted only from
+`in_progress` and a contest whose results never all arrive must still reach settlement
+over HTTP. `cancelled` has no route: nothing in the flow needs it, and a partner can
+leave a draft alone. `GET /health` and `GET /internal/reconcile` answer at the root
+(phase 0) and under `/v1` (the spec's base); neither takes an API key.
+
+### The phase 3 backfill and `accounts.user_id`
+
+`contest_participants.user_id`, `contest_scores.user_id` and `contest_results.user_id` are
+foreign keys to `users`; `accounts.owner_ref` cannot be a conditional one, so a wallet
+names its owner twice, `owner_ref` for the natural key and `user_id` for the foreign key,
+and a CHECK holds them equal (null for every other kind). A database migrated from phase
+2 holds wallets and entries for users that had no row: migration 0007 gives each a
+placeholder user (`external_id = 'legacy:<id>'`) so the keys can be added valid, and the
+seed completes the six seed users by their stable ids, which the `users_guard` trigger
+allows only for a `legacy:` placeholder. A fresh database backfills nothing.
+
+### Rate limits and the last reconcile result
+
+The token buckets live in process memory (`RATE_LIMIT_BURST`, `RATE_LIMIT_PER_SECOND`,
+at most ten thousand buckets). An authenticated request spends from its key's bucket,
+keyed by the key's id, so nobody who merely knows a partner's visible prefix can spend
+the partner's allowance; a request that fails authentication spends from its address's
+bucket, and once that is empty a failure is answered 429 instead of 401. A request that
+authenticates is never refused on its address: behind a proxy every partner shares one,
+and a stream of bad keys must not lock the partners out. Once an address's bucket is
+empty, a key whose prefix no key has (or no key at all) is refused before authentication
+at the cost of one index lookup; a key whose prefix exists is still verified, so a guess
+that copies a real prefix costs one argon2 check per request however many it sends. The
+hosted edge rate limit is the phase 9 backstop for that. The address is the socket's
+unless `TRUSTED_PROXY_HOPS` says how many proxies append to `X-Forwarded-For`, in which
+case it is the entry that many from the header's right (the hosted deploy, behind one
+load balancer, sets it to 1; a bare process leaves it 0 so a client cannot choose its own
+bucket). A shared store for several replicas is a phase 9 hosting concern. `/health` now
+reports the active ruleset version; the last reconcile result still waits for phase 9's
+scheduled job. `apps/purse/.env.example` lags `src/env.ts` for the phase 3 variables
+because writes to env templates are denied by policy in the automated pipeline;
+`src/env.ts` and `docs/providers.md` are the canonical variable list.
 
 ## Phase 6 decisions (Sideout domain)
 

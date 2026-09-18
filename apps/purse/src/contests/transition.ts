@@ -3,8 +3,10 @@ import type { Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
 import { contestParticipants, contestResults, contests, type Contest, type ContestState } from '../db/schema';
+import { findRulesetForContest } from '../eligibility';
 import { recordAudit, type Actor } from '../ledger/audit';
 import { balanceOf } from '../ledger/balance';
+import { assertEntryAmountWithinLimit } from './eligibility';
 import { ContestError } from './errors';
 import { lockContest } from './load';
 import { assertTransition, TRANSITION_ACTIONS } from './states';
@@ -18,8 +20,10 @@ import { assertTransition, TRANSITION_ACTIONS } from './states';
  *      transitions serialise and the second one sees the first's result;
  *   2. validates the source state against the table in `states.ts` and the actor
  *      (a `user` never; an operator to leave `awaiting_settlement` under `operator_close`);
- *   3. checks the destination's guard: nothing is held for `cancelled`, the escrow is empty
- *      for `settled` and `voided`, and every placed entrant has a result for `settled`;
+ *   3. checks the destination's guard: the entry amount is within the stake limit of the
+ *      ruleset its entries are judged under for `open`, nothing is held for `cancelled`,
+ *      the escrow is empty for `settled` and `voided`, and every placed entrant has a
+ *      result for `settled`;
  *   4. writes the row and one `audit_log` row with the contest before and after.
  *
  * Pass the transaction of the operation the transition belongs to: `closeContest` enters
@@ -76,6 +80,11 @@ export async function transition(db: DbOrTx, input: TransitionInput): Promise<Tr
  */
 async function assertGuard(tx: DbOrTx, contest: Contest, to: ContestState): Promise<void> {
   switch (to) {
+    case 'open': {
+      const ruleset = await findRulesetForContest(tx, contest);
+      if (ruleset !== undefined) assertEntryAmountWithinLimit(contest, ruleset);
+      return;
+    }
     case 'cancelled': {
       const held = await activeCount(tx, contest.id);
       if (held > 0) {
@@ -104,7 +113,6 @@ async function assertGuard(tx: DbOrTx, contest: Contest, to: ContestState): Prom
       return;
     }
     case 'draft':
-    case 'open':
     case 'locked':
     case 'in_progress':
     case 'awaiting_settlement':

@@ -3,6 +3,7 @@ import { newId, type Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
 import { accounts, contestResults, type Contest, type ContestParticipant, type ContestResult, type ContestScore, type ParticipantState } from '../db/schema';
+import { findRulesetForContest, flagCollusion } from '../eligibility';
 import { openAccount } from '../ledger/accounts';
 import type { Actor } from '../ledger/audit';
 import { balanceOf } from '../ledger/balance';
@@ -186,6 +187,14 @@ export async function executeSettlement(tx: DbOrTx, input: ExecuteSettlementInpu
   results.sort((a, b) => a.placement - b.placement || (a.userId < b.userId ? -1 : 1));
 
   const { after: settled } = await transition(tx, { tenantId, contestId: settling.id, to: 'settled', actor: input.actor, ...requestId });
+
+  // The head-to-head collusion signal (spec 4.6) is checked the moment a meeting is
+  // recorded, for the pair this settlement involved; surfaced as an operator flag, never
+  // acted on.
+  if (settled.kind === 'head_to_head' && results.length === 2) {
+    const ruleset = await findRulesetForContest(tx, settled);
+    if (ruleset !== undefined) await flagCollusion(tx, { tenantId, ruleset, users: results.map((row) => row.userId) });
+  }
   return { contest: settled, results, payouts: preview.payouts, payoutHash: preview.payoutHash, entry };
 }
 

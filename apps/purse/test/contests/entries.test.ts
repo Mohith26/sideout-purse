@@ -4,11 +4,12 @@ import { newId } from '@repo/ids';
 
 import { enterContest, listParticipants, transition, voidContest, withdrawEntry } from '../../src/contests';
 import type { Database } from '../../src/db/client';
-import { auditLog, contestParticipants, journalEntries } from '../../src/db/schema';
+import { auditLog, contestParticipants, eligibilityDecisions, journalEntries } from '../../src/db/schema';
 import { reconcile } from '../../src/ledger';
+import { isUsersError } from '../../src/users';
 import { connectMigrator, connectRuntime, rejection } from '../helpers';
 import { key, wipeLedger } from '../ledger/fixtures';
-import { advance, buildArena, contestError, escrowOf, ledgerError, makeContest, OPERATOR, TENANT_ACTOR, walletBalance, type Arena } from './fixtures';
+import { advance, buildArena, contestError, eligibleUser, escrowOf, makeContest, OPERATOR, TENANT_ACTOR, walletBalance, type Arena } from './fixtures';
 
 /**
  * Spec 4.2.5 "Enter a contest" and "Refund a withdrawal before lock", 4.1
@@ -49,14 +50,15 @@ describe('enterContest()', () => {
       ['debit', 100n],
       ['credit', 100n],
     ]);
-    expect(entered.eligibility).toEqual({ allowed: true, rulesetVersion: 'allow-all.phase-2' });
+    expect(entered.eligibility).toEqual({ allowed: true, rulesetVersion: '2026.09.1' });
+    expect(entered.decision).toMatchObject({ userId: user(0), contestId: contest.id, rulesetVersion: '2026.09.1', allowed: true, reasons: [], requiredAction: null });
     expect(await walletBalance(runtime.db, arena, user(0))).toBe(150n);
     expect(await escrowOf(runtime.db, contest)).toBe(100n);
 
     const audit = await runtime.db.select().from(auditLog).where(eq(auditLog.subject, entered.participant.id));
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ action: 'contest.entry.created', actorKind: 'tenant', before: null });
-    expect(audit[0]?.after).toMatchObject({ userId: user(0), rulesetVersion: 'allow-all.phase-2' });
+    expect(audit[0]?.after).toMatchObject({ userId: user(0), rulesetVersion: '2026.09.1', decisionId: entered.decision.id });
 
     // I7 holds for this participant.
     const report = await reconcile(runtime.db);
@@ -168,13 +170,13 @@ describe('enterContest()', () => {
     const notOpen = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: draft.id, userId: user(0), idempotencyKey: key() }));
     expect(notOpen.code).toBe('contest_not_open');
     expect(notOpen.apiType).toBe('not_eligible');
-    expect(notOpen.detail).toMatchObject({ reasons: ['contest_not_open'], state: 'draft' });
+    expect(notOpen.detail).toMatchObject({ reasons: ['contest_not_open'], state: 'draft', rulesetVersion: '2026.09.1' });
 
     await advance(runtime.db, arena, draft.id, 'open');
     await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: draft.id, userId: user(0), idempotencyKey: key() });
     const full = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: draft.id, userId: user(1), idempotencyKey: key() }));
     expect(full.code).toBe('contest_full');
-    expect(full.detail).toMatchObject({ reasons: ['contest_full'], maxParticipants: 1 });
+    expect(full.detail).toMatchObject({ reasons: ['contest_full'], maxParticipants: 1, rulesetVersion: '2026.09.1' });
 
     const timed = await makeContest(runtime.db, arena, { locksAt: new Date('2026-09-17T12:00:00Z') });
     await advance(runtime.db, arena, timed.id, 'open');
@@ -182,21 +184,37 @@ describe('enterContest()', () => {
     expect(early.participant.state).toBe('entered');
     const late = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: timed.id, userId: user(1), idempotencyKey: key(), now: new Date('2026-09-17T12:00:00Z') }));
     expect(late.code).toBe('contest_not_open');
-    expect(late.detail).toMatchObject({ locksAt: '2026-09-17T12:00:00.000Z' });
+    expect(late.detail).toMatchObject({ locksAt: '2026-09-17T12:00:00.000Z', rulesetVersion: '2026.09.1' });
+    // Refused before the evaluator ran: the version is the contest's pin, and no decision row is written.
+    expect(await runtime.db.select({ n: count() }).from(eligibilityDecisions)).toEqual([{ n: 2 }]);
 
-    // Funds: 250 minus two entries of 100 leaves 50, not enough for a third.
+    // Funds: 250 minus two entries of 100 leaves 50, not enough for a third. The evaluator
+    // sees the shortfall first and, it being the only reason, refuses as
+    // `insufficient_funds` with the spec 4.5 reason and action; the decision is recorded and
+    // the ledger's own guard stands behind it.
     const third = await makeContest(runtime.db, arena);
     await advance(runtime.db, arena, third.id, 'open');
-    const broke = await ledgerError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: third.id, userId: user(0), idempotencyKey: key() }));
+    const broke = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: third.id, userId: user(0), idempotencyKey: key() }));
     expect(broke.code).toBe('insufficient_funds');
-    expect(broke.detail).toMatchObject({ balance: '50', requested: '100' });
+    expect(broke.apiType).toBe('insufficient_funds');
+    expect(broke.detail).toMatchObject({ reasons: ['insufficient_balance'], requiredAction: 'add_funds', rulesetVersion: '2026.09.1', balance: '50', requested: '100', shortfall: '50' });
     // A user with no wallet at all is refused the same way, and no wallet or participant row is left behind.
-    const stranger = newId('usr');
-    const nothing = await ledgerError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: third.id, userId: stranger, idempotencyKey: key() }));
+    const stranger = await eligibleUser(runtime.db, arena.tenantId);
+    const nothing = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: third.id, userId: stranger, idempotencyKey: key() }));
     expect(nothing.code).toBe('insufficient_funds');
+    expect(nothing.detail).toMatchObject({ reasons: ['insufficient_balance'], balance: '0' });
     expect(await walletBalance(runtime.db, arena, stranger)).toBe(0n);
     expect(await listParticipants(runtime.db, third.id)).toEqual([]);
     expect(await escrowOf(runtime.db, third)).toBe(0n);
+    // Both refusals were recorded, the ledger untouched.
+    const refusals = await runtime.db.select().from(eligibilityDecisions).where(eq(eligibilityDecisions.contestId, third.id));
+    expect(refusals.map((row) => [row.userId, row.allowed, row.reasons])).toEqual([
+      [user(0), false, ['insufficient_balance']],
+      [stranger, false, ['insufficient_balance']],
+    ]);
+    // A user that does not exist is refused before anything is read.
+    const nobody = await rejection(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: third.id, userId: newId('usr'), idempotencyKey: key() }));
+    expect(isUsersError(nobody, 'user_not_found')).toBe(true);
 
     const bad = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: third.id, userId: 'someone', idempotencyKey: key() }));
     expect(bad.code).toBe('invalid_input');

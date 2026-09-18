@@ -1,3 +1,5 @@
+import type { NotEligibleDetail } from './eligibility';
+
 /**
  * The Purse API error taxonomy (system spec section 4.7).
  *
@@ -40,6 +42,16 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorType, number>> = {
  * It never contains a connection string, a key, or a stack.
  */
 export type ApiError = { type: ApiErrorType; code: string; message: string; detail?: Record<string, unknown> };
+
+/**
+ * The one error whose `detail` is part of the contract: a `not_eligible` refusal names the
+ * sealed reasons and the required action (spec 4.5) so the partner can branch on them.
+ */
+export type NotEligibleError = ApiError & { type: 'not_eligible'; detail: NotEligibleDetail };
+
+export function isNotEligibleError(error: ApiError): error is NotEligibleError {
+  return error.type === 'not_eligible' && error.detail !== undefined && Array.isArray(error.detail['reasons']);
+}
 
 export type ApiErrorEnvelope = { error: ApiError };
 export type ApiDataEnvelope<T> = { data: T };

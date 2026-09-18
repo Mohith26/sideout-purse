@@ -26,7 +26,7 @@ apps/
   purse-console/    (phase 5) the operator console
 packages/
   ui/               @sideout/ui   design tokens, Tailwind theme, the AppShell primitive
-  purse-types/      @purse/types  API error taxonomy and header names
+  purse-types/      @purse/types  API error taxonomy, header names, the eligibility vocabulary and the v1 resource shapes
   purse-sdk/        @purse/sdk    the partner-facing client (phase 4 implements; phase 0 ships its version)
   ids/              @repo/ids     typed-prefix UUID v7 ids shared by both apps
   db/               @repo/db      connection and migration helpers; holds no schema, no URL
@@ -34,17 +34,16 @@ packages/
   config/           @repo/config  ESLint flat config (with the boundary rule) and tsconfig presets
 docker/postgres/    init script for the compose Postgres: two databases, three roles
 scripts/            db-setup: the same provisioning against any Postgres you can reach
-docs/               system-spec.md (verbatim) and decisions.md
+docs/               system-spec.md (verbatim), decisions.md, providers.md (the provider seam table)
 test/               repository-level tests: the boundary lint rule, env isolation
 ```
 
 Each app owns its Drizzle config and migration folder (`apps/*/drizzle`). Migrations are
 forward-only and applied by `pnpm db:migrate`, which runs each app's migrator in its own
 process. Reference rows never live in migration history: `pnpm db:seed` upserts them in
-both apps (in Purse, the Sideout tenant, its platform ledger accounts, and three seed
-contests: a draft, an open one with entrants holding promo points, and a settled one whose
-results reconcile; in Sideout, the demo events described under "Quickstart") and can be
-re-run against any environment.
+both apps (the quickstart below says what) and can be re-run against any environment; the
+three seed contests are a draft, an open one with entrants holding promo points, and a
+settled one whose results reconcile.
 
 Purse connects as two roles. `purse_migrator` owns its databases and runs migrations and
 seeds; `purse_app`, the API's runtime role, owns nothing and cannot `UPDATE` or `DELETE`
@@ -67,9 +66,16 @@ pnpm db:setup               # or: provision an existing Postgres (defaults to lo
                             #     and write apps/purse/.env and apps/sideout/.env with local defaults
 
 pnpm db:migrate             # applies both apps' migrations, each in its own process
-pnpm db:seed                # Purse: the Sideout tenant, its platform accounts and the seed contests.
-                            # Sideout: the demo events. Both safe to re-run
+pnpm db:seed                # Purse: the Sideout tenant, its platform accounts, the active ruleset, six users,
+                            # two API keys and the seed contests. Sideout: the demo events. Both safe to re-run
 pnpm dev                    # Purse on :4000, Sideout on :3000
+```
+
+The first seed prints nothing secret. To hold a key, ask for it:
+
+```sh
+pnpm --filter @purse/api db:seed -- --print-keys               # prints the plaintext of any key this run created
+pnpm --filter @purse/api db:seed -- --print-keys --rotate-keys # revokes the seed keys and prints the new ones
 ```
 
 Then:
@@ -126,7 +132,49 @@ that service's JSON log line, which is how a Sideout request will be traced into
 calls it makes.
 
 `pnpm db:setup` takes `--admin-url` (or `DATABASE_ADMIN_URL`) for a Postgres that is not
-the local default; `apps/*/.env.example` list every variable with a comment.
+the local default. `apps/*/.env.example` are the templates; `apps/purse/src/env.ts` is the
+authoritative list for Purse, and [`docs/decisions.md`](docs/decisions.md) (phase 3, "Rate
+limits") notes where the template lags it.
+
+## The API
+
+Purse's public API is `/v1` (spec 4.7): the secret key in `Authorization: Bearer sk_...`,
+`Idempotency-Key` on every mutation, `{ data }` or
+`{ error: { type, code, message, detail? } }` with the sealed error types
+(`invalid_request`, `authentication_error`, `permission_error`, `not_eligible`,
+`insufficient_funds`, `invalid_state`, `conflict`, `rate_limited`, `internal_error`).
+Amounts are decimal strings of minor units. A replay of a key returns the stored response
+and creates nothing (`Idempotent-Replayed: true`); the same key with a different request
+is a `conflict`.
+
+```sh
+KEY=sk_sandbox_...   # from db:seed --print-keys
+curl -s localhost:4000/v1/users -H "Authorization: Bearer $KEY" -H "Idempotency-Key: u1" \
+  -H "content-type: application/json" \
+  -d '{"externalId":"sideout:ana","displayName":"Ana Reyes","dateOfBirth":"1994-03-12","location":{"declaredRegion":"US-TX"}}'
+```
+
+The routes: `POST /users` (create or upsert by `externalId`), `GET /users/:id`,
+`POST /users/:id/verification` (starts the identity flow through the provider seam and
+returns a five-minute, single-use embed token), `GET /users/:id/wallet`,
+`POST /users/:id/credits` (operator-scoped keys only); `POST /contests`,
+`GET /contests/:id`, `POST /contests/:id/{open,lock,start,finish}`,
+`POST /contests/:id/entries` (evaluates eligibility, escrows the entry),
+`DELETE /contests/:id/entries/:userId`, `POST /contests/:id/scores`,
+`GET /contests/:id/preview` (the frozen settlement preview with its payout hash),
+`POST /contests/:id/close` (requires that hash), `POST /contests/:id/void`,
+`GET /contests/:id/results`; `POST /embed/tokens`; `GET /internal/reconcile` and
+`GET /health` (also at the root). Every endpoint and every error type is recorded in
+`apps/purse/test/contract/fixtures.json`.
+
+Eligibility (spec 4.5) is a pure evaluator over a versioned, stored ruleset; the seeded
+version is the spec's own example, in which `POINTS` is permitted everywhere with no
+verification and `CREDIT` is region-gated, verification-gated and stake-limited. Every
+entry attempt the evaluator judges leaves a decision row carrying the ruleset version (a
+contest that is not open or is full is refused before it runs, under the version the
+contest pins). Identity, geolocation and risk are provider seams with deterministic dev
+implementations:
+[`docs/providers.md`](docs/providers.md) names the vendor each stands in for.
 
 ## How a score becomes a payout
 

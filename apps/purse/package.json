@@ -15,10 +15,12 @@
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts",
     "reconcile": "tsx --env-file-if-exists=.env scripts/reconcile.ts",
+    "db:purge": "tsx --env-file-if-exists=.env scripts/purge.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
+    "@node-rs/argon2": "^2.2.1",
     "@purse/sdk": "workspace:*",
     "@purse/types": "workspace:*",
     "@repo/db": "workspace:*",

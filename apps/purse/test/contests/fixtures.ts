@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
 import {
@@ -11,15 +12,18 @@ import {
   type ScoreSubmission,
 } from '../../src/contests';
 import type { DbOrTx } from '../../src/db/client';
-import type { Account, Asset, Contest } from '../../src/db/schema';
+import { userLocations, userVerification, type Account, type Asset, type Contest } from '../../src/db/schema';
+import { publishRuleset, SPEC_EXAMPLE_RULESET } from '../../src/eligibility';
 import { balanceOf, findAccount, issuePromoPoints, LedgerError, openAccount } from '../../src/ledger';
 import type { Actor } from '../../src/ledger/audit';
-import { createTenant, key, openPlatform } from '../ledger/fixtures';
+import { createTenant, createUser, key, openPlatform } from '../ledger/fixtures';
 
 /**
  * Contest test fixtures. Everything is built through the services under test; only the
- * tenant and its promo account are raw. `wipeLedger` (ledger fixtures) clears the contest
- * tables too.
+ * tenant, its promo account and its users are raw. `wipeLedger` (ledger fixtures) clears
+ * the contest tables too. An arena's users are eligible for anything: verified, of age,
+ * located in a permitted region, and the spec's example ruleset is active, so a contest
+ * test exercises the contest engine and the eligibility tests exercise the evaluator.
  */
 export const OPERATOR: Actor = { kind: 'operator', ref: 'op_test' };
 export const TENANT_ACTOR: Actor = { kind: 'tenant', ref: 'sideout' };
@@ -32,18 +36,34 @@ export type Arena = {
   users: Array<Id<'usr'>>;
 };
 
-/** A tenant with a promo account and `users` funded wallets of `funding` each. */
+/** A tenant with a promo account, the active ruleset, and `users` eligible users with funded wallets of `funding` each. */
 export async function buildArena(db: DbOrTx, options: { users: number; funding?: bigint; asset?: Asset } = { users: 4 }): Promise<Arena> {
   const asset = options.asset ?? 'POINTS';
   const tenantId = await createTenant(db);
+  await publishRuleset(db, { body: SPEC_EXAMPLE_RULESET, activate: true });
   const promo = await openPlatform(db, tenantId, 'promo_liability', asset);
   const users: Array<Id<'usr'>> = [];
   for (let i = 0; i < options.users; i += 1) {
-    const userId = newId('usr');
+    const userId = await eligibleUser(db, tenantId);
     users.push(userId);
     if ((options.funding ?? 1000n) > 0n) await fund(db, { tenantId, asset, promo }, userId, options.funding ?? 1000n);
   }
   return { tenantId, asset, promo, users };
+}
+
+/** A user who passes every rule of the spec ruleset for either asset: verified, of age, in US-TX. */
+export async function eligibleUser(db: DbOrTx, tenantId: Id<'tnt'>, id: Id<'usr'> = newId('usr')): Promise<Id<'usr'>> {
+  const user = await createUser(db, tenantId, { id });
+  await db
+    .update(userVerification)
+    .set({ state: 'pending', provider: 'dev' })
+    .where(eq(userVerification.userId, user.id));
+  await db
+    .update(userVerification)
+    .set({ state: 'verified', providerRef: 'dev-fixture', verifiedAt: new Date(), reverifyAfter: new Date(Date.now() + 365 * 86_400_000) })
+    .where(eq(userVerification.userId, user.id));
+  await db.insert(userLocations).values({ userId: user.id, regionCode: 'US-TX', source: 'declared', confidence: 0.6 }).onConflictDoNothing({ target: userLocations.userId });
+  return user.id as Id<'usr'>;
 }
 
 export async function fund(db: DbOrTx, arena: Pick<Arena, 'tenantId' | 'asset' | 'promo'>, userId: Id<'usr'>, amount: bigint): Promise<void> {

@@ -22,7 +22,8 @@ export type OpenedAccount = { account: Account; created: boolean };
  * Open an account, or return the one that already exists for the same
  * (tenant, kind, owner, asset). The unique constraint is the idempotency key, so two
  * concurrent opens of the same wallet end with one row and both callers holding it.
- * Only a genuinely new account writes an audit row.
+ * Only a genuinely new account writes an audit row. A wallet can only be opened for a
+ * user that exists: `accounts.user_id` is a foreign key to `users`.
  */
 export async function openAccount(db: DbOrTx, input: OpenAccountInput): Promise<OpenedAccount> {
   return db.transaction(async (tx) => {
@@ -33,6 +34,9 @@ export async function openAccount(db: DbOrTx, input: OpenAccountInput): Promise<
         tenantId: input.tenantId,
         kind: input.kind,
         ownerRef: input.ownerRef,
+        // A wallet names its owner twice: `owner_ref` for the natural key, `user_id` for the
+        // foreign key to `users` (the CHECK holds them equal). Phase 3 gave users rows.
+        userId: input.kind === 'user_wallet' ? input.ownerRef : null,
         asset: input.asset,
         normalSide: NORMAL_SIDE_BY_KIND[input.kind],
       })

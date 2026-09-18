@@ -3,8 +3,10 @@ import type { ApiErrorType } from '@purse/types';
 /**
  * Every way the contest engine refuses a request, with the sealed error type (spec 4.7) a
  * route reports it under. Like `LedgerError`, these are refusals, never bugs; anything
- * unexpected propagates as-is. `not_eligible` codes carry `reasons` in their detail using
- * the spec 4.5 vocabulary so phase 3's evaluator slots in without changing the shape.
+ * unexpected propagates as-is. `not_eligible` and `insufficient_funds` codes carry
+ * `reasons` and `requiredAction` in their detail using the spec 4.5 vocabulary: a decision
+ * refused for want of funds alone is `insufficient_funds`, the money type of spec 4.7, and
+ * any other refusal is `not_eligible` (docs/decisions.md).
  */
 export const CONTEST_ERROR_CODES = {
   // Lookup and tenancy
@@ -13,6 +15,7 @@ export const CONTEST_ERROR_CODES = {
   // Input
   invalid_input: 'invalid_request',
   invalid_prize_structure: 'invalid_request',
+  entry_amount_above_stake_limit: 'invalid_request',
   invalid_payout_hash: 'invalid_request',
   duplicate_user: 'invalid_request',
   external_id_taken: 'conflict',
@@ -31,6 +34,7 @@ export const CONTEST_ERROR_CODES = {
   contest_not_open: 'not_eligible',
   contest_full: 'not_eligible',
   not_eligible: 'not_eligible',
+  insufficient_funds: 'insufficient_funds',
   already_entered: 'conflict',
   not_a_participant: 'invalid_request',
   participant_not_active: 'invalid_state',

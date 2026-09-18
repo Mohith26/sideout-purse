@@ -50,6 +50,34 @@
       "when": 1789701229751,
       "tag": "0006_contest_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789712827253,
+      "tag": "0007_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789712872856,
+      "tag": "0008_identity_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789717912705,
+      "tag": "0009_idempotency_reservations",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789717920440,
+      "tag": "0010_idempotency_reservation_grants",
+      "breakpoints": true
     }
   ]
 }

@@ -111,7 +111,7 @@ describe('append-only enforcement at the role level', () => {
     const privileges = await runtimeRolePrivileges(runtime.sql);
     expect(privileges.role).toBe('purse_app');
     expect(privileges.ownedTables).toBe(0);
-    expect(APPEND_ONLY_TABLES).toEqual(['journal_entries', 'journal_lines', 'audit_log', 'contest_results', 'idempotency_keys']);
+    expect(APPEND_ONLY_TABLES).toEqual(['journal_entries', 'journal_lines', 'audit_log', 'contest_results', 'idempotency_keys', 'eligibility_decisions']);
     for (const table of APPEND_ONLY_TABLES) {
       expect(privileges.tables[table], table).toEqual({ present: true, select: true, insert: true, update: false, delete: false, truncate: false });
     }
@@ -119,12 +119,13 @@ describe('append-only enforcement at the role level', () => {
   });
 
   it('the contest tables follow the same model: results and used keys are append-only, and only the columns that legitimately change are updatable', async () => {
-    for (const [table, column] of [
-      ['contest_results', 'computed_at'],
-      ['idempotency_keys', 'created_at'],
+    for (const [table, assignment] of [
+      ['contest_results', 'computed_at = now()'],
+      ['idempotency_keys', 'created_at = now()'],
+      ['idempotency_reservations', "key = 'tampered'"],
     ] as const) {
       for (const statement of [
-        () => runtime.sql.unsafe(`update ${table} set ${column} = now()`),
+        () => runtime.sql.unsafe(`update ${table} set ${assignment}`),
         () => runtime.sql.unsafe(`delete from ${table}`),
         () => runtime.sql.unsafe(`truncate ${table}`),
       ]) {
@@ -135,11 +136,11 @@ describe('append-only enforcement at the role level', () => {
       select c.table_name as "table", c.column_name as "column",
         has_column_privilege('purse_app', format('public.%I', c.table_name), c.column_name, 'UPDATE') as "update"
       from information_schema.columns c
-      where c.table_schema = 'public' and c.table_name in ('contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys')
+      where c.table_schema = 'public' and c.table_name in ('contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys', 'idempotency_reservations')
       order by 1, 2
     `;
     const updatable = Object.fromEntries(
-      ['contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys'].map((table) => [
+      ['contests', 'contest_participants', 'contest_scores', 'contest_results', 'idempotency_keys', 'idempotency_reservations'].map((table) => [
         table,
         columns.filter((row) => row.table === table && row.update).map((row) => row.column),
       ]),
@@ -150,6 +151,7 @@ describe('append-only enforcement at the role level', () => {
       contest_scores: ['superseded_by'],
       contest_results: [],
       idempotency_keys: [],
+      idempotency_reservations: ['expires_at', 'operation', 'request_hash', 'reserved_at'],
     });
     // Never the identity of a contest or of an entry.
     for (const column of ['id', 'tenant_id', 'external_id', 'asset', 'escrow_account_id', 'created_at']) {
@@ -159,6 +161,38 @@ describe('append-only enforcement at the role level', () => {
       expect(updatable['contest_participants'], column).not.toContain(column);
     }
     expect(updatable['contest_scores']).not.toContain('score');
+  });
+
+  it('the identity, eligibility and access tables follow the same model, column by column', async () => {
+    const tables = ['users', 'user_verification', 'user_restrictions', 'user_locations', 'rulesets', 'eligibility_decisions', 'identity_fingerprints', 'operator_flags', 'api_keys', 'embed_tokens'];
+    const columns = await runtime.sql<Array<{ table: string; column: string; update: boolean }>>`
+      select c.table_name as "table", c.column_name as "column",
+        has_column_privilege('purse_app', format('public.%I', c.table_name), c.column_name, 'UPDATE') as "update"
+      from information_schema.columns c
+      where c.table_schema = 'public' and c.table_name = any(${runtime.sql.array(tables)}::text[])
+      order by 1, 2
+    `;
+    const updatable = Object.fromEntries(tables.map((table) => [table, columns.filter((row) => row.table === table && row.update).map((row) => row.column)]));
+    expect(updatable).toEqual({
+      users: ['date_of_birth', 'display_name', 'phone_e164', 'updated_at'],
+      user_verification: ['provider', 'provider_ref', 'reverify_after', 'state', 'updated_at', 'verified_at'],
+      user_restrictions: ['lifted_at', 'lifted_by', 'updated_at'],
+      user_locations: ['confidence', 'region_code', 'resolved_at', 'source', 'updated_at'],
+      rulesets: ['active', 'updated_at'],
+      eligibility_decisions: [],
+      identity_fingerprints: ['computed_at', 'fingerprint'],
+      operator_flags: ['reviewed_at', 'reviewed_by', 'status', 'updated_at'],
+      api_keys: ['last_used_at', 'revoked_at', 'updated_at'],
+      embed_tokens: ['consumed_at'],
+    });
+    // Append-only where a row is history: a decision, a used key. No DELETE or TRUNCATE anywhere.
+    for (const table of tables) {
+      for (const statement of [() => runtime.sql.unsafe(`delete from ${table}`), () => runtime.sql.unsafe(`truncate ${table}`)]) {
+        expect(String(await rejection(statement())), table).toMatch(new RegExp(`permission denied for table ${table}`));
+      }
+    }
+    expect(String(await rejection(runtime.sql`update eligibility_decisions set allowed = true`))).toMatch(/permission denied for table eligibility_decisions/);
+    expect(String(await rejection(runtime.sql`update accounts set user_id = null where id = ${walletId}`))).toMatch(/permission denied for table accounts/);
   });
 
   it('the owner role fails the runtime check, so an API started on the migrator URL refuses to serve', async () => {
@@ -197,7 +231,8 @@ describe('append-only enforcement at the role level', () => {
 
     const otherTenant = newId('tnt');
     const rewrites = {
-      'kind, normal_side and owner_ref': () => runtime.sql`update accounts set kind = 'external_settlement', normal_side = 'debit', owner_ref = null where id = ${walletId}`,
+      'kind, normal_side, owner_ref and user_id': () => runtime.sql`update accounts set kind = 'external_settlement', normal_side = 'debit', owner_ref = null, user_id = null where id = ${walletId}`,
+      user_id: () => runtime.sql`update accounts set user_id = null where id = ${walletId}`,
       kind: () => runtime.sql`update accounts set kind = 'external_settlement' where id = ${walletId}`,
       normal_side: () => runtime.sql`update accounts set normal_side = 'debit' where id = ${walletId}`,
       tenant_id: () => runtime.sql`update accounts set tenant_id = ${otherTenant} where id = ${walletId}`,
@@ -218,7 +253,7 @@ describe('append-only enforcement at the role level', () => {
     // The same rewrite (a wallet turned into a debit-normal platform account, passing
     // every CHECK) succeeds as the owner, rolled back, so it is the role that is refused.
     await migrator.sql.begin(async (tx) => {
-      await expect(tx`update accounts set kind = 'external_settlement', normal_side = 'debit', owner_ref = null where id = ${walletId}`).resolves.toBeDefined();
+      await expect(tx`update accounts set kind = 'external_settlement', normal_side = 'debit', owner_ref = null, user_id = null where id = ${walletId}`).resolves.toBeDefined();
       throw new Error('rollback');
     }).catch((error: unknown) => {
       if (!(error instanceof Error) || error.message !== 'rollback') throw error;
