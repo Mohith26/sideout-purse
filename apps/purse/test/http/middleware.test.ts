@@ -435,10 +435,18 @@ describe('rate limiting', () => {
       expect(await h.database.db.select().from(idempotencyReservations).where(eq(idempotencyReservations.key, 'rl-2'))).toEqual([]);
       expect(again.headers.get(IDEMPOTENCY_KEY_HEADER)).toBeNull();
       // From the poisoned address, a key whose prefix exists is still verified: the genuine key is
-      // served (behind a proxy that address is everyone's), a revoked one is refused for what it is.
+      // served (behind a proxy that address is everyone's), while a revoked one fails
+      // authentication like any other bad key there and is told to back off.
       const fromPoisoned = await client(h, boot.operatorKey).get('/v1/users/usr_x', { address: stranger });
       expect(fromPoisoned.status).toBe(400);
       expect(fromPoisoned.headers.get(RATE_LIMIT_REMAINING_HEADER)).toBe('1');
+      await revokeApiKey(h.database.db, { tenantId: boot.tenantId, keyId: boot.keyIds.plain, actor: { kind: 'operator' } });
+      const revokedFromPoisoned = await api.get('/v1/users/usr_x', { address: stranger });
+      expect(revokedFromPoisoned.status).toBe(429);
+      expect(revokedFromPoisoned.error).toMatchObject({ type: 'rate_limited', code: 'too_many_requests' });
+      const revokedElsewhere = await api.get('/v1/users/usr_x', { address: partner });
+      expect(revokedElsewhere.status).toBe(401);
+      expect(revokedElsewhere.error).toMatchObject({ type: 'authentication_error', code: 'api_key_revoked' });
       // One that could never authenticate (a prefix no key has, or no key at all) is refused outright.
       for (const bogus of [client(h, `sk_sandbox_${'Z'.repeat(32)}`), client(h, `pk_live_${'Z'.repeat(32)}`), client(h, 'not-a-key'), client(h, undefined)]) {
         const refused = await bogus.get('/v1/users/usr_x', { address: stranger });
