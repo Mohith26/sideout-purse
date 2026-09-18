@@ -21,3 +21,27 @@ export const REQUEST_ID_SHAPE = /^[A-Za-z0-9._:-]{8,128}$/;
 export function isRequestId(value: string | null | undefined): value is string {
   return value !== undefined && value !== null && REQUEST_ID_SHAPE.test(value);
 }
+
+/**
+ * Every v1 mutation carries one (system spec section 2, rule 4). Purse stores the first
+ * response under the key and returns it, unchanged, to every replay; the same key with a
+ * different request is a `conflict`.
+ */
+export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
+
+/** `true` on a response that was served from a stored earlier response rather than performed again. */
+export const IDEMPOTENT_REPLAYED_HEADER = 'Idempotent-Replayed';
+
+/** What an `Idempotency-Key` must look like: 1 to 200 characters, no whitespace or control characters. */
+export const IDEMPOTENCY_KEY_MAX = 200;
+export const IDEMPOTENCY_KEY_SHAPE = /^[^\s\p{C}]{1,200}$/u;
+
+export function isIdempotencyKey(value: string | null | undefined): value is string {
+  return value !== undefined && value !== null && IDEMPOTENCY_KEY_SHAPE.test(value);
+}
+
+/** Rate-limit headers (IETF draft-ietf-httpapi-ratelimit-headers), plus `Retry-After` on a 429. */
+export const RATE_LIMIT_LIMIT_HEADER = 'RateLimit-Limit';
+export const RATE_LIMIT_REMAINING_HEADER = 'RateLimit-Remaining';
+export const RATE_LIMIT_RESET_HEADER = 'RateLimit-Reset';
+export const RETRY_AFTER_HEADER = 'Retry-After';

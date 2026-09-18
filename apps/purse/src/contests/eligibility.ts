@@ -1,49 +1,61 @@
+import type { EligibilityDecision } from '@purse/types';
+import type { Id } from '@repo/ids';
+
+import type { DbOrTx } from '../db/client';
 import type { Contest } from '../db/schema';
+import { decideEntry, rulesetForContest, type EntryDecision } from '../eligibility';
+import type { GeoProvider, RiskProvider } from '../providers/types';
+import { profileOf, resolveAndRecordLocation, type LocationInput } from '../users';
+import type { User } from '../db/schema';
+import type { Actor } from '../ledger/audit';
+import { ContestError } from './errors';
 
 /**
- * PHASE 3 REPLACES THIS FILE. Spec 4.5's eligibility engine (a pure evaluator over a
- * versioned ruleset, with the identity, restriction and geolocation seams) is phase 3.
- * Until then `enterContest` calls this one named hook, which always allows, so the call
- * site, the decision shape and the `not_eligible` error path exist now and phase 3 only
- * has to change what is decided, not where. The vocabulary below is spec 4.5's verbatim.
- *
- * What is already enforced at entry without this hook: `contest_not_open` and
- * `contest_full` (by `enterContest` itself, under the contest row lock) and
- * `insufficient_balance` (by the ledger's non-negative wallet rule, as `insufficient_funds`).
+ * Where the eligibility engine (spec 4.5, `src/eligibility`) meets an entry. `enterContest`
+ * calls this under the contest row lock and the per-user entry lock, after the contest's
+ * own checks (`contest_not_open`, `contest_full`) and with the wallet balance in hand, so
+ * the decision is made against the journal as it stands at that instant. What the partner
+ * knows of the user's location goes through the `GeoProvider` seam first, and the
+ * `RiskProvider` seam is consulted for signals alongside the pure evaluation.
  */
-export const ELIGIBILITY_REASONS = [
-  'under_minimum_age',
-  'region_not_permitted',
-  'identity_unverified',
-  'identity_rejected',
-  'self_excluded',
-  'cooling_off',
-  'platform_blocked',
-  'insufficient_balance',
-  'stake_limit_exceeded',
-  'velocity_limit_exceeded',
-  'region_unknown',
-  'contest_not_open',
-  'contest_full',
-] as const;
-export type EligibilityReason = (typeof ELIGIBILITY_REASONS)[number];
-
-export const REQUIRED_ACTIONS = ['complete_identity', 'provide_demographics', 'add_funds', 'confirm_location'] as const;
-export type RequiredAction = (typeof REQUIRED_ACTIONS)[number];
-
-export type EligibilityDecision =
-  | { allowed: true; rulesetVersion: string }
-  | { allowed: false; rulesetVersion: string; reasons: EligibilityReason[]; requiredAction?: RequiredAction };
-
 export type EntryEligibilityInput = {
-  userId: string;
-  contest: Pick<Contest, 'id' | 'asset' | 'entryAmount' | 'kind'>;
+  tenantId: Id<'tnt'>;
+  user: User;
+  contest: Contest;
+  walletBalance: bigint;
+  now: Date;
+  location?: LocationInput | null;
+  geo?: GeoProvider;
+  risk?: RiskProvider;
+  actor: Actor;
+  requestId?: string;
 };
 
-/** The version recorded on every decision this placeholder makes, so a persisted decision from before phase 3 is recognisable. */
-export const ALLOW_ALL_RULESET_VERSION = 'allow-all.phase-2';
+export async function evaluateEntryEligibility(tx: DbOrTx, input: EntryEligibilityInput): Promise<EntryDecision> {
+  if (input.location !== undefined && input.location !== null) {
+    if (input.geo === undefined) throw new ContestError('invalid_input', 'a location was given but no geolocation provider is configured', { field: 'location' });
+    await resolveAndRecordLocation(tx, { user: input.user, location: input.location, geo: input.geo, actor: input.actor, now: input.now, ...(input.requestId === undefined ? {} : { requestId: input.requestId }) });
+  }
+  const profile = await profileOf(tx, input.user, input.now);
+  const ruleset = await rulesetForContest(tx, input.contest);
+  return decideEntry(tx, {
+    tenantId: input.tenantId,
+    profile,
+    contest: input.contest,
+    walletBalance: input.walletBalance,
+    ruleset,
+    now: input.now,
+    ...(input.risk === undefined ? {} : { risk: input.risk }),
+  });
+}
 
-/** Always allows. See the file header. */
-export function evaluateEntryEligibility(_input: EntryEligibilityInput): EligibilityDecision {
-  return { allowed: true, rulesetVersion: ALLOW_ALL_RULESET_VERSION };
+/** The refusal an entry reports: `not_eligible` with the sealed reasons and required action in its detail (spec 4.7). */
+export function notEligible(contest: Contest, userId: string, decision: EligibilityDecision & { allowed: false }): ContestError {
+  return new ContestError('not_eligible', `User ${userId} is not eligible to enter contest ${contest.id}: ${decision.reasons.join(', ')}`, {
+    contestId: contest.id,
+    userId,
+    reasons: decision.reasons,
+    ...(decision.requiredAction === undefined ? {} : { requiredAction: decision.requiredAction }),
+    rulesetVersion: decision.rulesetVersion,
+  });
 }

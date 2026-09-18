@@ -197,7 +197,8 @@ describe('append-only enforcement at the role level', () => {
 
     const otherTenant = newId('tnt');
     const rewrites = {
-      'kind, normal_side and owner_ref': () => runtime.sql`update accounts set kind = 'external_settlement', normal_side = 'debit', owner_ref = null where id = ${walletId}`,
+      'kind, normal_side, owner_ref and user_id': () => runtime.sql`update accounts set kind = 'external_settlement', normal_side = 'debit', owner_ref = null, user_id = null where id = ${walletId}`,
+      user_id: () => runtime.sql`update accounts set user_id = null where id = ${walletId}`,
       kind: () => runtime.sql`update accounts set kind = 'external_settlement' where id = ${walletId}`,
       normal_side: () => runtime.sql`update accounts set normal_side = 'debit' where id = ${walletId}`,
       tenant_id: () => runtime.sql`update accounts set tenant_id = ${otherTenant} where id = ${walletId}`,
@@ -218,7 +219,7 @@ describe('append-only enforcement at the role level', () => {
     // The same rewrite (a wallet turned into a debit-normal platform account, passing
     // every CHECK) succeeds as the owner, rolled back, so it is the role that is refused.
     await migrator.sql.begin(async (tx) => {
-      await expect(tx`update accounts set kind = 'external_settlement', normal_side = 'debit', owner_ref = null where id = ${walletId}`).resolves.toBeDefined();
+      await expect(tx`update accounts set kind = 'external_settlement', normal_side = 'debit', owner_ref = null, user_id = null where id = ${walletId}`).resolves.toBeDefined();
       throw new Error('rollback');
     }).catch((error: unknown) => {
       if (!(error instanceof Error) || error.message !== 'rollback') throw error;

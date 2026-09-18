@@ -1,8 +1,11 @@
 /**
  * Purse schema, system spec section 4.1. Phase 0 shipped tenancy; phase 1 added the ledger
- * (4.2) and the audit log; phase 2 adds contests, entries, scores, results and the
- * idempotency-key record. Later phases add identity and plumbing in this file and generate
- * migrations from it with `pnpm db:generate`.
+ * (4.2) and the audit log; phase 2 added contests, entries, scores, results and the
+ * idempotency-key record; phase 3 adds identity (users, verification, restrictions,
+ * locations), the eligibility engine's stored rulesets and decisions (4.5), the risk
+ * tables (4.6: identity fingerprints and operator flags), API keys and embed tokens.
+ * Later phases add plumbing in this file and generate migrations from it with
+ * `pnpm db:generate`.
  *
  * Conventions every table follows:
  *
@@ -17,8 +20,8 @@
  * - Enumerations are Postgres enums, not free text, so the database rejects a typo.
  * - Privileges are explicit. Tables are owned by `purse_migrator`; the runtime role
  *   `purse_app` gets exactly what it needs per table in a custom migration (see
- *   `drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql` and
- *   `0006_contest_guards.sql`). A new table with no grant is unreadable by the runtime,
+ *   `drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`, `0006_contest_guards.sql`
+ *   and `0008_identity_guards.sql`). A new table with no grant is unreadable by the runtime,
  *   which `test/ledger/roles.test.ts` turns into a failing test rather than a surprise in
  *   production. Append-only tables (the journal, the audit log, contest results, used
  *   idempotency keys) never grant UPDATE, DELETE or TRUNCATE; other tables grant UPDATE
@@ -30,6 +33,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -43,8 +47,10 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import type { EligibilityReason, RequiredAction } from '@purse/types';
 import { idCheck, idPatternLiteral, nullableIdCheck, timestamps } from '@repo/db';
 
+import type { Ruleset } from '../eligibility/ruleset';
 import { TIE_BREAK_RULES, type PrizeStructure } from '../settlement/types';
 
 // ---- Tenancy -------------------------------------------------------------------------
@@ -121,6 +127,13 @@ export const accounts = pgTable(
       .references(() => tenants.id),
     kind: accountKind('kind').notNull(),
     ownerRef: text('owner_ref'),
+    /**
+     * The owner as a real foreign key, for wallets: equal to `owner_ref` when `kind` is
+     * `user_wallet` and null otherwise (the CHECK below). Postgres cannot make `owner_ref`
+     * itself a conditional foreign key, so the wallet's owner is named twice and the
+     * database holds the two equal; a wallet for a user that does not exist is refused.
+     */
+    userId: text('user_id').references(() => users.id),
     asset: asset('asset').notNull(),
     normalSide: ledgerSide('normal_side').notNull(),
     status: accountStatus('status').notNull().default('open'),
@@ -128,6 +141,10 @@ export const accounts = pgTable(
   },
   (table) => [
     idCheck('accounts_id_prefix', table.id, 'acct'),
+    check(
+      'accounts_user_id_is_wallet_owner',
+      sql`(${table.kind} = 'user_wallet') = (${table.userId} is not null) and (${table.userId} is null or ${table.userId} = ${table.ownerRef})`,
+    ),
     unique('accounts_tenant_kind_owner_asset_key')
       .on(table.tenantId, table.kind, table.ownerRef, table.asset)
       .nullsNotDistinct(),
@@ -364,8 +381,12 @@ export const contests = pgTable(
     prizeStructure: jsonb('prize_structure').$type<PrizeStructure>().notNull(),
     tieBreak: tieBreakRule('tie_break').notNull().default('split_evenly'),
     settlementPolicy: settlementPolicy('settlement_policy').notNull().default('operator_close'),
-    /** Set by the eligibility engine (phase 3); `null` until a ruleset exists. */
-    eligibilityRulesetVersion: text('eligibility_ruleset_version'),
+    /**
+     * The ruleset version pinned at creation (the active one then), which every entry to
+     * this contest is evaluated under; `null` only on a contest created before a ruleset
+     * existed, which falls back to the active version at evaluation.
+     */
+    eligibilityRulesetVersion: text('eligibility_ruleset_version').references(() => rulesets.version),
     state: contestState('state').notNull().default('draft'),
     opensAt: timestamp('opens_at', { withTimezone: true }),
     /** After this instant no entry is accepted even while the state is still `open`. */
@@ -413,7 +434,9 @@ export const contestParticipants = pgTable(
     contestId: text('contest_id')
       .notNull()
       .references(() => contests.id),
-    userId: text('user_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
     /** The partner's opaque team reference, if the entrant plays as part of a team. */
     teamRef: text('team_ref'),
     seed: integer('seed'),
@@ -455,7 +478,9 @@ export const contestScores = pgTable(
     contestId: text('contest_id')
       .notNull()
       .references(() => contests.id),
-    userId: text('user_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
     score: numeric('score', { mode: 'number' }),
     attemptFinished: boolean('attempt_finished').notNull().default(false),
     /** Set by the service to `clock_timestamp()` after the contest lock is held, so per contest it follows submission order. */
@@ -490,7 +515,9 @@ export const contestResults = pgTable(
     contestId: text('contest_id')
       .notNull()
       .references(() => contests.id),
-    userId: text('user_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
     placement: integer('placement').notNull(),
     score: numeric('score', { mode: 'number' }),
     payoutAmount: bigint('payout_amount', { mode: 'bigint' }).notNull(),
@@ -514,30 +541,426 @@ export type NewContestResult = typeof contestResults.$inferInsert;
 // ---- Idempotency keys (spec 4.1, plumbing) -------------------------------------------
 
 /**
- * Spec 4.1 `idempotency_keys`, the record behind "every Purse mutation is idempotent"
- * (spec section 2, rule 4) for the mutations that are not themselves a journal entry. One
- * row per (tenant, key): the operation it was used for, a hash of the request, and the
- * ids the operation produced, from which a replay reloads and returns the original result
- * (`src/contests/idempotency.ts`). A different request under a used key is a conflict.
- * Append-only for the runtime; the 30-day TTL purge (spec 4.1) is a phase 9 job that runs
- * as the owner.
+ * Two layers record a partner's key, distinguished by `scope`: the service layer inside
+ * the operation's own transaction, and the HTTP layer once the response is known.
  */
+export const idempotencyScope = pgEnum('idempotency_scope', ['service', 'http']);
+export type IdempotencyScope = (typeof idempotencyScope.enumValues)[number];
+
+/**
+ * Spec 4.1 `idempotency_keys`, the record behind "every Purse mutation is idempotent"
+ * (spec section 2, rule 4). One row per (tenant, scope, key):
+ *
+ * - `service` rows are written by `src/contests/idempotency.ts` inside the operation's
+ *   transaction: the operation, a hash of the request, and a small JSON `result` of the
+ *   ids the operation produced, from which a replay reloads and returns the original
+ *   result. They commit with the effects they describe or not at all.
+ * - `http` rows are written by the v1 idempotency middleware (`src/http/idempotency.ts`)
+ *   in the same transaction as the request's effects, once the response is known:
+ *   `operation` is the endpoint (`POST /v1/contests/:id/entries`), `request_hash` covers the
+ *   method, path and body, and `response_status` and `response_body` are what every replay
+ *   of the key is answered with, unchanged. A different request under a used key is a
+ *   conflict at whichever layer sees it first.
+ *
+ * Append-only for the runtime; rows are eligible for removal after the 30-day TTL
+ * (spec 4.1) by `pnpm --filter @purse/api purge`, which runs as the owner.
+ */
+export const IDEMPOTENCY_TTL_DAYS = 30;
+
 export const idempotencyKeys = pgTable(
   'idempotency_keys',
   {
     tenantId: text('tenant_id')
       .notNull()
       .references(() => tenants.id),
+    scope: idempotencyScope('scope').notNull(),
     key: text('key').notNull(),
+    /** The service operation (`contest.enter`) or, for an `http` row, the endpoint. */
     operation: text('operation').notNull(),
     requestHash: text('request_hash').notNull(),
-    result: jsonb('result').$type<Record<string, unknown>>().notNull(),
+    result: jsonb('result').$type<Record<string, unknown>>(),
+    responseStatus: integer('response_status'),
+    responseBody: jsonb('response_body').$type<Record<string, unknown>>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    primaryKey({ name: 'idempotency_keys_pkey', columns: [table.tenantId, table.key] }),
+    primaryKey({ name: 'idempotency_keys_pkey', columns: [table.tenantId, table.scope, table.key] }),
+    check(
+      'idempotency_keys_scope_shape',
+      sql`(${table.scope} = 'service' and ${table.result} is not null and ${table.responseStatus} is null and ${table.responseBody} is null)
+        or (${table.scope} = 'http' and ${table.result} is null and ${table.responseStatus} between 100 and 599 and ${table.responseBody} is not null)`,
+    ),
     index('idempotency_keys_created_at_idx').on(table.createdAt),
   ],
 );
 
 export type IdempotencyKeyRow = typeof idempotencyKeys.$inferSelect;
+
+// ---- Identity (spec 4.1, decision D8) ------------------------------------------------
+
+/**
+ * Purse owns the wallet-bearing identity; the partner links its own account to it by
+ * `external_id`, unique per tenant (decision D8). `phone_e164` and `date_of_birth` are the
+ * demographics the eligibility engine and the identity provider need; nothing here is a
+ * document. The runtime may update the three demographic fields (a partner upsert
+ * corrects a name or a date of birth) and nothing else; a trigger holds the identity
+ * fields immutable for every role.
+ */
+export const users = pgTable(
+  'users',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    /** The partner's opaque id for this user. */
+    externalId: text('external_id').notNull(),
+    displayName: text('display_name'),
+    phoneE164: text('phone_e164'),
+    /** `YYYY-MM-DD`; a date, never an instant, so it does not shift with a timezone. */
+    dateOfBirth: date('date_of_birth', { mode: 'string' }),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('users_id_prefix', table.id, 'usr'),
+    unique('users_tenant_id_external_id_key').on(table.tenantId, table.externalId),
+    check('users_external_id_not_blank', sql`length(trim(${table.externalId})) > 0 and length(${table.externalId}) <= 255`),
+    check('users_display_name_length', sql`${table.displayName} is null or (length(trim(${table.displayName})) > 0 and length(${table.displayName}) <= 200)`),
+    check('users_phone_e164_shape', sql`${table.phoneE164} is null or ${table.phoneE164} ~ '^\\+[1-9][0-9]{6,14}$'`),
+    index('users_tenant_id_idx').on(table.tenantId),
+  ],
+);
+
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
+
+export const verificationState = pgEnum('verification_state', ['unstarted', 'pending', 'verified', 'rejected']);
+export type VerificationState = (typeof verificationState.enumValues)[number];
+
+/**
+ * Spec 4.1 `user_verification`: the KYC state machine, one row per user, created
+ * `unstarted` with the user. `provider` names the seam that decided (`dev`, later
+ * `persona`); `provider_ref` is that provider's opaque reference for the check and is held
+ * to a short token shape by a CHECK, so a URL, a document, an image or a JSON blob cannot
+ * be stored in it. There is no other free-form column: identity documents never enter this
+ * database (spec 4.1, "No identity documents, ever"). The state graph is held by the
+ * `user_verification_state_machine` trigger for every role and by
+ * `src/users/verification.ts` for the runtime.
+ */
+export const userVerification = pgTable(
+  'user_verification',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => users.id),
+    state: verificationState('state').notNull().default('unstarted'),
+    provider: text('provider'),
+    providerRef: text('provider_ref'),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    /** After this instant a verified user must verify again before a verification-gated entry. */
+    reverifyAfter: timestamp('reverify_after', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('user_verification_provider_shape', sql`${table.provider} is null or ${table.provider} ~ '^[a-z][a-z0-9_-]{0,63}$'`),
+    check('user_verification_provider_ref_opaque', sql`${table.providerRef} is null or ${table.providerRef} ~ '^[A-Za-z0-9._:-]{1,128}$'`),
+    check('user_verification_verified_at_iff_verified', sql`(${table.state} = 'verified') = (${table.verifiedAt} is not null)`),
+    check('user_verification_reverify_needs_verified', sql`${table.reverifyAfter} is null or ${table.verifiedAt} is not null`),
+    check('user_verification_provider_once_started', sql`(${table.state} = 'unstarted') = (${table.provider} is null)`),
+  ],
+);
+
+export type UserVerification = typeof userVerification.$inferSelect;
+
+export const restrictionKind = pgEnum('restriction_kind', ['self_exclusion', 'cool_off', 'platform_block', 'velocity_lock']);
+export type RestrictionKind = (typeof restrictionKind.enumValues)[number];
+
+/**
+ * Spec 4.1 `user_restrictions`, honoured before every entry (spec 4.6). A restriction is in
+ * force from `starts_at` until `ends_at` (or indefinitely) unless it has been lifted.
+ * Lifting is the one runtime update, recorded once with who did it; a user never lifts
+ * their own self-exclusion or cool-off (`src/users/restrictions.ts`), which is what makes
+ * them "irreversible by the user for the duration".
+ */
+export const userRestrictions = pgTable(
+  'user_restrictions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    kind: restrictionKind('kind').notNull(),
+    reason: text('reason'),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull().defaultNow(),
+    endsAt: timestamp('ends_at', { withTimezone: true }),
+    /** Actor reference: `user:<id>`, `operator:<ref>`, `system`. */
+    createdBy: text('created_by').notNull(),
+    liftedAt: timestamp('lifted_at', { withTimezone: true }),
+    liftedBy: text('lifted_by'),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('user_restrictions_id_prefix', table.id, 'rst'),
+    check('user_restrictions_ends_after_starts', sql`${table.endsAt} is null or ${table.endsAt} > ${table.startsAt}`),
+    check('user_restrictions_lifted_pair', sql`(${table.liftedAt} is null) = (${table.liftedBy} is null)`),
+    check('user_restrictions_reason_length', sql`${table.reason} is null or length(${table.reason}) <= 500`),
+    index('user_restrictions_user_id_kind_idx').on(table.userId, table.kind),
+  ],
+);
+
+export type UserRestriction = typeof userRestrictions.$inferSelect;
+
+export const locationSource = pgEnum('location_source', ['ip', 'declared', 'provider']);
+export type LocationSource = (typeof locationSource.enumValues)[number];
+
+/**
+ * Spec 4.1 `user_locations`: the user's current resolved region, one row per user,
+ * overwritten by each resolution (the `GeoProvider` seam). `region_code` is ISO 3166-1
+ * alpha-2 with an optional 3166-2 subdivision (`US-TX`). `confidence` is 0 to 1 and is
+ * not money. The region in force at each entry decision is copied onto the decision
+ * record, so overwriting here loses no audit history.
+ */
+export const userLocations = pgTable(
+  'user_locations',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => users.id),
+    regionCode: text('region_code').notNull(),
+    source: locationSource('source').notNull(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }).notNull().defaultNow(),
+    confidence: numeric('confidence', { precision: 4, scale: 3, mode: 'number' }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('user_locations_region_code_shape', sql`${table.regionCode} ~ '^[A-Z]{2}(-[A-Z0-9]{1,3})?$'`),
+    check('user_locations_confidence_range', sql`${table.confidence} >= 0 and ${table.confidence} <= 1`),
+  ],
+);
+
+export type UserLocation = typeof userLocations.$inferSelect;
+
+// ---- Eligibility (spec 4.5, decision D9) ---------------------------------------------
+
+/**
+ * Versioned rulesets. `body` is validated by `rulesetSchema` (`src/eligibility/ruleset.ts`)
+ * before it is stored and again when it is loaded; it never changes once written (a trigger
+ * holds that for every role). Exactly one version is active at a time, which the partial
+ * unique index enforces. The version, not a surrogate id, is the key: it is what every
+ * persisted decision and every contest names.
+ */
+export const rulesets = pgTable(
+  'rulesets',
+  {
+    version: text('version').primaryKey(),
+    body: jsonb('body').$type<Ruleset>().notNull(),
+    active: boolean('active').notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [
+    check('rulesets_version_shape', sql`${table.version} ~ '^[0-9]{4}\\.[0-9]{1,2}\\.[0-9]+$'`),
+    uniqueIndex('rulesets_one_active_key')
+      .on(table.active)
+      .where(sql`${table.active}`),
+  ],
+);
+
+export type RulesetRow = typeof rulesets.$inferSelect;
+
+/**
+ * One row per entry attempt (spec 4.5, decision D9): what the evaluator decided, under
+ * which ruleset version, with the sealed reasons and required action, and `context`, the
+ * evaluator's input as it stood (region, verification state, active restrictions, age,
+ * balance, velocity) so an auditor can rerun the decision. Written whether or not the
+ * entry went through: a refusal is recorded and the transaction that would have escrowed
+ * the stake is not. Append-only.
+ */
+export const eligibilityDecisions = pgTable(
+  'eligibility_decisions',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    contestId: text('contest_id')
+      .notNull()
+      .references(() => contests.id),
+    rulesetVersion: text('ruleset_version')
+      .notNull()
+      .references(() => rulesets.version),
+    allowed: boolean('allowed').notNull(),
+    reasons: text('reasons').array().$type<EligibilityReason[]>().notNull(),
+    requiredAction: text('required_action').$type<RequiredAction>(),
+    context: jsonb('context').$type<Record<string, unknown>>().notNull(),
+    requestId: text('request_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    idCheck('eligibility_decisions_id_prefix', table.id, 'eld'),
+    check('eligibility_decisions_reasons_iff_refused', sql`${table.allowed} = (cardinality(${table.reasons}) = 0)`),
+    check('eligibility_decisions_action_needs_refusal', sql`${table.requiredAction} is null or not ${table.allowed}`),
+    index('eligibility_decisions_user_id_created_at_idx').on(table.userId, table.createdAt),
+    index('eligibility_decisions_contest_id_idx').on(table.contestId),
+  ],
+);
+
+export type EligibilityDecisionRow = typeof eligibilityDecisions.$inferSelect;
+
+// ---- Risk controls (spec 4.6) --------------------------------------------------------
+
+/**
+ * Duplicate-identity detection: SHA-256 of the normalised display name and the date of
+ * birth, one row per user, recomputed when either changes. A collision with another user
+ * of the same tenant is flagged into `operator_flags` for review, never acted on.
+ */
+export const identityFingerprints = pgTable(
+  'identity_fingerprints',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => users.id),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    fingerprint: text('fingerprint').notNull(),
+    computedAt: timestamp('computed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('identity_fingerprints_shape', sql`${table.fingerprint} ~ '^[0-9a-f]{64}$'`),
+    index('identity_fingerprints_tenant_id_fingerprint_idx').on(table.tenantId, table.fingerprint),
+  ],
+);
+
+export type IdentityFingerprint = typeof identityFingerprints.$inferSelect;
+
+export const operatorFlagKind = pgEnum('operator_flag_kind', ['duplicate_identity', 'collusion_signal', 'risk_review']);
+export type OperatorFlagKind = (typeof operatorFlagKind.enumValues)[number];
+
+export const operatorFlagStatus = pgEnum('operator_flag_status', ['open', 'reviewed', 'dismissed']);
+export type OperatorFlagStatus = (typeof operatorFlagStatus.enumValues)[number];
+
+/**
+ * What the risk controls surface for a human (spec 4.6: flag, do not auto-block). `subject`
+ * is the user or, for a collusion signal, the pair; `dedupe_key` keeps one open flag per
+ * finding. The operator console (phase 5) reads and resolves these; the runtime may only
+ * change `status` and who reviewed it.
+ */
+export const operatorFlags = pgTable(
+  'operator_flags',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    kind: operatorFlagKind('kind').notNull(),
+    subject: text('subject').notNull(),
+    dedupeKey: text('dedupe_key').notNull(),
+    detail: jsonb('detail').$type<Record<string, unknown>>().notNull(),
+    status: operatorFlagStatus('status').notNull().default('open'),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    reviewedBy: text('reviewed_by'),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('operator_flags_id_prefix', table.id, 'flg'),
+    unique('operator_flags_tenant_id_kind_dedupe_key_key').on(table.tenantId, table.kind, table.dedupeKey),
+    check('operator_flags_reviewed_pair', sql`(${table.status} = 'open') = (${table.reviewedAt} is null) and (${table.reviewedAt} is null) = (${table.reviewedBy} is null)`),
+    index('operator_flags_tenant_id_status_idx').on(table.tenantId, table.status),
+  ],
+);
+
+export type OperatorFlag = typeof operatorFlags.$inferSelect;
+
+// ---- API keys and embed tokens (spec 4.1, 4.8) ---------------------------------------
+
+export const apiKeyKind = pgEnum('api_key_kind', ['secret', 'publishable']);
+export type ApiKeyKind = (typeof apiKeyKind.enumValues)[number];
+
+export const apiKeyEnvironment = pgEnum('api_key_environment', ['sandbox', 'live']);
+export type ApiKeyEnvironment = (typeof apiKeyEnvironment.enumValues)[number];
+
+/** The one scope a secret key may carry: operator-only routes (credits, operator close). See docs/decisions.md. */
+export const API_KEY_SCOPES = ['operator'] as const;
+export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
+
+/**
+ * Spec 4.1 `api_keys`. Only the argon2id hash of a key is stored; the plaintext is shown
+ * once, at creation. `key_prefix` is the visible head of the key (`sk_sandbox_Ab12Cd34`),
+ * enough to find the candidate row and to name the key in a console, never enough to use
+ * it. `scopes` is the operator flag on a secret key (decision recorded in
+ * docs/decisions.md); a publishable key has none. The runtime updates `last_used_at` (at
+ * most once a minute) and `revoked_at` (once) and nothing else.
+ */
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    kind: apiKeyKind('kind').notNull(),
+    environment: apiKeyEnvironment('environment').notNull(),
+    keyPrefix: text('key_prefix').notNull(),
+    keyHash: text('key_hash').notNull(),
+    scopes: text('scopes').array().$type<ApiKeyScope[]>().notNull().default(sql`'{}'::text[]`),
+    label: text('label'),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('api_keys_id_prefix', table.id, 'key'),
+    check('api_keys_key_hash_argon2id', sql`${table.keyHash} like '$argon2id$%'`),
+    check(
+      'api_keys_key_prefix_shape',
+      sql`${table.keyPrefix} ~ '^(sk|pk)_(sandbox|live)_[A-Za-z0-9]{8}$'
+        and ${table.keyPrefix} like (case ${table.kind} when 'secret' then 'sk_' else 'pk_' end) || ${table.environment}::text || '_%'`,
+    ),
+    check('api_keys_scopes_known', sql`${table.scopes} <@ '{operator}'::text[] and (${table.kind} = 'secret' or cardinality(${table.scopes}) = 0)`),
+    check('api_keys_label_length', sql`${table.label} is null or length(${table.label}) <= 100`),
+    index('api_keys_key_prefix_idx').on(table.keyPrefix),
+    index('api_keys_tenant_id_idx').on(table.tenantId),
+  ],
+);
+
+export type ApiKey = typeof apiKeys.$inferSelect;
+
+export const embedFlow = pgEnum('embed_flow', ['identity', 'wallet', 'entry', 'rewards']);
+export type EmbedFlowValue = (typeof embedFlow.enumValues)[number];
+
+/**
+ * Spec 4.8 rule 5: an embed token is single-use, scoped to one user and one flow, and
+ * expires in five minutes. Only its SHA-256 is stored (the token is 256 bits of randomness,
+ * so a plain digest is the right hash); consuming it is one `UPDATE ... WHERE consumed_at
+ * IS NULL`, which is what makes "single use" hold under concurrency. Phase 4's iframe
+ * bootstrap is the consumer.
+ */
+export const embedTokens = pgTable(
+  'embed_tokens',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    flow: embedFlow('flow').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    idCheck('embed_tokens_id_prefix', table.id, 'emb'),
+    uniqueIndex('embed_tokens_token_hash_key').on(table.tokenHash),
+    check('embed_tokens_token_hash_shape', sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
+    check('embed_tokens_expires_after_created', sql`${table.expiresAt} > ${table.createdAt}`),
+    index('embed_tokens_user_id_idx').on(table.userId),
+  ],
+);
+
+export type EmbedToken = typeof embedTokens.$inferSelect;

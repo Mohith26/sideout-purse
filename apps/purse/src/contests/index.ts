@@ -1,9 +1,10 @@
 /**
  * The contest engine (spec 4.1, 4.3, 4.7): lifecycle, entries with escrow, append-only
  * scores, and settlement behind the preview hash. Every function here is a service with
- * typed input; phase 3 mounts the public v1 routes on these same functions. `transition`
- * is the only writer of `contests.state`; the settlement engine it calls lives in
- * `../settlement` and is pure.
+ * typed input; the public v1 routes (`src/routes/v1`) mount on these same functions.
+ * `transition` is the only writer of `contests.state`; the settlement engine it calls
+ * lives in `../settlement` and is pure, and the eligibility engine an entry consults lives
+ * in `../eligibility`.
  */
 export { ContestError, CONTEST_ERROR_CODES, isContestError, type ContestErrorCode } from './errors';
 export {
@@ -42,16 +43,7 @@ export {
   type UpdateContestFields,
   type UpdatedContest,
 } from './create';
-export {
-  evaluateEntryEligibility,
-  ALLOW_ALL_RULESET_VERSION,
-  ELIGIBILITY_REASONS,
-  REQUIRED_ACTIONS,
-  type EligibilityDecision,
-  type EligibilityReason,
-  type RequiredAction,
-  type EntryEligibilityInput,
-} from './eligibility';
+export { evaluateEntryEligibility, notEligible, type EntryEligibilityInput } from './eligibility';
 export { enterContest, withdrawEntry, loadEntry, type EnterContestInput, type EnteredContest, type WithdrawEntryInput, type WithdrawnEntry } from './entries';
 export { submitScores, allExpectedResultsPresent, ACCEPTING_SCORES, type ScoreSubmission, type SubmitScoresInput, type SubmittedScores } from './scores';
 export {

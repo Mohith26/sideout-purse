@@ -26,3 +26,33 @@ describe('headers', () => {
     expect(isRequestId(undefined)).toBe(false);
   });
 });
+
+describe('eligibility vocabulary', () => {
+  it('is exactly the spec 4.5 list, in the spec order', async () => {
+    const { ELIGIBILITY_REASONS, REQUIRED_ACTIONS, isEligibilityReason, isRequiredAction, isIdempotencyKey } = await import('../src/index');
+    expect(ELIGIBILITY_REASONS).toEqual([
+      'under_minimum_age',
+      'region_not_permitted',
+      'identity_unverified',
+      'identity_rejected',
+      'self_excluded',
+      'cooling_off',
+      'platform_blocked',
+      'insufficient_balance',
+      'stake_limit_exceeded',
+      'velocity_limit_exceeded',
+      'region_unknown',
+      'contest_not_open',
+      'contest_full',
+    ]);
+    expect(REQUIRED_ACTIONS).toEqual(['complete_identity', 'provide_demographics', 'add_funds', 'confirm_location']);
+    expect(isEligibilityReason('self_excluded')).toBe(true);
+    expect(isEligibilityReason('banned')).toBe(false);
+    expect(isRequiredAction('add_funds')).toBe(true);
+    expect(isRequiredAction('retry')).toBe(false);
+    expect(isIdempotencyKey('order-123')).toBe(true);
+    expect(isIdempotencyKey('has space')).toBe(false);
+    expect(isIdempotencyKey('')).toBe(false);
+    expect(isIdempotencyKey('k'.repeat(201))).toBe(false);
+  });
+});
