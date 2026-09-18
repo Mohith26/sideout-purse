@@ -1,7 +1,9 @@
 /**
  * The donation provider seam (spec 1 "charity donations are the only real dollars",
  * 4.2.6, decision D3). A provider takes a payment for one donation row and reports a
- * reference Sideout stores as `donations.provider_ref`. Two implementations:
+ * reference Sideout stores as `donations.provider_ref`, and can cancel a payment that a
+ * later one superseded so a captain is never left with two confirmable intents. Two
+ * implementations:
  *
  * - `stripe` (`stripe.ts`): a PaymentIntent per registration, confirmed by the client
  *   with the returned `clientSecret`, and settled by the signed webhook receiver.
@@ -31,6 +33,8 @@ export type PaymentCreated = {
 export type DonationProvider = {
   readonly name: 'dev' | 'stripe';
   createPayment(request: PaymentRequest, options: { requestId: string }): Promise<PaymentCreated>;
+  /** Cancel a payment that was never completed; a payment already taken is left alone (the caller refunds instead). */
+  cancelPayment(providerRef: string, options: { requestId: string }): Promise<void>;
 };
 
 /** The provider answered with an error; the message is for the log, never the client. */

@@ -63,14 +63,20 @@ describe('partitionIntoPools', () => {
     ]);
   });
 
-  it('every team lands in exactly one pool, sizes differ by at most one, none exceeds the pool size', () => {
+  it('every team lands in exactly one pool, sizes differ by at most one, none exceeds the pool size, none is alone', () => {
     fc.assert(
       fc.property(arbField, fc.integer({ min: 2, max: 8 }), (teams, poolSize) => {
-        const pools = partitionIntoPools(orderEntries(teams, createRng(1)), poolSize);
+        const entries = orderEntries(teams, createRng(1));
+        if (poolSize === 2 && teams.length % 2 === 1) {
+          expect(() => partitionIntoPools(entries, poolSize)).toThrow(DrawError);
+          return;
+        }
+        const pools = partitionIntoPools(entries, poolSize);
         const all = pools.flat();
         expect(all.length).toBe(teams.length);
         expect(new Set(all).size).toBe(teams.length);
         const sizes = pools.map((p) => p.length);
+        expect(Math.min(...sizes)).toBeGreaterThanOrEqual(2);
         expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
         expect(Math.max(...sizes)).toBeLessThanOrEqual(poolSize);
         expect(pools.length).toBe(Math.ceil(teams.length / poolSize));
@@ -78,9 +84,21 @@ describe('partitionIntoPools', () => {
     );
   });
 
-  it('refuses a pool size under two and a field under two', () => {
+  it('refuses a pool size under two, a field under two, and a configuration that leaves a team alone', () => {
     expect(() => partitionIntoPools(field(4), 1)).toThrow(/at least 2/);
     expect(() => partitionIntoPools(field(1), 4)).toThrow(/at least two teams/);
+    for (const n of [3, 5, 7, 9]) {
+      try {
+        partitionIntoPools(field(n), 2);
+        expect.unreachable(`a pool size of 2 with ${n} teams must be refused`);
+      } catch (error) {
+        expect(error).toBeInstanceOf(DrawError);
+        expect((error as DrawError).code).toBe('invalid_pool_size');
+        expect((error as DrawError).message).toBe(`A pool size of 2 leaves a pool with one team for a field of ${n}; a pool size of 3 works.`);
+      }
+      expect(partitionIntoPools(field(n), 3).every((pool) => pool.length >= 2)).toBe(true);
+    }
+    expect(partitionIntoPools(field(4), 2)).toEqual([['tm_001', 'tm_004'], ['tm_002', 'tm_003']]);
   });
 });
 
@@ -141,6 +159,7 @@ describe('drawPools', () => {
   it('is deterministic for one rng seed and keeps seeded teams in place across rng seeds', () => {
     fc.assert(
       fc.property(arbField, fc.integer({ min: 2, max: 8 }), fc.integer({ min: 0, max: 9999 }), (teams, poolSize, seed) => {
+        fc.pre(!(poolSize === 2 && teams.length % 2 === 1));
         const a = drawPools({ teams, poolSize, courts: 4, bestOf: 1, rng: createRng(seed) });
         const b = drawPools({ teams, poolSize, courts: 4, bestOf: 1, rng: createRng(seed) });
         expect(a).toEqual(b);
@@ -272,6 +291,33 @@ describe('drawBracket', () => {
       ['Court 2', 2],
     ]);
     expect(eightOnThree.matches.filter((m) => m.round === 3).map((m) => [m.courtLabel, m.courtSlot])).toEqual([['Court 1', 3]]);
+  });
+
+  it('deals the played matches of a round across every court, skipping byes', () => {
+    // Six teams on two courts: seeds 1 and 2 have byes at indices 0 and 2, so the two real
+    // round-1 matches take one court each and the quarter-final round starts right after.
+    const sixOnTwo = drawBracket({ seeds: seedsFor(6), courts: 2, bestOf: 3 });
+    const round1 = sixOnTwo.matches.filter((m) => m.round === 1 && !m.isBye);
+    expect(round1.map((m) => [m.courtLabel, m.courtSlot])).toEqual([
+      ['Court 1', 0],
+      ['Court 2', 0],
+    ]);
+    expect(sixOnTwo.matches.filter((m) => m.round === 2).map((m) => [m.courtLabel, m.courtSlot])).toEqual([
+      ['Court 1', 1],
+      ['Court 2', 1],
+    ]);
+    expect(sixOnTwo.matches.filter((m) => m.round === 3).map((m) => [m.courtLabel, m.courtSlot])).toEqual([['Court 1', 2]]);
+
+    fc.assert(
+      fc.property(fc.integer({ min: 2, max: 64 }), fc.integer({ min: 1, max: 8 }), (n, courts) => {
+        const draw = drawBracket({ seeds: seedsFor(n), courts, bestOf: 3 });
+        for (let round = 1; round <= draw.rounds; round += 1) {
+          const played = draw.matches.filter((m) => m.round === round && !m.isBye);
+          const used = new Set(played.map((m) => m.courtLabel));
+          expect(used.size).toBe(Math.min(courts, played.length));
+        }
+      }),
+    );
   });
 
   it('keeps seeds 1 and 2 in opposite halves', () => {

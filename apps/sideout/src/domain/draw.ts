@@ -112,17 +112,32 @@ export type PoolDrawMatch = {
 
 export type PoolDraw = { pools: PoolDrawPool[]; matches: PoolDrawMatch[] };
 
+/** The pool sizes `poolSize` yields for `teamCount` teams: the smallest pool count that fits, balanced. */
+function smallestPool(teamCount: number, poolSize: number): number {
+  return Math.floor(teamCount / Math.ceil(teamCount / poolSize));
+}
+
 /**
  * Balanced pools by snake seeding: the seed line is dealt across the pools left to
  * right, then right to left, and so on, so pool sizes differ by at most one and the
  * strongest entries are spread apart. Pool count is the smallest that keeps every pool
- * at or under `poolSize`.
+ * at or under `poolSize`. A configuration that would leave a pool with a single team
+ * (a pool size of 2 with an odd field) is refused, naming a size that works: a team
+ * alone in its pool plays nothing and would top its standings by default.
  */
 export function partitionIntoPools(entries: readonly DrawTeam[], poolSize: number): string[][] {
   if (!Number.isInteger(poolSize) || poolSize < 2) {
     throw new DrawError('invalid_pool_size', `Pool size must be at least 2; got ${poolSize}.`);
   }
   if (entries.length < 2) throw new DrawError('too_few_teams', 'A pool stage needs at least two teams.');
+  if (smallestPool(entries.length, poolSize) < 2) {
+    let workable = poolSize + 1;
+    while (smallestPool(entries.length, workable) < 2) workable += 1;
+    throw new DrawError(
+      'invalid_pool_size',
+      `A pool size of ${poolSize} leaves a pool with one team for a field of ${entries.length}; a pool size of ${workable} works.`,
+    );
+  }
   const poolCount = Math.ceil(entries.length / poolSize);
   const pools: string[][] = Array.from({ length: poolCount }, () => []);
   entries.forEach((team, index) => {
@@ -361,16 +376,19 @@ export function drawBracket(input: { seeds: readonly BracketSeedEntry[]; courts:
 
   // Court queues with a round floor: a round's first slot is after the last slot of the
   // round before it on any court, so no match is scheduled alongside one that feeds it.
+  // Within a round the played matches are dealt across the courts in turn; byes take none.
   const courts = Math.max(1, Math.floor(input.courts));
   const nextSlot = new Map<string, number>();
   for (let round = 1; round <= rounds; round += 1) {
     const roundFloor = Math.max(0, ...nextSlot.values());
+    let played = 0;
     for (const match of byRound(round)) {
       if (match.isBye) {
         match.courtLabel = courtLabel(0);
         continue;
       }
-      const label = courtLabel(match.indexInRound % courts);
+      const label = courtLabel(played % courts);
+      played += 1;
       match.courtLabel = label;
       const slot = Math.max(roundFloor, nextSlot.get(label) ?? 0);
       match.courtSlot = slot;

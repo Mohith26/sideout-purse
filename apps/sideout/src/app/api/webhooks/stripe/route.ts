@@ -1,5 +1,5 @@
 import { appContext } from '../../../../server/context';
-import { applyStripeEvent } from '../../../../server/donations/service';
+import { applyStripeEvent, cancelSupersededPayments } from '../../../../server/donations/service';
 import { STRIPE_SIGNATURE_HEADER, stripeEventSchema, verifyStripeSignature } from '../../../../server/donations/stripe';
 import { failure } from '../../../../server/http/errors';
 import { handle, ok } from '../../../../server/http/respond';
@@ -14,8 +14,8 @@ export const runtime = 'nodejs';
  * endpoint does not accept anything.
  */
 export async function POST(request: Request): Promise<Response> {
-  return handle(request, async ({ log }) => {
-    const { db, env } = appContext();
+  return handle(request, async ({ requestId, log }) => {
+    const { db, env, donationProvider } = appContext();
     if (env.stripe === undefined) throw failure.notFound('stripe_not_configured', 'Stripe is not configured.');
 
     const rawBody = await request.text();
@@ -36,6 +36,10 @@ export async function POST(request: Request): Promise<Response> {
 
     const outcome = await applyStripeEvent(db, event.data, { now: new Date(), reservationTtlMs: env.reservationTtlMs });
     log.info('stripe webhook', { eventId: event.data.id, type: event.data.type, ...outcome });
-    return ok({ received: true, eventId: event.data.id, ...outcome });
+    const cancelled =
+      outcome.duplicate || !outcome.applied || outcome.registration !== 'confirmed' || donationProvider === null
+        ? []
+        : await cancelSupersededPayments({ db, provider: donationProvider, log }, { donationId: outcome.donationId, requestId });
+    return ok({ received: true, eventId: event.data.id, ...outcome, cancelledDonationIds: cancelled });
   });
 }

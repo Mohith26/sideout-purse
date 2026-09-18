@@ -22,25 +22,38 @@ export function reservationExpiresAt(donation: { createdAt: Date }, clock: Reser
   return new Date(donation.createdAt.getTime() + clock.reservationTtlMs);
 }
 
-/** SQL over `teams`: the entry donation succeeded, or the entry was free (no donation row). */
-export function confirmedTeam(): SQL {
+/** SQL over `donations`: the row paid for a place. */
+export function confirmingDonation(): SQL {
+  return sql`${donations.status} = 'succeeded'`;
+}
+
+/** SQL over `donations`: the row pays for a place right now, either paid or a reservation that has not lapsed. */
+export function placeHoldingDonation(clock: ReservationClock): SQL {
+  const cutoff = new Date(clock.now.getTime() - clock.reservationTtlMs).toISOString();
+  return sql`(${confirmingDonation()} or (${donations.status} = 'pending' and ${donations.createdAt} > ${cutoff}::timestamptz))`;
+}
+
+/** SQL over `teams`: the entry was free (no donation row), or some donation of the team satisfies `paying`. */
+function teamPaidBy(paying: SQL): SQL {
   return sql`(
     not exists (select 1 from ${donations} where ${donations.teamId} = ${teams.id})
-    or exists (select 1 from ${donations} where ${donations.teamId} = ${teams.id} and ${donations.status} = 'succeeded')
+    or exists (select 1 from ${donations} where ${donations.teamId} = ${teams.id} and ${paying})
   )`;
+}
+
+/** SQL over `teams`: the entry donation succeeded, or the entry was free. */
+export function confirmedTeam(): SQL {
+  return teamPaidBy(confirmingDonation());
 }
 
 /** SQL over `teams`: confirmed, or holding a reservation that has not lapsed as of the clock. */
 export function placeHoldingTeam(clock: ReservationClock): SQL {
-  const cutoff = new Date(clock.now.getTime() - clock.reservationTtlMs).toISOString();
-  return sql`(
-    not exists (select 1 from ${donations} where ${donations.teamId} = ${teams.id})
-    or exists (
-      select 1 from ${donations}
-      where ${donations.teamId} = ${teams.id}
-        and (${donations.status} = 'succeeded' or (${donations.status} = 'pending' and ${donations.createdAt} > ${cutoff}::timestamptz))
-    )
-  )`;
+  return teamPaidBy(placeHoldingDonation(clock));
+}
+
+/** SQL over `teams`, as a boolean: counts toward capacity as of the clock. */
+export function holdsPlace(clock: ReservationClock): SQL<boolean> {
+  return sql<boolean>`(${inArray(teams.status, [...COUNTED_TEAM_STATUSES])} and ${placeHoldingTeam(clock)})`;
 }
 
 export function countedTeamsFilter(tournamentId: string, clock: ReservationClock): SQL | undefined {

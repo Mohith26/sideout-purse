@@ -380,14 +380,21 @@ A captain who mistyped the partner's number, or whose partner never came, is not
 invite is revoked and it is withdrawn, both audited) and creates the new one. A team that has
 registered is final for that captain: a second team gets `already_on_team`.
 
-### Partial refunds
+### Partial refunds, and refunds that arrive out of order
 
 Stripe sends `charge.refunded` for partial refunds too. The receiver reads `refunded` and
-`amount_refunded` from the charge: only `refunded: true` moves the donation to `refunded` and
-withdraws the team. A partial refund leaves the donation `succeeded` and the team in place,
-and records the running total in `donations.refunded_cents`; the impact figures sum
-`amount_cents - refunded_cents` over succeeded donations, so a $5 goodwill refund lowers the
-total by $5 rather than removing the entry.
+`amount_refunded` from the charge: only `refunded: true` moves the donation to `refunded`. A
+partial refund leaves the donation `succeeded` and the team in place, and records the running
+total in `donations.refunded_cents`; the impact figures sum `amount_cents - refunded_cents`
+over succeeded donations, so a $5 goodwill refund lowers the total by $5 rather than removing
+the entry.
+
+Stripe does not order deliveries, and a refund proves a charge existed, so `refunded` is
+reachable from `pending` and `failed` as well as from `succeeded`, and it is terminal: a
+`payment_intent.succeeded` that lands after the refund is recorded as
+`donation.succeeded_after_refund` in the audit log and changes nothing. A full refund
+withdraws the team on every path, unless another succeeded donation still pays for the same
+entry (the duplicate-payment case below), in which case the team keeps its place.
 
 ### Registration reserves the spot, the provider confirms it
 
@@ -410,12 +417,24 @@ before `live` count teams whose donation succeeded (or whose entry was free) plu
 that have not lapsed; a draw includes only teams whose donation succeeded. Once a reservation
 has lapsed the captain may register again for a fresh payment.
 
-A payment that succeeds after its reservation lapsed is honoured if there is still room. If
-the event is full by then, the donation stays `succeeded` (the money was taken), the team is
-withdrawn, and an audit row `donation.refund_due` names the amount, currency and provider
-reference the organizer must refund; the webhook response (and the dev provider's audit row)
-reports `registration: 'withdrawn_tournament_full'` rather than a silent success. Refunding
-through Stripe then flows back through `charge.refunded` as usual.
+A payment that succeeds late is honoured only if there is still a place for the team. There
+is none when the event is full (`event_full`), when the field is already fixed because the
+tournament has gone live or beyond (`registration_closed`), when the team has already
+withdrawn (`team_withdrawn`), or when another succeeded donation already pays for the same
+entry (`duplicate_payment`). In every such case the donation stays `succeeded` (the money was
+taken), the team is withdrawn or left as it was, and an audit row `donation.refund_due` names
+the reason, amount, currency and provider reference the organizer must refund; the webhook
+response and the dev provider's audit row carry `registration` and `refundDue`, never a silent
+success. Refunding through Stripe then flows back through `charge.refunded` as usual.
+
+Once one payment pays for an entry, the team's other unfinished payments are cancelled at the
+provider (`DonationProvider.cancelPayment`; Stripe cancels the PaymentIntent, the dev provider
+has nothing to cancel): when a captain registers again after a lapse and when a replacement
+payment succeeds through the webhook. It is best effort and runs outside any transaction; a
+cancellation the provider refuses is logged and the local row is left for the provider's own
+`payment_intent.canceled` event to settle. `/api/me` reports each team's and donation's
+`holdsPlace` and `reservationExpiresAt` under the same rule, so a captain can see that a place
+was released without attempting to register.
 
 ### Reopening registration discards the draw; going live needs everyone drawn
 
@@ -423,8 +442,20 @@ through Stripe then flows back through `charge.refunded` as usual.
 any draw (nothing can have been played while registration was closed; the transition refuses
 if anything has) and clears `draw_config`, with a `tournament.draw_discarded` audit row. The
 `live` transition additionally requires every team holding a place to appear in a pool or a
-round-1 bracket match, and names the missing teams in `teams_not_drawn`; a team that paid
-after the draw means a redraw, not a silent exclusion.
+round-1 bracket match, and says which remedy applies: `teams_not_drawn` lists confirmed teams
+the draw missed (redraw), `teams_unpaid` lists teams whose reservation has not lapsed but whose
+payment has not landed, each with its `reservationExpiresAt` (wait for the payment and redraw,
+or for the lapse). A team that paid after the draw means a redraw, not a silent exclusion.
+
+Forfeits are recorded only while the tournament is `live` (`tournament_not_live` otherwise):
+before that the draw stays replaceable, and a team that pulls out is handled by a redraw rather
+than by a result.
+
+### Pools never hold a single team
+
+A pool size of 2 with an odd field would leave one team alone in its pool, playing nothing and
+topping its standings by default. The draw refuses any configuration whose balanced pools would
+hold fewer than two teams (`invalid_pool_size`), naming a pool size that works.
 
 ### Moving `startsAt` moves the schedule
 

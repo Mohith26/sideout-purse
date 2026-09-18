@@ -6,6 +6,7 @@ import type { Db } from '../db/client';
 import {
   charities,
   DIVISIONS,
+  donations,
   matches,
   pools,
   poolTeams,
@@ -24,7 +25,7 @@ import { mintPurseExternalId, type Actor } from './actor';
 import { writeAudit } from './audit';
 import type { DbOrTx } from './db';
 import { deleteDraw } from './draw';
-import { COUNTED_TEAM_STATUSES, countedTeams, countedTeamsFilter, placeHoldingTeam, type ReservationClock } from './field';
+import { COUNTED_TEAM_STATUSES, confirmedTeam, countedTeams, countedTeamsFilter, placeHoldingTeam, reservationExpiresAt, type ReservationClock } from './field';
 import { failure } from './http/errors';
 import { centsSchema } from './money';
 import {
@@ -249,7 +250,8 @@ export async function updateTournament(db: Db, id: string, input: UpdateTourname
  *
  * - reopening registration discards the draw (the field is about to change; nothing can
  *   have been played while registration was closed);
- * - `live` needs a draw that covers every team holding a place;
+ * - `live` needs a draw that covers every team holding a place: a confirmed team left out
+ *   means a redraw, a team still paying means waiting for the payment or the lapse;
  * - `awaiting_settlement` needs every match complete, and for the formats that end in a
  *   bracket, the bracket drawn.
  */
@@ -293,11 +295,18 @@ export async function transitionTournament(
   if (input.to === 'live') {
     const [drawn] = await tx.select({ n: count() }).from(matches).where(eq(matches.tournamentId, tournament.id));
     if ((drawn?.n ?? 0) === 0) throw failure.invalidState('draw_required', 'Draw the tournament before going live.');
-    const missing = await teamsNotDrawn(tx, tournament.id, clock);
-    if (missing.length > 0) {
-      throw failure.invalidState('teams_not_drawn', `${missing.length} team(s) holding a place are not in the draw: ${missing.map((t) => t.name).join(', ')}. Redraw first.`, {
-        teams: missing,
+    const { notDrawn, unpaid } = await teamsOutsideDraw(tx, tournament.id, clock);
+    if (notDrawn.length > 0) {
+      throw failure.invalidState('teams_not_drawn', `${notDrawn.length} confirmed team(s) are not in the draw: ${notDrawn.map((t) => t.name).join(', ')}. Redraw first.`, {
+        teams: notDrawn,
       });
+    }
+    if (unpaid.length > 0) {
+      throw failure.invalidState(
+        'teams_unpaid',
+        `${unpaid.length} team(s) are still paying for their place: ${unpaid.map((t) => `${t.name} (reservation expires ${t.reservationExpiresAt})`).join(', ')}. Wait for the payment, then redraw, or for the reservation to lapse.`,
+        { teams: unpaid },
+      );
     }
   }
   if (input.to === 'awaiting_settlement') {
@@ -329,9 +338,19 @@ export async function transitionTournament(
   return { from, to: input.to };
 }
 
-/** Teams holding a place that no pool and no round-1 bracket match includes. */
-async function teamsNotDrawn(tx: DbOrTx, tournamentId: string, clock: ReservationClock): Promise<Array<{ id: string; name: string }>> {
-  const counted = await tx.select({ id: teams.id, name: teams.name }).from(teams).where(countedTeamsFilter(tournamentId, clock)).orderBy(asc(teams.createdAt));
+type TeamsOutsideDraw = {
+  /** Confirmed teams no pool and no round-1 bracket match includes: the draw is stale. */
+  notDrawn: Array<{ id: string; name: string }>;
+  /** Teams whose reservation has not lapsed but whose payment has not landed: not drawable yet. */
+  unpaid: Array<{ id: string; name: string; reservationExpiresAt: string }>;
+};
+
+async function teamsOutsideDraw(tx: DbOrTx, tournamentId: string, clock: ReservationClock): Promise<TeamsOutsideDraw> {
+  const counted = await tx
+    .select({ id: teams.id, name: teams.name, confirmed: sql<boolean>`${confirmedTeam()}` })
+    .from(teams)
+    .where(countedTeamsFilter(tournamentId, clock))
+    .orderBy(asc(teams.createdAt));
   const inPools = await tx
     .select({ teamId: poolTeams.teamId })
     .from(poolTeams)
@@ -342,7 +361,25 @@ async function teamsNotDrawn(tx: DbOrTx, tournamentId: string, clock: Reservatio
     .from(matches)
     .where(and(eq(matches.tournamentId, tournamentId), isNotNull(matches.bracketPosition), eq(matches.round, 1)));
   const drawn = new Set<string | null>([...inPools.map((r) => r.teamId), ...inRoundOne.flatMap((m) => [m.teamAId, m.teamBId])]);
-  return counted.filter((team) => !drawn.has(team.id));
+  const outside = counted.filter((team) => !drawn.has(team.id));
+  const reserving = outside.filter((team) => !team.confirmed);
+  const reservations =
+    reserving.length === 0
+      ? []
+      : await tx
+          .select({ teamId: donations.teamId, createdAt: donations.createdAt })
+          .from(donations)
+          .where(and(inArray(donations.teamId, reserving.map((t) => t.id)), eq(donations.status, 'pending')))
+          .orderBy(asc(donations.createdAt));
+  const latestReservation = new Map(reservations.map((r) => [r.teamId, r.createdAt]));
+  return {
+    notDrawn: outside.filter((team) => team.confirmed).map((team) => ({ id: team.id, name: team.name })),
+    unpaid: reserving.map((team) => ({
+      id: team.id,
+      name: team.name,
+      reservationExpiresAt: reservationExpiresAt({ createdAt: latestReservation.get(team.id) ?? clock.now }, clock).toISOString(),
+    })),
+  };
 }
 
 // ---- Public reads -------------------------------------------------------------------------

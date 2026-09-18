@@ -9,7 +9,7 @@ import { POST as createTournament } from '../../src/app/api/admin/tournaments/ro
 import { GET as getMatch } from '../../src/app/api/matches/[id]/route';
 import { GET as getTournament } from '../../src/app/api/tournaments/[slug]/route';
 import { GET as getStandings } from '../../src/app/api/tournaments/[slug]/standings/route';
-import { auditLog, matches, pools, poolTeams, sets, teamMembers, teams, tournaments, type Charity, type User } from '../../src/db/schema';
+import { auditLog, donations, matches, pools, poolTeams, sets, teamMembers, teams, tournaments, type Charity, type User } from '../../src/db/schema';
 import { judgeMatch, type SetScore } from '../../src/domain/scoreline';
 import type { StandingRow } from '../../src/domain/standings';
 import { mintPurseExternalId } from '../../src/server/actor';
@@ -358,19 +358,77 @@ describe('draw, forfeit and standings', () => {
     expect((await data<{ transition: { to: string } }>(await transition(t.id, 'live'))).transition.to).toBe('live');
   });
 
-  it('refuses to reopen registration once a drawn match has been decided', async () => {
+  it('records no forfeit before the tournament is live, and refuses to reopen registration once a drawn match has been decided', async () => {
     const t = await create({ maxTeams: 8, format: 'round_robin' });
     await transition(t.id, 'registration_open');
     await registerTeams(database, t.id, 3);
     await transition(t.id, 'registration_closed');
     await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', courts: 1, rngSeed: 1 }));
     const [first] = await database.db.select().from(matches).where(eq(matches.tournamentId, t.id));
-    await forfeit(request('POST', '/x', { body: { forfeitingTeamId: first?.teamAId }, cookie: cookie() }), params({ id: first?.id ?? '' }));
+    const early = await forfeit(request('POST', '/x', { body: { forfeitingTeamId: first?.teamAId }, cookie: cookie() }), params({ id: first?.id ?? '' }));
+    expect(early.status).toBe(409);
+    expect((await errorOf(early)).code).toBe('tournament_not_live');
+    expect((await database.db.select().from(matches).where(eq(matches.id, first?.id ?? '')))[0]?.status).toBe('scheduled');
+    // The draw is still replaceable: reopening discards it and a redraw follows.
+    expect((await transition(t.id, 'registration_open')).status).toBe(200);
+    await transition(t.id, 'registration_closed');
+    await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', courts: 1, rngSeed: 2 }));
+
+    // A decided match (what phase 7's consensus writes once live) pins the draw for good.
+    const [decided] = await database.db.select().from(matches).where(eq(matches.tournamentId, t.id));
+    await finishMatch(database, decided?.id ?? '', [{ setNumber: 1, teamAPoints: 21, teamBPoints: 10 }]);
     const reopen = await transition(t.id, 'registration_open');
     expect(reopen.status).toBe(409);
     expect((await errorOf(reopen)).code).toBe('draw_already_in_play');
     expect(await database.db.select().from(matches).where(eq(matches.tournamentId, t.id))).toHaveLength(3);
     expect((await database.db.select().from(tournaments).where(eq(tournaments.id, t.id)))[0]?.status).toBe('registration_closed');
+  });
+
+  it('draws only teams whose donation succeeded, and going live waits for a reservation that is still paying', async () => {
+    const t = await create({ maxTeams: 8, format: 'pool_to_bracket' });
+    await transition(t.id, 'registration_open');
+    const [paid, reserving, unpaidForGood] = await registerTeams(database, t.id, 3);
+    const captain = await createUser(database);
+    const donation = (teamId: string, status: 'succeeded' | 'pending', createdAt: Date) => ({
+      id: newId('don'),
+      tournamentId: t.id,
+      teamId,
+      userId: captain.id,
+      amountCents: 5000n,
+      currency: 'USD',
+      provider: 'stripe' as const,
+      providerRef: `pi_${teamId}`,
+      status,
+      createdAt,
+    });
+    await database.db.insert(donations).values([
+      donation(paid ?? '', 'succeeded', new Date()),
+      donation(reserving ?? '', 'pending', new Date()),
+      donation(unpaidForGood ?? '', 'pending', new Date(Date.now() - 2 * 3600_000)),
+    ]);
+    const [fourth] = await registerTeams(database, t.id, 1);
+    await transition(t.id, 'registration_closed');
+
+    const drawn = await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 1, rngSeed: 1 }));
+    expect(drawn.pools.flatMap((p) => p.teamIds).sort()).toEqual([paid, fourth].sort());
+    const detail = await data<PublicTournamentDetail>(await getTournament(request('GET', '/x'), params({ slug: t.slug })));
+    expect(detail.teams.map((team) => team.id).sort()).toEqual([paid, reserving, fourth].sort());
+
+    const waiting = await transition(t.id, 'live');
+    expect(waiting.status).toBe(409);
+    const unpaid = await errorOf(waiting);
+    expect(unpaid.code).toBe('teams_unpaid');
+    expect(unpaid.detail).toEqual({ teams: [{ id: reserving, name: 'Team 2', reservationExpiresAt: expect.any(String) }] });
+    expect(new Date((unpaid.detail as { teams: Array<{ reservationExpiresAt: string }> }).teams[0]?.reservationExpiresAt ?? '').getTime()).toBeGreaterThan(Date.now());
+
+    // Once it pays it is a confirmed team the draw missed: redraw.
+    await database.db.update(donations).set({ status: 'succeeded' }).where(eq(donations.teamId, reserving ?? ''));
+    const stale = await errorOf(await transition(t.id, 'live'));
+    expect(stale.code).toBe('teams_not_drawn');
+    expect(stale.detail).toEqual({ teams: [{ id: reserving, name: 'Team 2' }] });
+    const redrawn = await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 1, rngSeed: 1 }));
+    expect(redrawn.pools.flatMap((p) => p.teamIds).sort()).toEqual([paid, reserving, fourth].sort());
+    expect((await data<{ transition: { to: string } }>(await transition(t.id, 'live'))).transition.to).toBe('live');
   });
 
   it('redraws after a seeded team withdrew, and moving startsAt moves every scheduled match', async () => {

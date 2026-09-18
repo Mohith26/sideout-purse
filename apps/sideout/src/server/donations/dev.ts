@@ -25,6 +25,7 @@ export const devDonationProvider: DonationProvider = {
     await Promise.resolve();
     return { providerRef: `dev_${randomUUID()}`, clientSecret: null, status: 'pending' };
   },
+  cancelPayment: () => Promise.resolve(),
 };
 
 /**
@@ -53,7 +54,7 @@ export async function settleDueDevDonations(db: Db, clock: ReservationClock): Pr
           action: 'donation.succeeded',
           subjectType: 'donation',
           subjectId: id,
-          detail: { provider: 'dev', reason: 'dev provider delay elapsed', registration: result.registration },
+          detail: { provider: 'dev', reason: 'dev provider delay elapsed', registration: result.registration, refundDue: result.refundDue },
           at: now,
         });
       }

@@ -67,6 +67,22 @@ export function stripeDonationProvider(config: StripeConfig): DonationProvider {
         status: intent.data.status === 'succeeded' ? 'succeeded' : 'pending',
       };
     },
+    async cancelPayment(providerRef, options) {
+      const form = new URLSearchParams({ cancellation_reason: 'abandoned' });
+      const response = await doFetch(`${baseUrl}/v1/payment_intents/${encodeURIComponent(providerRef)}/cancel`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${config.secretKey}`,
+          'content-type': 'application/x-www-form-urlencoded',
+          'idempotency-key': `cancel:${providerRef}`,
+          'x-request-id': options.requestId,
+        },
+        body: form.toString(),
+      });
+      if (!response.ok) {
+        throw new DonationProviderError('stripe', `Stripe returned ${response.status}: ${summarise(await response.text())}`, response.status);
+      }
+    },
   };
 }
 

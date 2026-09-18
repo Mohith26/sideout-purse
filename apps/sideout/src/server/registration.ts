@@ -8,7 +8,7 @@ import { donations, teamMembers, teams, tournaments, type Donation, type Team, t
 import { checkTeamRoster } from '../domain/team';
 import { actorFor } from './actor';
 import { writeAudit } from './audit';
-import { applyDonationStatus } from './donations/service';
+import { applyDonationStatus, cancelSupersededPayments } from './donations/service';
 import { DonationProviderError, type DonationProvider } from './donations/provider';
 import { countedTeams, reservationExpiresAt, teamHoldsPlace, type ReservationClock } from './field';
 import { failure } from './http/errors';
@@ -18,9 +18,9 @@ import { DONATION_CURRENCY } from './money';
  * Tournament registration: a complete two-member team, an open window, capacity, then the
  * charitable donation through the provider. Registering reserves the place; the pending
  * donation holds it for the reservation TTL (`server/field.ts`), after which the captain
- * may register again for a fresh payment. The Purse contest entry, the visually distinct
- * second step of the Register screen (spec 5.3 item 4), is phase 7 and enters through
- * `PurseContestEntry` below.
+ * may register again for a fresh payment, and the payment it replaces is cancelled at the
+ * provider. The Purse contest entry, the visually distinct second step of the Register
+ * screen (spec 5.3 item 4), is phase 7 and enters through `PurseContestEntry` below.
  */
 
 export const registerTeamSchema = z.object({ teamId: z.string().startsWith('tm_') });
@@ -194,6 +194,7 @@ export async function registerTeam(
       });
       throw failure.internal('donation_provider_error', 'The donation could not be started; nothing was charged.').withStatus(502);
     }
+    await cancelSupersededPayments({ db, provider, log: deps.log }, { donationId, requestId: input.requestId });
   }
 
   const [team] = await db.select().from(teams).where(eq(teams.id, reserved.team.id));

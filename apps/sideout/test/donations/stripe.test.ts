@@ -8,7 +8,7 @@ import { auditLog, donationProviderEvents, donations, teams, tournaments, type C
 import { env, loadEnv } from '../../src/env';
 import { mintPurseExternalId } from '../../src/server/actor';
 import { resetAppContext } from '../../src/server/context';
-import { DonationProviderError } from '../../src/server/donations/provider';
+import { DonationProviderError, type DonationProvider } from '../../src/server/donations/provider';
 import { DONATION_TRANSITIONS } from '../../src/server/donations/service';
 import { interpretStripeEvent, signStripePayload, stripeDonationProvider, verifyStripeSignature } from '../../src/server/donations/stripe';
 import { createCharity, createUser, data, errorOf, params, request, testDatabase, truncateAll, type Database } from '../helpers';
@@ -104,7 +104,7 @@ describe('Stripe signature verification', () => {
   });
 
   it('documents the donation transitions the receiver will apply', () => {
-    expect(DONATION_TRANSITIONS).toEqual({ pending: ['succeeded', 'failed'], failed: ['succeeded'], succeeded: ['refunded'], refunded: [] });
+    expect(DONATION_TRANSITIONS).toEqual({ pending: ['succeeded', 'failed', 'refunded'], failed: ['succeeded', 'refunded'], succeeded: ['refunded'], refunded: [] });
   });
 });
 
@@ -147,6 +147,29 @@ describe('Stripe provider (no network)', () => {
     await expect(attempt).rejects.toBeInstanceOf(DonationProviderError);
     await expect(attempt).rejects.toThrow(/Stripe returned 400: Amount must be at least 50 cents/);
     await expect(attempt).rejects.not.toThrow(/sk_test_fixture/);
+  });
+
+  it('cancels a PaymentIntent idempotently, and reports a refusal without exposing the secret', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fakeFetch: typeof fetch = async (input, init) => {
+      calls.push({ url: typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url, init: init ?? {} });
+      await Promise.resolve();
+      if (calls.length === 1) return new Response(JSON.stringify({ ...FIXTURES.paymentIntentCreated, status: 'canceled' }), { status: 200 });
+      return new Response(JSON.stringify({ error: { message: 'This PaymentIntent has already succeeded' } }), { status: 400 });
+    };
+    const provider = stripeDonationProvider({ secretKey: 'sk_test_fixture', fetch: fakeFetch });
+    await provider.cancelPayment('pi_3QfixtureAbc123', { requestId: 'req-2' });
+    expect(calls[0]?.url).toBe('https://api.stripe.com/v1/payment_intents/pi_3QfixtureAbc123/cancel');
+    const headers = calls[0]?.init.headers as Record<string, string>;
+    expect(calls[0]?.init.method).toBe('POST');
+    expect(headers['idempotency-key']).toBe('cancel:pi_3QfixtureAbc123');
+    expect(headers['x-request-id']).toBe('req-2');
+    expect(new URLSearchParams(typeof calls[0]?.init.body === 'string' ? calls[0].init.body : '').get('cancellation_reason')).toBe('abandoned');
+
+    const refused = provider.cancelPayment('pi_3QfixtureAbc123', { requestId: 'req-3' });
+    await expect(refused).rejects.toBeInstanceOf(DonationProviderError);
+    await expect(refused).rejects.toThrow(/Stripe returned 400: This PaymentIntent has already succeeded/);
+    await expect(refused).rejects.not.toThrow(/sk_test_fixture/);
   });
 });
 
@@ -293,6 +316,63 @@ describe('POST /api/webhooks/stripe', () => {
 
     const malformed = await deliver({ id: 'evt_x', type: 'payment_intent.succeeded' });
     expect((await errorOf(malformed)).code).toBe('malformed_event');
+  });
+
+  it('applies a refund that arrives before the success, and records the late success without reviving the donation', async () => {
+    expect(await data(await deliver(FIXTURES.refunded(paymentIntentId)))).toMatchObject({ applied: true, from: 'pending', to: 'refunded', refundedCents: '5000', registration: 'withdrawn' });
+    expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]).toMatchObject({ status: 'refunded', refundedCents: 5000n });
+    expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('withdrawn');
+
+    expect(await data(await deliver(FIXTURES.succeeded(paymentIntentId)))).toMatchObject({ received: true, duplicate: false, applied: false, reason: 'already_refunded' });
+    expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]?.status).toBe('refunded');
+    expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('withdrawn');
+    const trail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, donationId)).orderBy(auditLog.createdAt, auditLog.id);
+    expect(trail.map((a) => a.action)).toEqual(['donation.refunded', 'donation.succeeded_after_refund']);
+    expect(trail[1]?.detail).toMatchObject({ eventId: 'evt_fixture_succeeded_1', refundedCents: '5000' });
+    const impact = await data<{ raisedCents: string; donationCount: number }>(await getImpact(request('GET', '/x'), params({ slug: 'hooked' })));
+    expect(impact).toMatchObject({ raisedCents: '0', donationCount: 0 });
+
+    // A refund that lands on a failed payment (a retried card that was charged after all) is a refund too.
+    await database.db.update(donations).set({ status: 'failed', refundedCents: 0n }).where(eq(donations.id, donationId));
+    expect(await data(await deliver(FIXTURES.refunded(paymentIntentId, 'evt_fixture_refunded_2')))).toMatchObject({ applied: true, from: 'failed', to: 'refunded' });
+  });
+
+  it('cancels the team\'s other unfinished payments at the provider once one of them pays', async () => {
+    const cancelledRefs: string[] = [];
+    const recording: DonationProvider = {
+      name: 'stripe',
+      createPayment: () => Promise.reject(new Error('not used here')),
+      cancelPayment: async (providerRef) => {
+        await Promise.resolve();
+        if (providerRef === 'pi_refuses') throw new DonationProviderError('stripe', 'Stripe returned 400: already canceled', 400);
+        cancelledRefs.push(providerRef);
+      },
+    };
+    resetAppContext({ donationProvider: recording, env: { ...env(), stripe: { secretKey: 'sk_test_fixture', webhookSecret: WEBHOOK_SECRET } } });
+    const [lapsed] = await database.db
+      .insert(donations)
+      .values({ id: newId('don'), tournamentId, teamId, userId: captain.id, amountCents: 5000n, currency: 'USD', provider: 'stripe', providerRef: 'pi_lapsed', status: 'pending' })
+      .returning();
+    const [failed] = await database.db
+      .insert(donations)
+      .values({ id: newId('don'), tournamentId, teamId, userId: captain.id, amountCents: 5000n, currency: 'USD', provider: 'stripe', providerRef: 'pi_refuses', status: 'failed' })
+      .returning();
+    const [unstarted] = await database.db
+      .insert(donations)
+      .values({ id: newId('don'), tournamentId, teamId, userId: captain.id, amountCents: 5000n, currency: 'USD', provider: 'stripe', providerRef: 'pending:never-reached-stripe', status: 'pending' })
+      .returning();
+
+    const confirmed = await data<{ registration: string; cancelledDonationIds: string[] }>(await deliver(FIXTURES.succeeded(paymentIntentId)));
+    expect(confirmed).toMatchObject({ applied: true, registration: 'confirmed', cancelledDonationIds: [lapsed?.id] });
+    expect(cancelledRefs).toEqual(['pi_lapsed']);
+    // The refusal is logged, not fatal; local rows wait for Stripe's own events.
+    const rows = await database.db.select().from(donations).where(eq(donations.teamId, teamId));
+    expect(rows.find((d) => d.id === lapsed?.id)?.status).toBe('pending');
+    expect(rows.find((d) => d.id === failed?.id)?.status).toBe('failed');
+    expect(rows.find((d) => d.id === unstarted?.id)?.status).toBe('pending');
+    // Nothing is cancelled on a delivery that confirms nothing.
+    expect(await data(await deliver(FIXTURES.succeeded(paymentIntentId, 'evt_fixture_succeeded_2')))).toMatchObject({ applied: false, reason: 'no_transition', cancelledDonationIds: [] });
+    expect(cancelledRefs).toEqual(['pi_lapsed']);
   });
 
   it('does not accept anything when Stripe is not configured', async () => {
