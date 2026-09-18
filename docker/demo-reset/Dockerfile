@@ -9,22 +9,19 @@
 
 FROM node:22-bookworm-slim AS base
 ENV CI=true \
-    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
-    PNPM_HOME=/pnpm
-RUN corepack enable && pnpm config set store-dir /pnpm/store
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 WORKDIR /app
 
 FROM base AS build
 COPY . .
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter "@purse/api..." --filter "@sideout/web..."
+RUN pnpm install --frozen-lockfile --filter "@purse/api..." --filter "@sideout/web..."
 ENV NODE_ENV=production
 RUN pnpm --filter @purse/api build && pnpm --filter @sideout/web exec tsup
 
 FROM base AS deps
 COPY . .
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --prod --filter "@purse/api..." --filter "@sideout/web..." --filter "!@repo/config"
+RUN pnpm install --frozen-lockfile --prod --filter "@purse/api..." --filter "@sideout/web..." --filter "!@repo/config"
 
 FROM base AS runtime
 ENV NODE_ENV=production

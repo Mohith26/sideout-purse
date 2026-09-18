@@ -29,15 +29,13 @@
 FROM node:22-bookworm-slim AS base
 ENV CI=true \
     NEXT_TELEMETRY_DISABLED=1 \
-    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
-    PNPM_HOME=/pnpm
-RUN corepack enable && pnpm config set store-dir /pnpm/store
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 WORKDIR /app
 
 FROM base AS build
 COPY . .
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter "@sideout/web..."
+RUN pnpm install --frozen-lockfile --filter "@sideout/web..."
 ARG BUILD_SHA
 ARG NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY
 ARG NEXT_PUBLIC_PURSE_ORIGIN
@@ -54,8 +52,7 @@ RUN pnpm --filter @sideout/web build && rm -rf apps/sideout/.next/cache
 
 FROM base AS deps
 COPY . .
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --prod --filter "@sideout/web..." --filter "!@repo/config"
+RUN pnpm install --frozen-lockfile --prod --filter "@sideout/web..." --filter "!@repo/config"
 
 FROM base AS runtime
 ARG BUILD_SHA

@@ -23,15 +23,13 @@
 FROM node:22-bookworm-slim AS base
 ENV CI=true \
     NEXT_TELEMETRY_DISABLED=1 \
-    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
-    PNPM_HOME=/pnpm
-RUN corepack enable && pnpm config set store-dir /pnpm/store
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 WORKDIR /app
 
 FROM base AS build
 COPY . .
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter "@purse/api..." --filter "@purse/embed..."
+RUN pnpm install --frozen-lockfile --filter "@purse/api..." --filter "@purse/embed..."
 ARG BUILD_SHA
 ENV NODE_ENV=production \
     BUILD_SHA=${BUILD_SHA:-unknown}
@@ -41,8 +39,7 @@ RUN pnpm --filter @purse/sdk build \
 
 FROM base AS deps
 COPY . .
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --prod --filter "@purse/api..." --filter "!@repo/config"
+RUN pnpm install --frozen-lockfile --prod --filter "@purse/api..." --filter "!@repo/config"
 
 FROM base AS runtime
 ARG BUILD_SHA
