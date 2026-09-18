@@ -80,9 +80,6 @@ pnpm --filter @purse/api reconcile   # the seven ledger invariants against the d
 
 `GET /internal/reconcile` returns the same report over HTTP behind `INTERNAL_API_TOKEN`
 (`Authorization: Bearer ...`); with no token configured it is closed outside tests.
-`GET /internal/contests/:id/preview` sits behind the same token and returns the frozen
-settlement preview with its `payoutHash` (the seed leaves a settled contest and an open one
-to look at; `pnpm db:seed` prints their ids).
 
 Send `X-Request-Id: anything-you-like` to either and it comes back on the response and in
 that service's JSON log line, which is how a Sideout request will be traced into the Purse
@@ -100,7 +97,7 @@ with `cancelled` for a contest holding nothing and `voided` for one whose entrie
 refunded) through one `transition()` function (`apps/purse/src/contests/transition.ts`)
 that takes `SELECT ... FOR UPDATE` on the contest row, validates the move against a table
 the database also enforces, and writes `audit_log` with the row before and after. Nothing
-else assigns `contests.state`, and a test greps for anything that tries.
+else assigns `contests.state`.
 
 Entering a contest escrows the entry amount in the same transaction as the participant
 row (`debit user_wallet / credit contest_escrow`); withdrawing before lock refunds it.

@@ -19,7 +19,6 @@ export { transition, type TransitionInput, type Transitioned } from './transitio
 export { transitionContest, PLAIN_TRANSITION_TARGETS, type TransitionContestInput, type TransitionedContest } from './lifecycle';
 export { idempotent, ledgerKey, validateRequestKey, REQUEST_KEY_MAX, type IdempotencyScope, type Replayable, type IdempotentResult } from './idempotency';
 export {
-  findContest,
   getContest,
   lockContest,
   listParticipants,

@@ -1,7 +1,8 @@
+import { and, asc, eq, inArray, or } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
-import { contestResults, type Contest, type ContestParticipant, type ContestResult, type ContestScore, type ParticipantState } from '../db/schema';
+import { accounts, contestResults, type Contest, type ContestParticipant, type ContestResult, type ContestScore, type ParticipantState } from '../db/schema';
 import { openAccount } from '../ledger/accounts';
 import type { Actor } from '../ledger/audit';
 import { balanceOf } from '../ledger/balance';
@@ -266,6 +267,12 @@ export type VoidedContest = {
  * Void (spec 4.7 `POST /contests/:id/void`, 4.2.5 "Void a contest"): refund every
  * non-withdrawn entry by reversing its escrow entry, then move to `voided`, whose guard
  * checks the escrow is empty. All under the contest row lock, in one transaction.
+ *
+ * The refunds are many posts, each locking one wallet and the escrow, so before the first
+ * one every account they will touch is locked in id order in a single statement: the same
+ * order `postEntry` uses and a settlement of another contest paying the same wallets uses,
+ * so the two wait on each other instead of deadlocking. Each `voidEscrow` then only
+ * re-locks rows this transaction already holds.
  */
 export async function voidContest(db: DbOrTx, input: VoidContestInput): Promise<VoidedContest> {
   return db.transaction(async (tx) => {
@@ -281,8 +288,11 @@ export async function voidContest(db: DbOrTx, input: VoidContestInput): Promise<
           // Refuse before refunding anything: the same checks `transition` will make.
           assertTransition(contest, 'voided', input.actor);
 
+          const participants = await activeParticipants(tx, contest.id);
+          await lockRefundAccounts(tx, contest, participants);
+
           const refunds: PostedEntry[] = [];
-          for (const participant of await activeParticipants(tx, contest.id)) {
+          for (const participant of participants) {
             refunds.push(
               await voidEscrow(tx, {
                 tenantId: input.tenantId,
@@ -311,6 +321,30 @@ export async function voidContest(db: DbOrTx, input: VoidContestInput): Promise<
     );
     return { ...value, replayed };
   });
+}
+
+/** `SELECT ... FOR UPDATE`, sorted by id, on the escrow and every wallet the void's reversals will debit or credit. */
+async function lockRefundAccounts(tx: DbOrTx, contest: Contest, participants: readonly ContestParticipant[]): Promise<void> {
+  if (participants.length === 0) return;
+  await tx
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(
+      or(
+        eq(accounts.id, contest.escrowAccountId),
+        and(
+          eq(accounts.tenantId, contest.tenantId),
+          eq(accounts.kind, 'user_wallet'),
+          eq(accounts.asset, contest.asset),
+          inArray(
+            accounts.ownerRef,
+            participants.map((participant) => participant.userId),
+          ),
+        ),
+      ),
+    )
+    .orderBy(asc(accounts.id))
+    .for('update');
 }
 
 /** The escrow balance of a contest, for callers that report it. */

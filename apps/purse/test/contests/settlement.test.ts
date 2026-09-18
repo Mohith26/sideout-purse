@@ -1,15 +1,13 @@
 import { count, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@repo/ids';
-import type { ApiDataEnvelope, ApiErrorEnvelope } from '@purse/types';
 
 import { closeContest, enterContest, getContest, listResults, previewSettlement, transition, voidContest, withdrawEntry } from '../../src/contests';
 import type { Database } from '../../src/db/client';
 import { auditLog, contestResults, journalEntries } from '../../src/db/schema';
 import { balanceOf, reconcile } from '../../src/ledger';
-import type { PreviewResponse } from '../../src/routes/internal';
 import { payoutHash } from '../../src/settlement';
-import { connectMigrator, connectRuntime, harness, rejection } from '../helpers';
+import { connectMigrator, connectRuntime, rejection } from '../helpers';
 import { key, wipeLedger } from '../ledger/fixtures';
 import { advance, buildArena, contestError, escrowOf, inProgress, makeContest, openWithEntrants, OPERATOR, score, TENANT_ACTOR, walletBalance, type Arena } from './fixtures';
 
@@ -338,70 +336,5 @@ describe('voidContest() and cancelling', () => {
     const full = await openWithEntrants(runtime.db, arena);
     const refused = await contestError(transition(runtime.db, { tenantId: arena.tenantId, contestId: full.id, to: 'cancelled', actor: OPERATOR }));
     expect(refused.code).toBe('contest_has_entries');
-  });
-});
-
-describe('GET /internal/contests/:id/preview', () => {
-  let migrator: Database;
-  let runtime: Database;
-  let arena: Arena;
-
-  beforeAll(() => {
-    migrator = connectMigrator();
-    runtime = connectRuntime({ max: 4 });
-  });
-  beforeEach(async () => {
-    await wipeLedger(migrator);
-    arena = await buildArena(runtime.db, { users: 3 });
-  });
-  afterAll(async () => {
-    await wipeLedger(migrator);
-    await migrator.close();
-    await runtime.close();
-  });
-
-  it('returns the preview with amounts as strings and the hash a close accepts', async () => {
-    const contest = await inProgress(runtime.db, arena);
-    await score(runtime.db, arena, contest.id, [3, 2, 1]);
-    const h = harness();
-    try {
-      const res = await h.app.request(`/internal/contests/${contest.id}/preview`);
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as ApiDataEnvelope<PreviewResponse>;
-      expect(body.data.contest).toMatchObject({ id: contest.id, state: 'awaiting_settlement', asset: 'POINTS', settlementPolicy: 'operator_close' });
-      expect(body.data.escrowTotal).toBe('300');
-      expect(body.data.payouts).toEqual([
-        { userId: arena.users[0], placement: 1, payout: '150' },
-        { userId: arena.users[1], placement: 2, payout: '90' },
-        { userId: arena.users[2], placement: 3, payout: '60' },
-      ]);
-      expect(body.data.entries).toHaveLength(3);
-      expect(body.data.payoutHash).toMatch(/^[0-9a-f]{64}$/);
-      // Money is never a JSON number.
-      expect(body.data.payouts.every((p) => typeof p.payout === 'string')).toBe(true);
-      expect(typeof body.data.escrowTotal).toBe('string');
-
-      const closed = await closeContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, payoutHash: body.data.payoutHash, actor: OPERATOR, idempotencyKey: key() });
-      expect(closed.contest.state).toBe('settled');
-      expect(h.lines.some((l) => l['msg'] === 'settlement preview' && l['contestId'] === contest.id)).toBe(true);
-
-      const missing = await h.app.request(`/internal/contests/${newId('cnt')}/preview`);
-      expect(missing.status).toBe(404);
-      expect(((await missing.json()) as ApiErrorEnvelope).error).toMatchObject({ type: 'invalid_request', code: 'contest_not_found' });
-    } finally {
-      await h.close();
-    }
-  });
-
-  it('is behind the same bearer token as reconcile', async () => {
-    const contest = await makeContest(runtime.db, arena);
-    const token = 'internal-token-for-tests-0123456789';
-    const h = harness({ internalApiToken: token });
-    try {
-      expect((await h.app.request(`/internal/contests/${contest.id}/preview`)).status).toBe(401);
-      expect((await h.app.request(`/internal/contests/${contest.id}/preview`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(200);
-    } finally {
-      await h.close();
-    }
   });
 });

@@ -32,7 +32,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   table (journal, audit log, `contest_results`, `idempotency_keys`) gets `SELECT, INSERT`
   only, and a table with columns that legitimately change gets column-level `UPDATE`
   (`accounts`, `tenants`: `status, updated_at`; `contests`: `state`, `settled_at`,
-  `locks_at` and the draft-editable fields; `contest_participants`: `state`;
+  `locks_at` and the draft-editable fields; `contest_participants`: `state` and
+  `entry_journal_entry_id`, the latter only when a withdrawn entrant re-enters;
   `contest_scores`: `superseded_by`). `test/ledger/roles.test.ts` fails on a table with
   no grant and pins the updatable columns of every contest table. Tests take the runtime
   connection from `test/helpers.ts` (`connectRuntime`) and the owner connection only for
@@ -54,12 +55,13 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 
 ## Contests and settlement
 
-- `apps/purse/src/contests/transition.ts` is the only writer of `contests.state`
-  (`test/contests/transition.test.ts` greps for any other); the state table is
-  `states.ts` and the database holds the same table in the `contests_state_machine`
-  trigger (`drizzle/0006_contest_guards.sql`), so change both together. `settling` is
-  entered and left inside `executeSettlement`'s transaction under the contest row lock
-  (`lockContest`, `SELECT ... FOR UPDATE`), which every contest write starts with.
+- `apps/purse/src/contests/transition.ts` is the only writer of `contests.state`; the
+  state table is `states.ts` and the database holds the same table in the
+  `contests_state_machine` trigger (`drizzle/0006_contest_guards.sql`), so change both
+  together. `settling` is entered and left inside `executeSettlement`'s transaction under
+  the contest row lock (`lockContest`, `SELECT ... FOR UPDATE`), which every contest write
+  starts with. Account row locks come after it, sorted by id, in one statement per
+  operation (`voidContest` locks every wallet it will refund up front for that reason).
 - `apps/purse/src/settlement/` is pure: no database, clock or randomness may be imported
   there, and `previewSettlement` and `closeContest` must keep calling the same `settle` and
   `payoutHash`. The rounding rule and each structure's meaning are documented in

@@ -7,8 +7,9 @@
 --                         a draft may edit, and updated_at. Never asset, tenant_id,
 --                         external_id or escrow_account_id: those define the contest and
 --                         what its escrow may hold.
---   contest_participants  SELECT, INSERT; UPDATE on state and updated_at only. The entry
---                         link (entry_journal_entry_id) is written once, at entry.
+--   contest_participants  SELECT, INSERT; UPDATE on state, entry_journal_entry_id and
+--                         updated_at only. The entry link is written at entry and again
+--                         only when a withdrawn entrant re-enters with a fresh stake.
 --   contest_scores        SELECT, INSERT; UPDATE on superseded_by only (append-only chain).
 --   contest_results       SELECT, INSERT. Written once at settlement, never changed.
 --   idempotency_keys      SELECT, INSERT. A used key is history.
@@ -19,9 +20,10 @@
 --                                  proves the two agree pair for pair);
 --   contests_frozen_after_draft    the defining fields cannot change once a contest has
 --                                  left draft, and the identity fields never change;
---   contest_participants_guard     the identity of an entry never changes and its state
---                                  only moves entered -> withdrawn | disqualified, and
---                                  disqualified -> entered;
+--   contest_participants_guard     the identity of an entry never changes, its state only
+--                                  moves entered -> withdrawn | disqualified, disqualified
+--                                  -> entered and withdrawn -> entered, and the entry link
+--                                  changes exactly when a withdrawn entrant re-enters;
 --   contest_scores_supersede_once  a score is superseded at most once, never once its
 --                                  attempt is finished, only by a newer score for the same
 --                                  contest and user, and nothing else about it changes;
@@ -34,7 +36,7 @@
 GRANT SELECT, INSERT ON TABLE public.contests TO purse_app;--> statement-breakpoint
 GRANT UPDATE (state, settled_at, locks_at, opens_at, title, kind, entry_amount, max_participants, prize_structure, tie_break, settlement_policy, eligibility_ruleset_version, updated_at) ON TABLE public.contests TO purse_app;--> statement-breakpoint
 GRANT SELECT, INSERT ON TABLE public.contest_participants TO purse_app;--> statement-breakpoint
-GRANT UPDATE (state, updated_at) ON TABLE public.contest_participants TO purse_app;--> statement-breakpoint
+GRANT UPDATE (state, entry_journal_entry_id, updated_at) ON TABLE public.contest_participants TO purse_app;--> statement-breakpoint
 GRANT SELECT, INSERT ON TABLE public.contest_scores TO purse_app;--> statement-breakpoint
 GRANT UPDATE (superseded_by) ON TABLE public.contest_scores TO purse_app;--> statement-breakpoint
 GRANT SELECT, INSERT ON TABLE public.contest_results TO purse_app;--> statement-breakpoint
@@ -104,7 +106,6 @@ BEGIN
   IF NEW.id <> OLD.id
     OR NEW.contest_id <> OLD.contest_id
     OR NEW.user_id <> OLD.user_id
-    OR NEW.entry_journal_entry_id <> OLD.entry_journal_entry_id
     OR NEW.joined_at <> OLD.joined_at
     OR NEW.team_ref IS DISTINCT FROM OLD.team_ref
     OR NEW.seed IS DISTINCT FROM OLD.seed THEN
@@ -114,8 +115,13 @@ BEGIN
   IF NEW.state <> OLD.state AND NOT (
     (OLD.state = 'entered' AND NEW.state IN ('withdrawn', 'disqualified'))
     OR (OLD.state = 'disqualified' AND NEW.state = 'entered')
+    OR (OLD.state = 'withdrawn' AND NEW.state = 'entered')
   ) THEN
     RAISE EXCEPTION 'participant % cannot move from % to %', OLD.id, OLD.state, NEW.state
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'contest_participants_guard', TABLE = 'contest_participants';
+  END IF;
+  IF (NEW.entry_journal_entry_id <> OLD.entry_journal_entry_id) <> (OLD.state = 'withdrawn' AND NEW.state = 'entered') THEN
+    RAISE EXCEPTION 'participant % entry link changes exactly when a withdrawn entrant re-enters', OLD.id
       USING ERRCODE = 'check_violation', CONSTRAINT = 'contest_participants_guard', TABLE = 'contest_participants';
   END IF;
   RETURN NEW;
@@ -208,10 +214,16 @@ BEGIN
       RAISE EXCEPTION 'purse_app must not hold UPDATE on public.contests.%', c;
     END IF;
   END LOOP;
-  IF NOT has_column_privilege('purse_app', 'public.contest_participants', 'state', 'UPDATE')
-    OR has_column_privilege('purse_app', 'public.contest_participants', 'entry_journal_entry_id', 'UPDATE') THEN
-    RAISE EXCEPTION 'purse_app column privileges on public.contest_participants are wrong';
-  END IF;
+  FOREACH c IN ARRAY ARRAY['state', 'entry_journal_entry_id', 'updated_at'] LOOP
+    IF NOT has_column_privilege('purse_app', 'public.contest_participants', c, 'UPDATE') THEN
+      RAISE EXCEPTION 'purse_app did not receive UPDATE on public.contest_participants.%', c;
+    END IF;
+  END LOOP;
+  FOREACH c IN ARRAY ARRAY['id', 'contest_id', 'user_id', 'team_ref', 'seed', 'joined_at'] LOOP
+    IF has_column_privilege('purse_app', 'public.contest_participants', c, 'UPDATE') THEN
+      RAISE EXCEPTION 'purse_app must not hold UPDATE on public.contest_participants.%', c;
+    END IF;
+  END LOOP;
   IF NOT has_column_privilege('purse_app', 'public.contest_scores', 'superseded_by', 'UPDATE')
     OR has_column_privilege('purse_app', 'public.contest_scores', 'score', 'UPDATE') THEN
     RAISE EXCEPTION 'purse_app column privileges on public.contest_scores are wrong';

@@ -11,8 +11,8 @@ import { assertTransition, TRANSITION_ACTIONS } from './states';
 
 /**
  * The single state writer (spec 4.3 MUST). Nothing else in Purse assigns
- * `contests.state`; `test/contests/transition.test.ts` greps the source tree to keep it
- * that way. It:
+ * `contests.state`, and the `contests_state_machine` trigger holds the same table for
+ * any writer. It:
  *
  *   1. takes `SELECT ... FOR UPDATE` on the contest row (`lockContest`), so concurrent
  *      transitions serialise and the second one sees the first's result;

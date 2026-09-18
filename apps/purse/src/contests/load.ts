@@ -20,8 +20,8 @@ import { ContestError } from './errors';
  * remember to.
  */
 
-/** A contest by id, whoever owns it. For the internal (operator) surface only; everything else goes through `getContest`. */
-export async function findContest(db: DbOrTx, contestId: string): Promise<Contest | undefined> {
+/** A contest by id, whoever owns it. Every service goes through `getContest`, which adds the tenant check. */
+async function findContest(db: DbOrTx, contestId: string): Promise<Contest | undefined> {
   const [row] = await db.select().from(contests).where(eq(contests.id, contestId));
   return row;
 }
@@ -34,8 +34,10 @@ export async function getContest(db: DbOrTx, tenantId: Id<'tnt'>, contestId: str
  * The contest row under `SELECT ... FOR UPDATE` (spec 4.3 MUST). Every write to a contest,
  * its entries or its scores starts here, which is what serialises concurrent entries,
  * concurrent closes and a close racing a late score. Callers hold the lock to the end of
- * their transaction; `postEntry`'s account locks are taken after it, never before, so
- * contest operations cannot deadlock one another.
+ * their transaction and take account row locks only after it, in id order and in one
+ * statement per operation (`postEntry`, or `voidContest`'s up-front lock over every wallet
+ * it will refund), so operations on different contests that share wallets wait on each
+ * other rather than deadlock.
  */
 export async function lockContest(tx: DbOrTx, tenantId: Id<'tnt'>, contestId: string): Promise<Contest> {
   const [row] = await tx.select().from(contests).where(eq(contests.id, contestId)).for('update');

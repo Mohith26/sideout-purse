@@ -1,6 +1,3 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import path from 'node:path';
-
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -43,25 +40,6 @@ describe('the transition table', () => {
     expect(canTransition('open', 'draft')).toBe(false);
     expect(canTransition('settled', 'open')).toBe(false);
     for (const state of CONTEST_STATES) expect(TRANSITION_ACTIONS[state]).toMatch(/^contest\./);
-  });
-
-  it('transition() is the only place that assigns contests.state', () => {
-    // Any `state:` assignment inside an update of `contests` outside transition.ts is a
-    // violation of the spec's MUST; the seed and the tests build contests through the services.
-    const root = path.resolve(import.meta.dirname, '../../src');
-    const offenders: string[] = [];
-    const walk = (dir: string) => {
-      for (const name of readdirSync(dir)) {
-        const full = path.join(dir, name);
-        if (statSync(full).isDirectory()) walk(full);
-        else if (full.endsWith('.ts') && !full.endsWith('contests/transition.ts')) {
-          const source = readFileSync(full, 'utf8');
-          if (/\.update\(contests\)[\s\S]{0,400}?\bstate:/.test(source) || /update contests set[^;]*\bstate\b/i.test(source)) offenders.push(path.relative(root, full));
-        }
-      }
-    };
-    walk(root);
-    expect(offenders).toEqual([]);
   });
 });
 

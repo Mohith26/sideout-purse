@@ -146,7 +146,7 @@ describe('append-only enforcement at the role level', () => {
     );
     expect(updatable).toEqual({
       contests: ['eligibility_ruleset_version', 'entry_amount', 'kind', 'locks_at', 'max_participants', 'opens_at', 'prize_structure', 'settled_at', 'settlement_policy', 'state', 'tie_break', 'title', 'updated_at'],
-      contest_participants: ['state', 'updated_at'],
+      contest_participants: ['entry_journal_entry_id', 'state', 'updated_at'],
       contest_scores: ['superseded_by'],
       contest_results: [],
       idempotency_keys: [],
@@ -155,7 +155,9 @@ describe('append-only enforcement at the role level', () => {
     for (const column of ['id', 'tenant_id', 'external_id', 'asset', 'escrow_account_id', 'created_at']) {
       expect(updatable['contests'], column).not.toContain(column);
     }
-    expect(updatable['contest_participants']).not.toContain('entry_journal_entry_id');
+    for (const column of ['id', 'contest_id', 'user_id', 'team_ref', 'seed', 'joined_at']) {
+      expect(updatable['contest_participants'], column).not.toContain(column);
+    }
     expect(updatable['contest_scores']).not.toContain('score');
   });
 

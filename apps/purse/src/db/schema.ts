@@ -398,11 +398,13 @@ export type NewContest = typeof contests.$inferInsert;
 
 /**
  * Spec 4.1: one row per user per contest, ever. `entry_journal_entry_id` is the escrow entry
- * that took the stake (I7 checks it debits this user's wallet and credits this contest's
- * escrow for the contest's asset and amount) and is unique: one stake, one entry. A
- * withdrawal marks the row `withdrawn` and refunds through a separate `refund` entry; the
- * unique constraint means a withdrawn user cannot enter again. `seed` feeds the
- * `higher_seed_wins` tie-break (lower is better) and is set at entry.
+ * that currently holds the stake (I7 checks it debits this user's wallet and credits this
+ * contest's escrow for the contest's asset and amount) and is unique: one stake, one entry.
+ * A withdrawal marks the row `withdrawn` and refunds through a separate `refund` entry; a
+ * withdrawn user may enter again while the contest is open, which reactivates this same
+ * row with a fresh escrow entry (docs/decisions.md). `seed` and `team_ref` are set at the
+ * first entry and never change; `seed` feeds the `higher_seed_wins` tie-break (lower is
+ * better).
  */
 export const contestParticipants = pgTable(
   'contest_participants',

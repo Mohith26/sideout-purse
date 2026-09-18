@@ -17,8 +17,10 @@ import { findParticipant, getContest, getParticipant, lockContest } from './load
  * two entries by one user, an entry racing a lock, or a withdrawal racing a close all
  * serialise and the loser sees the winner's state. The stake moves through the ledger's
  * typed flows in the same transaction as the participant row, keyed by the request's own
- * idempotency key, and `entry_journal_entry_id` records the escrow entry that took it,
- * which is what invariant I7 checks.
+ * idempotency key, and `entry_journal_entry_id` records the escrow entry that holds it,
+ * which is what invariant I7 checks. A withdrawn entrant may enter again while the contest
+ * is open and before `locks_at`: the same row is reactivated with a fresh escrow entry,
+ * keeping its first entry's `team_ref` and `seed` (docs/decisions.md).
  */
 export type EnterContestInput = {
   tenantId: Id<'tnt'>;
@@ -82,12 +84,21 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
           }
 
           const existing = await findParticipant(tx, contest.id, input.userId);
-          if (existing !== undefined) {
+          if (existing !== undefined && existing.state !== 'withdrawn') {
             throw new ContestError('already_entered', `User ${input.userId} has already entered contest ${contest.id} (${existing.state})`, {
               contestId: contest.id,
               userId: input.userId,
               participantId: existing.id,
               participantState: existing.state,
+            });
+          }
+          if (existing !== undefined && (existing.teamRef !== teamRef || existing.seed !== seed)) {
+            throw new ContestError('invalid_input', `User ${input.userId} re-enters contest ${contest.id} with the teamRef and seed of their first entry`, {
+              contestId: contest.id,
+              userId: input.userId,
+              participantId: existing.id,
+              teamRef: existing.teamRef,
+              seed: existing.seed,
             });
           }
 
@@ -139,25 +150,32 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
             description: `Entry of ${input.userId} to contest ${contest.externalId}`,
           });
 
-          const [participant] = await tx
-            .insert(contestParticipants)
-            .values({
-              id: newId('ent'),
-              contestId: contest.id,
-              userId: input.userId,
-              teamRef,
-              seed,
-              entryJournalEntryId: entry.entry.id,
-            })
-            .returning();
-          if (participant === undefined) throw new Error('contest_participants insert returned no row');
+          const [participant] =
+            existing === undefined
+              ? await tx
+                  .insert(contestParticipants)
+                  .values({
+                    id: newId('ent'),
+                    contestId: contest.id,
+                    userId: input.userId,
+                    teamRef,
+                    seed,
+                    entryJournalEntryId: entry.entry.id,
+                  })
+                  .returning()
+              : await tx
+                  .update(contestParticipants)
+                  .set({ state: 'entered', entryJournalEntryId: entry.entry.id, updatedAt: sql`now()` })
+                  .where(eq(contestParticipants.id, existing.id))
+                  .returning();
+          if (participant === undefined) throw new Error('contest_participants write returned no row');
 
           await recordAudit(tx, {
             tenantId: input.tenantId,
             actor,
-            action: 'contest.entry.created',
+            action: existing === undefined ? 'contest.entry.created' : 'contest.entry.reentered',
             subject: participant.id,
-            before: null,
+            before: existing ?? null,
             after: { ...participant, rulesetVersion: eligibility.rulesetVersion },
             ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
           });
@@ -186,6 +204,8 @@ export type WithdrawEntryInput = {
   idempotencyKey: string;
   actor?: Actor;
   requestId?: string;
+  /** The clock `locks_at` is checked against. Defaults to now. */
+  now?: Date;
 };
 
 export type WithdrawnEntry = {
@@ -196,10 +216,16 @@ export type WithdrawnEntry = {
   replayed: boolean;
 };
 
-/** Withdraw before lock (spec 4.2.5 "Refund a withdrawal before lock"): only while the contest is `open`. */
+/**
+ * Withdraw before lock (spec 4.2.5 "Refund a withdrawal before lock"): only while the
+ * contest is `open` and, when it has a `locks_at`, before that instant, the same clock
+ * `enterContest` reads. Once the lock time has passed the stake stays in escrow until
+ * settlement or void, whether or not the operator has issued the `locked` transition yet.
+ */
 export async function withdrawEntry(db: DbOrTx, input: WithdrawEntryInput): Promise<WithdrawnEntry> {
   validateUserId(input.userId);
   const actor = input.actor ?? SYSTEM_ACTOR;
+  const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
     const { value, replayed } = await idempotent<Omit<WithdrawnEntry, 'replayed'>, { contestId: string; participantId: string; refundEntryId: string }>(
@@ -212,6 +238,14 @@ export async function withdrawEntry(db: DbOrTx, input: WithdrawEntryInput): Prom
             throw new ContestError('invalid_contest_state', `Contest ${contest.id} is ${contest.state}; entries can be withdrawn only while it is open`, {
               contestId: contest.id,
               state: contest.state,
+              expected: 'open',
+            });
+          }
+          if (contest.locksAt !== null && contest.locksAt.getTime() <= now.getTime()) {
+            throw new ContestError('invalid_contest_state', `Contest ${contest.id} locked at ${contest.locksAt.toISOString()}; entries can be withdrawn only before lock`, {
+              contestId: contest.id,
+              state: contest.state,
+              locksAt: contest.locksAt.toISOString(),
               expected: 'open',
             });
           }

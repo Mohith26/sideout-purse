@@ -5,7 +5,7 @@ import { newId } from '@repo/ids';
 import { closeContest, enterContest, getContest, isContestError, previewSettlement, submitScores, voidContest, type ClosedContest } from '../../src/contests';
 import type { Database } from '../../src/db/client';
 import { auditLog, contestResults, journalEntries } from '../../src/db/schema';
-import { reconcile } from '../../src/ledger';
+import { findAccount, reconcile } from '../../src/ledger';
 import { connectMigrator, connectRuntime } from '../helpers';
 import { key, wipeLedger } from '../ledger/fixtures';
 import { advance, buildArena, escrowOf, inProgress, makeContest, OPERATOR, score, TENANT_ACTOR, walletBalance, type Arena } from './fixtures';
@@ -106,6 +106,54 @@ describe('concurrent close', () => {
     expect(await escrowOf(runtime.db, contest)).toBe(0n);
     const report = await reconcile(runtime.db);
     expect(report.ok).toBe(true);
+  });
+
+  it('a void takes its wallet locks in id order up front, so it waits behind a settlement holding the same wallets instead of deadlocking', async () => {
+    const [first, second] = arena.users;
+    if (first === undefined || second === undefined) throw new Error('two users are needed');
+    const wallets = [
+      await findAccount(runtime.db, { tenantId: arena.tenantId, kind: 'user_wallet', ownerRef: first, asset: arena.asset }),
+      await findAccount(runtime.db, { tenantId: arena.tenantId, kind: 'user_wallet', ownerRef: second, asset: arena.asset }),
+    ].sort((a, b) => ((a?.id ?? '') < (b?.id ?? '') ? -1 : 1));
+    const [low, high] = wallets;
+    if (low === undefined || high === undefined) throw new Error('both wallets exist');
+
+    // The owner of the higher-sorting wallet joins first: a void refunding in join order would lock high, then low.
+    const contest = await makeContest(runtime.db, arena);
+    await advance(runtime.db, arena, contest.id, 'open');
+    await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: high.ownerRef ?? '', idempotencyKey: key() });
+    await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: low.ownerRef ?? '', idempotencyKey: key() });
+
+    const someoneWaits = async () => {
+      const [row] = await runtime.sql<Array<{ n: number }>>`select count(*)::int as n from pg_locks where not granted`;
+      return (row?.n ?? 0) > 0;
+    };
+
+    // Stand in for another contest's settlement paying both wallets: one sorted FOR UPDATE
+    // takes low first, so it holds low while the void runs, then asks for high. The void's
+    // promise is handed out unawaited: it can only finish once this transaction commits.
+    const { pending } = await runtime.sql.begin(async (tx) => {
+      await tx`select id from accounts where id = ${low.id} for update`;
+      const voiding = voidContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, actor: OPERATOR, idempotencyKey: key('void') });
+      const deadline = Date.now() + 10_000;
+      while (!(await someoneWaits())) {
+        if (Date.now() > deadline) throw new Error('the void never blocked on the low wallet');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      // The void is queued on low and holds no other wallet, so high is free: this returns
+      // rather than closing a cycle that Postgres would break with a deadlock error.
+      await tx`select id from accounts where id = ${high.id} for update`;
+      return { pending: voiding };
+    });
+
+    const voided = await pending;
+    expect(voided.replayed).toBe(false);
+    expect(voided.contest.state).toBe('voided');
+    expect(voided.refunds).toHaveLength(2);
+    expect(await escrowOf(runtime.db, contest)).toBe(0n);
+    expect(await walletBalance(runtime.db, arena, first)).toBe(1000n);
+    expect(await walletBalance(runtime.db, arena, second)).toBe(1000n);
+    expect((await reconcile(runtime.db)).ok).toBe(true);
   });
 });
 

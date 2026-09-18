@@ -203,7 +203,8 @@ operator who moved a contest on with an attempt unfinished and then receives tha
 player's finishing score: it must be able to land, and a close computed before it must be
 refused. `test/contests/concurrency.test.ts` fires exactly that race. Nothing is accepted
 once a contest is `settling`, `settled`, `cancelled` or `voided`, and nothing before
-`in_progress`.
+`in_progress`. Confirmed at review, including its consequence: on an `auto` contest an
+operator moved on early, a late finishing score settles the contest with no hash to check.
 
 ### The payout hash canonical form
 
@@ -256,7 +257,28 @@ The spec 4.3 diagram draws `voided` from `locked`, `in_progress` and `awaiting_s
 Phase 2 allows it from `open` too. An open contest with entries has no other honest exit:
 `cancelled` is for a contest holding nothing, and locking a contest only to void it is
 ceremony that changes no money. `cancelled` remains reachable from every non-terminal
-state but `settling` and refuses a contest holding any entry.
+state but `settling` and refuses a contest holding any entry. Confirmed at review.
+
+### A withdrawn entrant may re-enter while the contest is open
+
+Spec 4.1 gives `contest_participants` one row per user per contest and 4.2.5 refunds a
+withdrawal before lock; neither says whether the user may come back. Phase 2's rule: **yes,
+while the contest is `open` and before `locks_at`, under the same conditions as a first
+entry** (capacity, eligibility, funds). `enterContest` reactivates the withdrawn row rather
+than inserting a second one: the state returns to `entered` and `entry_journal_entry_id`
+is pointed at a fresh escrow entry keyed by the new request, so the row always names the
+entry that currently holds the stake, which is what I7 checks and what a void reverses.
+`team_ref` and `seed` are set at the first entry and never change; a re-entry that carries
+different values is refused (`invalid_input`) rather than silently kept, since the seed
+feeds the tie-break. The database admits exactly this and nothing more: `purse_app` may
+update `state`, `entry_journal_entry_id` and `updated_at`, and the
+`contest_participants_guard` trigger lets the entry link change only on `withdrawn ->
+entered` and requires it to change then. The audit row for a re-entry is
+`contest.entry.reentered`, with the withdrawn row as `before`.
+
+The lock time is the same for leaving as for joining: `withdrawEntry` refuses once
+`locks_at` has passed (`invalid_contest_state`), whether or not the operator has issued
+the `locked` transition, so no stake can leave escrow after the moment entries close.
 
 ### Entry amounts are strictly positive
 
@@ -296,5 +318,6 @@ always allows and is marked as phase 3's to replace. `contest_not_open`, `contes
 and `insufficient_balance` (as the ledger's `insufficient_funds`) are already enforced at
 entry without it. `contest_participants.user_id` is a typed id with no foreign key until
 `users` exists; the seed's six users have stable ids so phase 3 can give them rows. The
-public routes are phase 3's; `GET /internal/contests/:id/preview` behind
-`INTERNAL_API_TOKEN` exercises the preview-hash mechanism end to end until then.
+public routes, `GET /contests/:id/preview` included, are phase 3's and mount on
+`previewSettlement` and `closeContest`, which already exercise the preview-hash mechanism
+end to end at the service level; phase 2 adds no HTTP surface for it.
