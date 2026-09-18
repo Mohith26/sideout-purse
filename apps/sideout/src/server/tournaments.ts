@@ -19,7 +19,7 @@ import {
   type Tournament,
   type TournamentStatus,
 } from '../db/schema';
-import { DRAWABLE_FORMATS } from '../domain/draw';
+import { DRAWABLE_FORMATS, MAX_FIELD_SIZE } from '../domain/draw';
 import { isMatchComplete, validateTournamentTransition } from '../domain/state';
 import { mintPurseExternalId, type Actor } from './actor';
 import { writeAudit } from './audit';
@@ -64,7 +64,7 @@ export const createTournamentSchema = z
     /** Only formats the engine can draw are offered; `double_elim` stays in the enum for the follow-up. */
     format: z.enum(DRAWABLE_FORMATS),
     division: z.enum(DIVISIONS),
-    maxTeams: z.number().int().min(2).max(128),
+    maxTeams: z.number().int().min(2).max(MAX_FIELD_SIZE),
     entryDonationCents: centsSchema,
     fundraisingGoalCents: centsSchema,
   })
@@ -133,7 +133,7 @@ export const updateTournamentSchema = z
     endsAt: isoDate.optional(),
     format: z.enum(DRAWABLE_FORMATS).optional(),
     division: z.enum(DIVISIONS).optional(),
-    maxTeams: z.number().int().min(2).max(128).optional(),
+    maxTeams: z.number().int().min(2).max(MAX_FIELD_SIZE).optional(),
     entryDonationCents: centsSchema.optional(),
     fundraisingGoalCents: centsSchema.optional(),
     status: z.enum(TOURNAMENT_STATUSES).optional(),

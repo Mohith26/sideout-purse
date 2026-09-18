@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertDrawableFormat,
+  checkAdvancement,
   resolveCutLineTies,
   bracketSizeFor,
   drawBracket,
@@ -16,6 +17,7 @@ import {
   seedPlacement,
   type DrawTeam,
 } from '../../src/domain/draw';
+import type { AdvancementRule } from '../../src/domain/draw-config';
 import { createRng } from '../../src/domain/rng';
 import { computeStandings, type StandingRow } from '../../src/domain/standings';
 
@@ -468,6 +470,80 @@ describe('rankForBracket', () => {
       [1, null],
       [2, 'lot'],
     ]);
+  });
+});
+
+describe('checkAdvancement', () => {
+  const refusal = (sizes: number[], rule: AdvancementRule): DrawError => {
+    try {
+      checkAdvancement(sizes, rule);
+    } catch (error) {
+      if (error instanceof DrawError) return error;
+      throw error;
+    }
+    throw new Error('expected the rule to be refused');
+  };
+  /** The rule a refusal names, in the `top N per pool plus M wildcard(s)` form the message uses. */
+  const namedRule = (error: DrawError): AdvancementRule => {
+    const found = /top (\d+) per pool plus (\d+) wildcard\(s\) fits/.exec(error.message);
+    if (found === null) throw new Error(`the refusal names no rule: ${error.message}`);
+    return { perPool: Number(found[1]), wildcards: Number(found[2]) };
+  };
+  /** Unplayed pools of these sizes, as the bracket stage would see them. */
+  const unplayedPools = (sizes: readonly number[]) =>
+    sizes.map((size, sequence) => ({ sequence, standings: computeStandings(Array.from({ length: size }, (_, i) => `p${sequence}-${i}`), []) }));
+
+  it('accepts a rule whose advancers fit a bracket', () => {
+    expect(() => checkAdvancement([4, 4], { perPool: 2, wildcards: 1 })).not.toThrow();
+    expect(() => checkAdvancement([3, 3, 4], { perPool: 2, wildcards: 4 })).not.toThrow();
+    expect(() => checkAdvancement([2], { perPool: 2, wildcards: 0 })).not.toThrow();
+    expect(() => checkAdvancement([2, 2], { perPool: 3, wildcards: 0 })).not.toThrow();
+  });
+
+  it('refuses more wildcards than teams remain, naming the wildcards that fit', () => {
+    const error = refusal([4, 4], { perPool: 3, wildcards: 3 });
+    expect(error.code).toBe('advancement_exceeds_field');
+    expect(error.message).toContain('asks for 3 wildcard(s) but only 2 team(s) remain');
+    expect(namedRule(error)).toEqual({ perPool: 3, wildcards: 2 });
+  });
+
+  it('refuses a rule that advances a single team, naming one wildcard', () => {
+    const error = refusal([3], { perPool: 1, wildcards: 0 });
+    expect(error.code).toBe('too_few_teams');
+    expect(namedRule(error)).toEqual({ perPool: 1, wildcards: 1 });
+  });
+
+  it('refuses more advancers than the largest bracket holds, naming a per-pool count that fits', () => {
+    const error = refusal(Array.from({ length: 16 }, () => 8), { perPool: 8, wildcards: 0 });
+    expect(error.code).toBe('too_many_teams');
+    expect(namedRule(error)).toEqual({ perPool: 4, wildcards: 0 });
+    const crowded = refusal(Array.from({ length: 9 }, () => 8), { perPool: 7, wildcards: 4 });
+    expect(crowded.code).toBe('too_many_teams');
+    expect(namedRule(crowded)).toEqual({ perPool: 7, wildcards: 1 });
+  });
+
+  it('every refusal names a rule it accepts, and every accepted rule draws a bracket from those pools', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.integer({ min: 2, max: 8 }), { minLength: 1, maxLength: 64 }),
+        fc.record({ perPool: fc.integer({ min: 1, max: 8 }), wildcards: fc.integer({ min: 0, max: 32 }) }),
+        (sizes, rule) => {
+          let accepted = rule;
+          try {
+            checkAdvancement(sizes, rule);
+          } catch (error) {
+            if (!(error instanceof DrawError)) throw error;
+            accepted = namedRule(error);
+            checkAdvancement(sizes, accepted);
+          }
+          const ranking = rankForBracket(unplayedPools(sizes), accepted, createRng(1));
+          const bracket = drawBracket({ seeds: ranking.seeds, courts: 4, bestOf: 3 });
+          expect(ranking.seeds.length).toBe(sizes.reduce((n, size) => n + Math.min(size, accepted.perPool), 0) + accepted.wildcards);
+          expect(bracket.size).toBeGreaterThanOrEqual(ranking.seeds.length);
+        },
+      ),
+      { numRuns: 300 },
+    );
   });
 });
 

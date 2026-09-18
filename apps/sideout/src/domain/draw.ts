@@ -49,6 +49,8 @@ export type DrawTeam = { id: string; seed: number | null };
 
 /** Bracket sizes the engine supports (a 64-team single elimination is the largest). */
 export const MAX_BRACKET_SIZE = 64;
+/** The largest field a tournament takes: what `drawPools` will partition, and the highest entry seed. */
+export const MAX_FIELD_SIZE = MAX_BRACKET_SIZE * 2;
 
 function courtLabel(index: number): string {
   return `Court ${index + 1}`;
@@ -182,8 +184,8 @@ export function drawPools(input: {
   bestOf: BestOf;
   rng: Rng;
 }): PoolDraw {
-  if (input.teams.length > MAX_BRACKET_SIZE * 2) {
-    throw new DrawError('too_many_teams', `At most ${MAX_BRACKET_SIZE * 2} teams can be drawn into pools.`);
+  if (input.teams.length > MAX_FIELD_SIZE) {
+    throw new DrawError('too_many_teams', `At most ${MAX_FIELD_SIZE} teams can be drawn into pools.`);
   }
   const entries = orderEntries(input.teams, input.rng);
   const partition = partitionIntoPools(entries, input.poolSize);
@@ -504,6 +506,56 @@ export function resolveCutLineTies(pools: readonly PoolStandings[], rule: Advanc
   return { pools: resolved, lots, wildcardOrder: remaining.map((entry) => entry.teamId) };
 }
 
+/**
+ * Whether `rule` draws a bracket from pools of these sizes: every wildcard must have a
+ * team to take, and what advances must fit a bracket (two teams up to `MAX_BRACKET_SIZE`).
+ * The pools stage checks this before it persists the rule, since a pool-to-bracket event
+ * cannot redraw its pools once live; every refusal names a rule that fits.
+ */
+export function checkAdvancement(poolSizes: readonly number[], rule: AdvancementRule): void {
+  const remaining = remainingAfter(poolSizes, rule.perPool);
+  const fits = describeRule(fittingRule(poolSizes, rule));
+  if (rule.wildcards > remaining) {
+    throw new DrawError(
+      'advancement_exceeds_field',
+      `The advancement rule asks for ${rule.wildcards} wildcard(s) but only ${remaining} team(s) remain after the top ${rule.perPool} per pool; ${fits} fits.`,
+    );
+  }
+  const advancing = topOfEachPool(poolSizes, rule.perPool) + rule.wildcards;
+  if (advancing < 2) {
+    throw new DrawError('too_few_teams', `The advancement rule advances ${advancing} team; a bracket needs at least two, and ${fits} fits.`);
+  }
+  if (advancing > MAX_BRACKET_SIZE) {
+    throw new DrawError('too_many_teams', `The advancement rule advances ${advancing} teams; a bracket holds at most ${MAX_BRACKET_SIZE}, and ${fits} fits.`);
+  }
+}
+
+function topOfEachPool(poolSizes: readonly number[], perPool: number): number {
+  return poolSizes.reduce((sum, size) => sum + Math.min(size, perPool), 0);
+}
+
+function remainingAfter(poolSizes: readonly number[], perPool: number): number {
+  return poolSizes.reduce((sum, size) => sum + Math.max(0, size - perPool), 0);
+}
+
+function describeRule(rule: AdvancementRule): string {
+  return `top ${rule.perPool} per pool plus ${rule.wildcards} wildcard(s)`;
+}
+
+/**
+ * The rule nearest to `rule` that `checkAdvancement` accepts for these pools: the per-pool
+ * count comes down until its advancers fit the bracket, then the wildcards are clamped to
+ * the teams left and the places left, with one wildcard added when a lone pool's winner
+ * would otherwise advance alone.
+ */
+function fittingRule(poolSizes: readonly number[], rule: AdvancementRule): AdvancementRule {
+  let perPool = rule.perPool;
+  while (perPool > 1 && topOfEachPool(poolSizes, perPool) > MAX_BRACKET_SIZE) perPool -= 1;
+  const advancing = topOfEachPool(poolSizes, perPool);
+  const wildcards = Math.max(advancing < 2 ? 1 : 0, Math.min(rule.wildcards, remainingAfter(poolSizes, perPool), MAX_BRACKET_SIZE - advancing));
+  return { perPool, wildcards };
+}
+
 export type BracketRanking = { seeds: BracketSeedEntry[]; lots: LotDrawn[]; pools: PoolStandings[] };
 
 /**
@@ -515,22 +567,19 @@ export type BracketRanking = { seeds: BracketSeedEntry[]; lots: LotDrawn[]; pool
  * seed 1.
  */
 export function rankForBracket(pools: readonly PoolStandings[], rule: AdvancementRule, rng: Rng): BracketRanking {
+  checkAdvancement(
+    pools.map((pool) => pool.standings.length),
+    rule,
+  );
   const { pools: resolved, lots, wildcardOrder } = resolveCutLineTies(pools, rule, rng);
   const advancing: Contender[] = resolved.flatMap((pool) => pool.standings.slice(0, rule.perPool).map((row) => ({ teamId: row.teamId, place: row.rank, row })));
   const remaining = new Map<string, Contender>(
     resolved.flatMap((pool) => pool.standings.slice(rule.perPool).map((row) => [row.teamId, { teamId: row.teamId, place: row.rank, row }])),
   );
-  if (rule.wildcards > remaining.size) {
-    throw new DrawError(
-      'advancement_exceeds_field',
-      `The advancement rule asks for ${rule.wildcards} wildcard(s) but only ${remaining.size} team(s) remain after the top ${rule.perPool} per pool.`,
-    );
-  }
   const wildcards = wildcardOrder.slice(0, rule.wildcards).flatMap((teamId) => {
     const entry = remaining.get(teamId);
     return entry === undefined ? [] : [entry];
   });
   const field = [...advancing, ...wildcards].sort(byPlaceThenStrength);
-  if (field.length < 2) throw new DrawError('too_few_teams', 'Fewer than two teams advance; there is no bracket to draw.');
   return { seeds: field.map((entry, index) => ({ teamId: entry.teamId, seed: index + 1 })), lots, pools: resolved };
 }

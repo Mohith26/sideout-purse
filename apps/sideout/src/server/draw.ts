@@ -8,10 +8,12 @@ import type { Db } from '../db/client';
 import { matches, pools, poolTeams, sets, teams, tournaments, type MatchStatus, type Tournament } from '../db/schema';
 import {
   assertDrawableFormat,
+  checkAdvancement,
   drawBracket,
   drawPools,
   drawSingleElimination,
   DrawError,
+  MAX_FIELD_SIZE,
   rankForBracket,
   type BracketDraw,
   type BracketSeedEntry,
@@ -52,7 +54,7 @@ const rngSeed = z.number().int().min(0).max(0xffff_ffff);
  * The organizer's entry seeds. When present it is the whole seeding: listed teams get
  * these seeds and every other team's seed is cleared. When absent, seeds are untouched.
  */
-const seedList = z.array(z.strictObject({ teamId: z.string().startsWith('tm_'), seed: z.number().int().min(1) })).max(128);
+const seedList = z.array(z.strictObject({ teamId: z.string().startsWith('tm_'), seed: z.number().int().min(1).max(MAX_FIELD_SIZE) })).max(MAX_FIELD_SIZE);
 type SeedList = z.infer<typeof seedList>;
 
 /**
@@ -194,6 +196,14 @@ export async function runDraw(
           rng: createRng(config.rngSeed),
         }),
       );
+      if (config.format === 'pool_to_bracket') {
+        tryDraw(() =>
+          checkAdvancement(
+            draw.pools.map((pool) => pool.teamIds.length),
+            config.advancement,
+          ),
+        );
+      }
       const outcome = poolsOutcome(config, draw, tournament.startsAt, preview);
       if (!preview) await persistPools(tx, { tournament, config, draw, outcome, actor: input.actor, now });
       return outcome;

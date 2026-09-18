@@ -59,17 +59,21 @@ export type ForfeitResult = { match: Match; winnerTeamId: string; advancedTo: { 
  * The organizer's forfeit: the other team wins, the match is complete, and in a bracket
  * the winner advances through `advanceWinner`, the same function phase 7's consensus
  * uses when a match becomes final. Only a live tournament has results; before that the
- * draw stays replaceable, and a team that pulls out is handled by a redraw.
+ * draw stays replaceable, and a team that pulls out is handled by a redraw. Locks the
+ * tournament before the match, the order every other writer takes, so a redraw cannot
+ * replace the bracket while a forfeit is being recorded on it.
  */
 export async function forfeitMatch(db: Db, input: { matchId: string; forfeitingTeamId: string; actor: Actor; now: Date }): Promise<ForfeitResult> {
   if (input.actor.kind !== 'organizer') throw failure.permission('organizer_required', 'Only an organizer can record a forfeit.');
   return db.transaction(async (tx) => {
-    const [match] = await tx.select().from(matches).where(eq(matches.id, input.matchId)).for('update');
-    if (match === undefined) throw failure.notFound('match_not_found', 'No such match.');
-    const [tournament] = await tx.select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, match.tournamentId));
+    const [located] = await tx.select({ tournamentId: matches.tournamentId }).from(matches).where(eq(matches.id, input.matchId));
+    if (located === undefined) throw failure.notFound('match_not_found', 'No such match.');
+    const [tournament] = await tx.select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, located.tournamentId)).for('update');
     if (tournament?.status !== 'live') {
       throw failure.invalidState('tournament_not_live', `Forfeits are recorded while the tournament is live; it is ${tournament?.status ?? 'missing'}.`);
     }
+    const [match] = await tx.select().from(matches).where(eq(matches.id, input.matchId)).for('update');
+    if (match === undefined) throw failure.notFound('match_not_found', 'No such match.');
 
     const verdict = validateMatchTransition(match.status, 'forfeited', input.actor.kind);
     if (!verdict.ok) throw failure.invalidState(`transition_${verdict.code}`, verdict.message, { from: match.status, to: 'forfeited' });

@@ -656,6 +656,94 @@ describe('draw, forfeit and standings', () => {
     expect(unchanged.map((m) => m.scheduledAt?.getTime()).sort()).toEqual(after.map((m) => m.scheduledAt?.getTime()).sort());
   });
 
+  it('refuses at the pools stage, preview included, an advancement rule the bracket could not draw, naming a rule that fits', async () => {
+    const t = await create({ maxTeams: 8, format: 'pool_to_bracket' });
+    await transition(t.id, 'registration_open');
+    await registerTeams(database, t.id, 8);
+    await transition(t.id, 'registration_closed');
+    const drawConfig = async () => (await database.db.select().from(tournaments).where(eq(tournaments.id, t.id)))[0]?.drawConfig;
+
+    for (const preview of [true, false]) {
+      const exceeds = await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 2, rngSeed: 1, advancement: { perPool: 3, wildcards: 3 } }, preview);
+      expect(exceeds.status).toBe(400);
+      const error = await errorOf(exceeds);
+      expect(error.code).toBe('draw_advancement_exceeds_field');
+      expect(error.message).toContain('top 3 per pool plus 2 wildcard(s) fits');
+      expect(await database.db.select().from(pools).where(eq(pools.tournamentId, t.id))).toEqual([]);
+      expect(await drawConfig()).toBeNull();
+    }
+    const lone = await runDraw(t.id, { stage: 'pools', poolSize: 8, courts: 2, rngSeed: 1, advancement: { perPool: 1, wildcards: 0 } });
+    expect(lone.status).toBe(400);
+    const loneError = await errorOf(lone);
+    expect(loneError.code).toBe('draw_too_few_teams');
+    expect(loneError.message).toContain('top 1 per pool plus 1 wildcard(s) fits');
+    expect(await drawConfig()).toBeNull();
+    expect((await errorOf(await transition(t.id, 'live'))).code).toBe('draw_required');
+
+    // The rule the refusal named draws; a refused redraw leaves that draw untouched; and the
+    // bracket the pools stage vouched for follows once pool play is done.
+    const drawn = await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 2, rngSeed: 1, advancement: { perPool: 3, wildcards: 2 } }));
+    expect(drawn.config).toMatchObject({ advancement: { perPool: 3, wildcards: 2 } });
+    const refusedRedraw = await runDraw(t.id, { stage: 'pools', poolSize: 4, courts: 2, rngSeed: 2, advancement: { perPool: 4, wildcards: 1 } });
+    expect((await errorOf(refusedRedraw)).code).toBe('draw_advancement_exceeds_field');
+    expect(await drawConfig()).toEqual(drawn.config);
+    expect((await database.db.select().from(pools).where(eq(pools.tournamentId, t.id))).map((p) => p.label).sort()).toEqual(['Pool A', 'Pool B']);
+    expect((await data<{ transition: { to: string } }>(await transition(t.id, 'live'))).transition.to).toBe('live');
+    for (const m of await database.db.select().from(matches).where(eq(matches.tournamentId, t.id))) {
+      await finishMatch(database, m.id, [{ setNumber: 1, teamAPoints: 21, teamBPoints: 15 }]);
+    }
+    const bracket = await data<DrawOutcome>(await runDraw(t.id, { stage: 'bracket' }));
+    expect(bracket.bracket).toMatchObject({ size: 8, rounds: 3 });
+    expect(bracket.bracket?.seeds).toHaveLength(8);
+  });
+
+  it('records a forfeit only under the tournament lock, so a redraw in flight cannot lose it', async () => {
+    const t = await create({ format: 'single_elim', maxTeams: 8 });
+    await transition(t.id, 'registration_open');
+    await registerTeams(database, t.id, 4);
+    await transition(t.id, 'registration_closed');
+    await data<DrawOutcome>(await runDraw(t.id, { stage: 'bracket', courts: 1, rngSeed: 1 }));
+    await transition(t.id, 'live');
+    const [target] = await database.db.select().from(matches).where(and(eq(matches.tournamentId, t.id), eq(matches.round, 1)));
+    if (target === undefined) throw new Error('no round-1 match');
+
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // A redraw holds the tournament row for its whole transaction and replaces the bracket under it.
+    const redraw = database.db.transaction(async (tx) => {
+      await tx.select().from(tournaments).where(eq(tournaments.id, t.id)).for('update');
+      await gate;
+      await tx.delete(matches).where(eq(matches.tournamentId, t.id));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const attempt = forfeit(request('POST', '/x', { body: { forfeitingTeamId: target.teamAId }, cookie: cookie() }), params({ id: target.id }));
+    const raced = await Promise.race([attempt.then(() => 'done'), new Promise((resolve) => setTimeout(() => resolve('waiting'), 200))]);
+    expect(raced).toBe('waiting');
+    release();
+    await redraw;
+    const response = await attempt;
+    expect(response.status).toBe(404);
+    expect((await errorOf(response)).code).toBe('match_not_found');
+    expect(await database.db.select().from(auditLog).where(eq(auditLog.action, 'match.forfeited'))).toEqual([]);
+  });
+
+  it('bounds entry seeds so a seed list the preview accepts is one the draw can persist', async () => {
+    const t = await create({ maxTeams: 8, format: 'pool_to_bracket' });
+    await transition(t.id, 'registration_open');
+    const [first] = await registerTeams(database, t.id, 4);
+    await transition(t.id, 'registration_closed');
+    for (const preview of [true, false]) {
+      const huge = await runDraw(t.id, { stage: 'pools', seeds: [{ teamId: first ?? '', seed: 2 ** 31 }] }, preview);
+      expect(huge.status).toBe(400);
+      expect((await errorOf(huge)).code).toBe('validation_failed');
+    }
+    const top = await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 4, rngSeed: 1, seeds: [{ teamId: first ?? '', seed: 128 }] }));
+    expect(top.pools[0]?.teamIds[0]).toBe(first);
+    expect((await database.db.select({ seed: teams.seed }).from(teams).where(eq(teams.id, first ?? '')))[0]?.seed).toBe(128);
+  });
+
   it('will not settle a pool-to-bracket event whose bracket was never drawn', async () => {
     const t = await create({ maxTeams: 8, format: 'pool_to_bracket' });
     await transition(t.id, 'registration_open');
