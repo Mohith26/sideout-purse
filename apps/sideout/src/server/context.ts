@@ -30,9 +30,10 @@ const PER_ADDRESS = { limit: 5, windowMs: 10 * 60_000, maxKeys: 10_000 } as cons
 /**
  * Sign-in limits over a ten-minute window: code requests per address, per phone and for
  * the whole process (the SMS budget, from `AUTH_CODE_GLOBAL_CAP`), and verify attempts per
- * address. The per-phone cap also bounds how many codes can be live for one number. The
- * verify counter is separate from the request counter on purpose, so one sign-in (a
- * request and a verify) costs one slot of each rather than two of one (docs/decisions.md).
+ * address. These are per process and bound nothing but request rates: which codes are
+ * live is decided by expiry alone (`auth/service.ts`). The verify counter is separate from
+ * the request counter on purpose, so one sign-in (a request and a verify) costs one slot
+ * of each rather than two of one (docs/decisions.md).
  */
 export const AUTH_RATE_LIMITS = {
   perAddress: PER_ADDRESS,

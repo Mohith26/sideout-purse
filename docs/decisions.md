@@ -463,6 +463,19 @@ A pool size of 2 with an odd field would leave one team alone in its pool, playi
 topping its standings by default. The draw refuses any configuration whose balanced pools would
 hold fewer than two teams (`invalid_pool_size`), naming a pool size that works.
 
+### The advancement rule is checked when the pools are drawn
+
+A pool-to-bracket event cannot redraw its pools once it is live, and the bracket stage is
+only reachable while live, so an advancement rule the pools cannot satisfy would leave the
+event with no exit but `cancelled`. The pools stage (preview included) therefore checks the
+rule against the partition it just produced before anything is persisted: every wildcard
+must have a team left to take (`advancement_exceeds_field`), and what advances must fit a
+bracket of two to sixty-four (`too_few_teams`, `too_many_teams`). Each refusal names the
+nearest rule that fits (`checkAdvancement` in `apps/sideout/src/domain/draw.ts`; the bracket
+stage runs the same check, which then cannot fail). Pinned by "refuses at the pools stage,
+preview included, an advancement rule the bracket could not draw" in
+`apps/sideout/test/api/draw.test.ts`.
+
 ### Ties at a cut line are drawn by lot
 
 The standings tiebreak order (`apps/sideout/src/domain/standings.ts`: wins, head-to-head, set

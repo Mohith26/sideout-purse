@@ -24,7 +24,7 @@ import { SmsUnavailableError, type SmsSender } from './sms';
 export type AuthLimiters = {
   /** Code requests per client address. */
   perAddress: RateLimiter;
-  /** Code requests per phone number; also how many codes can be live for it at once. */
+  /** Code requests per phone number. Which codes are live is a matter of expiry, never of this counter. */
   perPhone: RateLimiter;
   /** Code requests for the whole instance: the SMS budget. */
   global: RateLimiter;
