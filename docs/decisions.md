@@ -401,8 +401,12 @@ entry (the duplicate-payment case below), in which case the team keeps its place
 `POST /api/tournaments/:slug/register` runs two transactions: the first validates and marks
 the team `registered` with a `pending` donation, the second records the provider's
 reference. No database lock is held across the provider's network call. A provider failure
-marks the donation `failed`, which releases the spot, and the captain can register again. The
-Purse contest entry is not part of this route yet: `PurseContestEntry` in
+marks the donation `failed`, which releases the spot, and the captain can register again. A
+declined attempt (`payment_intent.payment_failed`) is not a failure: Stripe keeps the intent
+open for a retry, so the donation stays `pending`, the reservation keeps holding the place
+until it lapses, and the decline is recorded as a `donation.payment_failed` audit row and in
+`donations.last_payment_error` (shown on `/api/me`). Only `payment_intent.canceled` maps to
+`failed`. The Purse contest entry is not part of this route yet: `PurseContestEntry` in
 `apps/sideout/src/server/registration.ts` is the documented hook phase 7 fills, its default
 does nothing, and the response says `purseEntry: { status: 'not_wired' }`.
 
@@ -429,8 +433,8 @@ success. Refunding through Stripe then flows back through `charge.refunded` as u
 
 Once one payment pays for an entry, the team's other unfinished payments are cancelled at the
 provider (`DonationProvider.cancelPayment`; Stripe cancels the PaymentIntent, the dev provider
-has nothing to cancel): when a captain registers again after a lapse and when a replacement
-payment succeeds through the webhook. It is best effort and runs outside any transaction; a
+marks its row `failed` at once, since it has no webhook to do so later): when a captain
+registers again after a lapse and when a replacement payment succeeds through the webhook. It is best effort and runs outside any transaction; a
 cancellation the provider refuses is logged and the local row is left for the provider's own
 `payment_intent.canceled` event to settle. `/api/me` reports each team's and donation's
 `holdsPlace` and `reservationExpiresAt` under the same rule, so a captain can see that a place
@@ -458,6 +462,44 @@ than by a result.
 A pool size of 2 with an odd field would leave one team alone in its pool, playing nothing and
 topping its standings by default. The draw refuses any configuration whose balanced pools would
 hold fewer than two teams (`invalid_pool_size`), naming a pool size that works.
+
+### Ties at a cut line are drawn by lot
+
+The standings tiebreak order (`apps/sideout/src/domain/standings.ts`: wins, head-to-head, set
+ratio, point differential, points for) leaves teams that are level on all of it sharing a
+rank, and the id order that follows only fixes how they are displayed. When such a tie
+straddles a place that advances, the last of a pool's top `perPool` or the last wildcard across
+pools, the classic rock-paper-scissors pool, the draw breaks it by a drawing of lots: the tied
+teams are shuffled with the draw's `Rng` seeded from the persisted `rngSeed`
+(`resolveCutLineTies` in `apps/sideout/src/domain/draw.ts`), so the outcome is reproducible
+and never falls to the team id. The rows a lot ordered get distinct ranks and `tiebreak: 'lot'`
+in the public standings (computed under the same seed, so they show exactly what the bracket
+will take); the bracket draw result and its `tournament.drawn` audit row record every lot with
+the tied teams and the order drawn. Ties that touch no cut line stay shared.
+
+### The bracket of a pool-to-bracket event takes no configuration
+
+Its courts, best-of, rng seed and advancement rule were fixed at the pools stage and its
+seeding comes from the standings, so `POST .../draw` with `stage: 'bracket'` on such an event
+accepts nothing but `stage`: any other field is a validation error rather than a knob that
+is silently ignored. The bracket of a single elimination, which is that event's first stage,
+takes the first-stage knobs (courts, rng seed, best-of, entry seeds); pools-stage-only knobs
+(`poolSize`, `advancement`, `bestOf.pool`) are validation errors at any bracket stage.
+
+### The public detail keeps every team the draw refers to
+
+`GET /api/tournaments/:slug` lists in `teams[]` every team holding a place plus every team the
+persisted draw still refers to (a pool member, a match side or a winner), each with its
+`status`, so a team withdrawn after the event went live can still be rendered in its pool,
+its matches and its opponents' results without a second request. `teamCount` remains the
+counted set.
+
+### Default display names never derive from the phone
+
+A first sign-in without a name gets `Player` plus the last four characters of the opaque user
+id, never any part of the phone number, since display names are public (rosters, match views,
+donors). `/api/me` reports `displayNameIsDefault` so the profile screen can prompt for a
+real one.
 
 ### Moving `startsAt` moves the schedule
 

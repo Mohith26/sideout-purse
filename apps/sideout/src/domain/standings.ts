@@ -17,6 +17,11 @@
  * 6. **team id**, ascending, so the order is total and deterministic.
  *
  * Teams still level after step 5 share a rank; step 6 only fixes their display order.
+ * The one exception is a cut line: when a tie straddles the last place that advances
+ * from a pool, or the last wildcard across pools, it is broken by a drawing of lots
+ * (`resolveCutLineTies` in `draw.ts`) seeded from the draw's persisted `rngSeed`, so the
+ * result is reproducible and never falls to the id. Rows decided that way carry
+ * `tiebreak: 'lot'` and distinct ranks.
  */
 
 export const STANDINGS_TIEBREAK_ORDER = [
@@ -27,6 +32,9 @@ export const STANDINGS_TIEBREAK_ORDER = [
   'points_for',
   'team_id',
 ] as const;
+
+/** How a row's place was fixed when the competitive keys could not: only a cut-line lot, today. */
+export type Tiebreak = 'lot';
 
 export type StandingsMatch = {
   teamAId: string;
@@ -48,6 +56,8 @@ export type StandingRow = {
   pointDiff: number;
   /** One-based; tied teams share a rank and the next rank skips accordingly. */
   rank: number;
+  /** Set when a drawing of lots at a cut line fixed this row's rank. */
+  tiebreak: Tiebreak | null;
 };
 
 function emptyRow(teamId: string): StandingRow {
@@ -62,6 +72,7 @@ function emptyRow(teamId: string): StandingRow {
     pointsAgainst: 0,
     pointDiff: 0,
     rank: 0,
+    tiebreak: null,
   };
 }
 
@@ -114,13 +125,18 @@ export function compareAcrossPools(x: StandingRow, y: StandingRow): number {
 }
 
 /** True when two rows are level on every competitive key (steps 1, 3, 4, 5). */
-function levelOnCompetitiveKeys(x: StandingRow, y: StandingRow): boolean {
+export function levelOnCompetitiveKeys(x: StandingRow, y: StandingRow): boolean {
   return (
     x.wins === y.wins &&
     compareFractions(x.setsWon, x.setsWon + x.setsLost, y.setsWon, y.setsWon + y.setsLost) === 0 &&
     x.pointDiff === y.pointDiff &&
     x.pointsFor === y.pointsFor
   );
+}
+
+/** True when `compareAcrossPools` would fall through to the team id: level on win rate and every competitive key. */
+export function levelAcrossPools(x: StandingRow, y: StandingRow): boolean {
+  return compareFractions(x.wins, x.played, y.wins, y.played) === 0 && levelOnCompetitiveKeys(x, y);
 }
 
 /** The winner of the meetings between two teams, or null when undecided or unplayed. */

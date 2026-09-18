@@ -7,6 +7,7 @@ import { mintPurseExternalId } from '../actor';
 import { writeAudit } from '../audit';
 import { failure } from '../http/errors';
 import { CODE_MAX_ATTEMPTS, CODE_TTL_SECONDS, codeMatches, generateCode, hashCode } from './codes';
+import { defaultDisplayName } from './display-name';
 import type { RateLimiter } from './rate-limit';
 import { SmsUnavailableError, type SmsSender } from './sms';
 
@@ -40,10 +41,6 @@ export type VerifyCodeResult = { user: User; created: boolean };
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-}
-
-function displayNameFor(phoneE164: string): string {
-  return `Player ${phoneE164.slice(-4)}`;
 }
 
 export function createAuthService(deps: AuthServiceDeps) {
@@ -125,12 +122,13 @@ export function createAuthService(deps: AuthServiceDeps) {
           return { ok: true as const, user: existing, created: false };
         }
 
+        const id = newId('sou');
         const [created] = await tx
           .insert(users)
           .values({
-            id: newId('sou'),
+            id,
             purseExternalId: mintPurseExternalId('user'),
-            displayName: nonEmpty(input.displayName) ?? displayNameFor(input.phoneE164),
+            displayName: nonEmpty(input.displayName) ?? defaultDisplayName(id),
             phoneE164: input.phoneE164,
             role: 'player',
             createdAt: input.now,

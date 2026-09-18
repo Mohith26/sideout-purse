@@ -362,19 +362,78 @@ describe('rankForBracket', () => {
       { sequence: 1, standings: perfect('b') },
       { sequence: 2, standings: perfect('c') },
     ];
-    const seeds = rankForBracket(pools, { perPool: 2, wildcards: 1 });
+    const { seeds, lots } = rankForBracket(pools, { perPool: 2, wildcards: 1 }, createRng(1));
     expect(seeds).toHaveLength(7);
     expect(seeds.slice(0, 3).map((s) => s.teamId)).toEqual(['a-w', 'b-w', 'c-w']);
     expect(seeds.slice(3, 6).map((s) => s.teamId).sort()).toEqual(['a-x', 'b-x', 'c-x']);
-    // The best third-placed team is the wildcard; a-y (+27 - 18 = 21-18 lost 10-21 lost 18-21... ) they are all
-    // identical in wins; the differential picks it.
-    expect(seeds[6]?.teamId).toMatch(/-y$/);
+    // The three third-placed teams have identical records, so the wildcard among them is a lot, not the id order.
+    expect(lots).toHaveLength(1);
+    expect(lots[0]).toMatchObject({ poolSequence: null, tied: ['a-y', 'b-y', 'c-y'] });
+    expect(seeds[6]?.teamId).toBe(lots[0]?.order[0]);
     expect(seeds.map((s) => s.seed)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 
   it('refuses more wildcards than teams remain', () => {
     const standings = computeStandings(['p', 'q'], [{ teamAId: 'p', teamBId: 'q', winnerTeamId: 'p', sets: [] }]);
-    expect(() => rankForBracket([{ sequence: 0, standings }], { perPool: 1, wildcards: 2 })).toThrow(/wildcard/);
+    expect(() => rankForBracket([{ sequence: 0, standings }], { perPool: 1, wildcards: 2 }, createRng(1))).toThrow(/wildcard/);
+  });
+
+  /** Rock, paper, scissors: A beats B, B beats C, C beats A, every set 21–15, so every key is level. */
+  const rockPaperScissors = (a: string, b: string, c: string) =>
+    computeStandings(
+      [a, b, c],
+      [
+        { teamAId: a, teamBId: b, winnerTeamId: a, sets: [{ teamAPoints: 21, teamBPoints: 15 }] },
+        { teamAId: b, teamBId: c, winnerTeamId: b, sets: [{ teamAPoints: 21, teamBPoints: 15 }] },
+        { teamAId: c, teamBId: a, winnerTeamId: c, sets: [{ teamAPoints: 21, teamBPoints: 15 }] },
+      ],
+    );
+
+  it('breaks a three-way tie at the cut line by lot, reproducibly from the rng seed, and says so', () => {
+    const standings = rockPaperScissors('tm_a', 'tm_b', 'tm_c');
+    expect(standings.map((r) => r.rank)).toEqual([1, 1, 1]);
+    expect(standings.every((r) => r.tiebreak === null)).toBe(true);
+
+    const first = rankForBracket([{ sequence: 0, standings }], { perPool: 2, wildcards: 0 }, createRng(11));
+    const again = rankForBracket([{ sequence: 0, standings }], { perPool: 2, wildcards: 0 }, createRng(11));
+    expect(again).toEqual(first);
+    expect(first.lots).toHaveLength(1);
+    const [lot] = first.lots;
+    expect(lot?.poolSequence).toBe(0);
+    expect(lot?.tied).toEqual(['tm_a', 'tm_b', 'tm_c']);
+    expect([...(lot?.order ?? [])].sort()).toEqual(['tm_a', 'tm_b', 'tm_c']);
+    // The lot's first two advance, in lot order; the standings it returns carry the note and distinct ranks.
+    expect(first.seeds.map((s) => s.teamId)).toEqual(lot?.order.slice(0, 2));
+    const resolved = first.pools[0]?.standings ?? [];
+    expect(resolved.map((r) => r.teamId)).toEqual(lot?.order);
+    expect(resolved.map((r) => r.rank)).toEqual([1, 2, 3]);
+    expect(resolved.every((r) => r.tiebreak === 'lot')).toBe(true);
+    // Different seeds draw different lots: the id order is not what decides.
+    const orders = new Set([1, 2, 3, 4, 5, 6, 7, 8].map((seed) => rankForBracket([{ sequence: 0, standings }], { perPool: 2, wildcards: 0 }, createRng(seed)).lots[0]?.order.join(',')));
+    expect(orders.size).toBeGreaterThan(1);
+    // A cut that no tie straddles draws no lot: with three advancing, nobody is left out.
+    expect(rankForBracket([{ sequence: 0, standings }], { perPool: 3, wildcards: 0 }, createRng(11)).lots).toEqual([]);
+  });
+
+  it('draws lots for the last wildcard across pools, and leaves ties away from the cut shared', () => {
+    // Two rock-paper-scissors pools; the top two of each advance by lot, then one wildcard is chosen among the two losers, who are level across pools.
+    const pools = [
+      { sequence: 0, standings: rockPaperScissors('tm_a', 'tm_b', 'tm_c') },
+      { sequence: 1, standings: rockPaperScissors('tm_x', 'tm_y', 'tm_z') },
+    ];
+    const ranking = rankForBracket(pools, { perPool: 2, wildcards: 1 }, createRng(5));
+    expect(ranking.lots.map((l) => l.poolSequence)).toEqual([0, 1, null]);
+    const wildcard = ranking.lots[2];
+    const losers = [ranking.lots[0]?.order[2], ranking.lots[1]?.order[2]];
+    expect([...(wildcard?.tied ?? [])].sort()).toEqual([...losers].sort());
+    expect(ranking.seeds).toHaveLength(5);
+    expect(ranking.seeds[4]?.teamId).toBe(wildcard?.order[0]);
+    for (const pool of ranking.pools) {
+      expect(pool.standings.map((r) => r.rank)).toEqual([1, 2, 3]);
+      expect(pool.standings.every((r) => r.tiebreak === 'lot')).toBe(true);
+    }
+    // With both losers advancing there is no wildcard cut, and only the per-pool lots are drawn.
+    expect(rankForBracket(pools, { perPool: 2, wildcards: 2 }, createRng(5)).lots.map((l) => l.poolSequence)).toEqual([0, 1]);
   });
 });
 

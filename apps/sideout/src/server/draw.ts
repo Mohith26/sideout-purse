@@ -15,7 +15,9 @@ import {
   rankForBracket,
   type BracketDraw,
   type BracketSeedEntry,
+  type DrawableFormat,
   type DrawTeam,
+  type LotDrawn,
   type PoolDraw,
 } from '../domain/draw';
 import {
@@ -44,22 +46,66 @@ import { loadPoolStage, standingsForStage } from './standings';
  */
 
 const bestOf = z.union([z.literal(1), z.literal(3)]);
+const courts = z.number().int().min(1).max(64);
+const rngSeed = z.number().int().min(0).max(0xffff_ffff);
+/**
+ * The organizer's entry seeds. When present it is the whole seeding: listed teams get
+ * these seeds and every other team's seed is cleared. When absent, seeds are untouched.
+ */
+const seedList = z.array(z.strictObject({ teamId: z.string().startsWith('tm_'), seed: z.number().int().min(1) })).max(128);
+type SeedList = z.infer<typeof seedList>;
 
-export const drawRequestSchema = z.object({
-  stage: z.enum(['pools', 'bracket']),
-  courts: z.number().int().min(1).max(64).optional(),
-  poolSize: z.number().int().min(2).max(8).optional(),
-  advancement: advancementRuleSchema.optional(),
-  rngSeed: z.number().int().min(0).max(0xffff_ffff).optional(),
-  bestOf: z.object({ pool: bestOf.optional(), bracket: bestOf.optional() }).optional(),
-  /**
-   * The organizer's entry seeds. When present it is the whole seeding: listed teams get
-   * these seeds and every other team's seed is cleared. When absent, seeds are untouched.
-   */
-  seeds: z.array(z.object({ teamId: z.string().startsWith('tm_'), seed: z.number().int().min(1) })).max(128).optional(),
-});
+/**
+ * What each stage may be asked with. The pools stage takes every knob. The bracket stage
+ * takes only what a single-elimination bracket draws from (courts, rng seed, best-of and
+ * entry seeds); a pool-to-bracket bracket takes nothing at all, since its configuration
+ * was fixed at the pools stage (`poolBracketRequestSchema`).
+ */
+export const drawRequestSchema = z.discriminatedUnion('stage', [
+  z.strictObject({
+    stage: z.literal('pools'),
+    courts: courts.optional(),
+    poolSize: z.number().int().min(2).max(8).optional(),
+    advancement: advancementRuleSchema.optional(),
+    rngSeed: rngSeed.optional(),
+    bestOf: z.strictObject({ pool: bestOf.optional(), bracket: bestOf.optional() }).optional(),
+    seeds: seedList.optional(),
+  }),
+  z.strictObject({
+    stage: z.literal('bracket'),
+    courts: courts.optional(),
+    rngSeed: rngSeed.optional(),
+    bestOf: z.strictObject({ bracket: bestOf.optional() }).optional(),
+    seeds: seedList.optional(),
+  }),
+]);
 
 export type DrawRequest = z.infer<typeof drawRequestSchema>;
+export type PoolsDrawRequest = Extract<DrawRequest, { stage: 'pools' }>;
+export type BracketDrawRequest = Extract<DrawRequest, { stage: 'bracket' }>;
+
+const poolBracketRequestSchema = z.strictObject({ stage: z.literal('bracket') });
+
+type DrawPlan = { stage: 'pools'; format: 'pool_to_bracket' | 'round_robin'; request: PoolsDrawRequest } | { stage: 'single_elim'; request: BracketDrawRequest } | { stage: 'pool_bracket' };
+
+/** Which draw a request asks of a format, or why it cannot. */
+function planDraw(request: DrawRequest, format: DrawableFormat): DrawPlan {
+  if (request.stage === 'pools') {
+    if (format === 'single_elim') throw failure.invalidRequest('stage_not_applicable', 'Single elimination has no pool stage; draw the bracket.');
+    return { stage: 'pools', format, request };
+  }
+  if (format === 'round_robin') throw failure.invalidRequest('stage_not_applicable', 'Round robin has no bracket; the pool standings are the result.');
+  if (format === 'single_elim') return { stage: 'single_elim', request };
+  const bare = poolBracketRequestSchema.safeParse(request);
+  if (!bare.success) {
+    throw failure.invalidRequest(
+      'validation_failed',
+      'The bracket of a pool-to-bracket event takes no configuration: courts, best-of, the rng seed and entry seeds were fixed at the pools stage, and it is seeded from the standings.',
+      z.treeifyError(bare.error),
+    );
+  }
+  return { stage: 'pool_bracket' };
+}
 
 export const POOL_MATCH_MINUTES = 30;
 export const BRACKET_MATCH_MINUTES = 45;
@@ -87,6 +133,8 @@ export type DrawOutcome = {
   config: DrawConfig;
   pools: Array<{ sequence: number; label: string; courtLabel: string; teamIds: string[] }>;
   bracket: { size: number; rounds: number; seeds: BracketSeedEntry[] } | null;
+  /** Cut-line ties the bracket stage settled by lot (`domain/draw.ts`); empty for every other draw. */
+  lots: LotDrawn[];
   matches: DrawOutcomeMatch[];
 };
 
@@ -117,30 +165,16 @@ export async function runDraw(
     } catch (error) {
       mapDrawError(error);
     }
-    const format = tournament.format;
-
-    if (request.stage === 'pools' && format === 'single_elim') {
-      throw failure.invalidRequest('stage_not_applicable', 'Single elimination has no pool stage; draw the bracket.');
-    }
-    if (request.stage === 'bracket' && format === 'round_robin') {
-      throw failure.invalidRequest('stage_not_applicable', 'Round robin has no bracket; the pool standings are the result.');
-    }
-
-    // Entry seeds are read only by the stage that places teams from the seed line: the pools,
-    // or the bracket of a single elimination. A pool-to-bracket bracket is seeded from standings.
-    const drawsFromEntrySeeds = request.stage === 'pools' || format === 'single_elim';
-    if (!drawsFromEntrySeeds && request.seeds !== undefined) {
-      throw failure.invalidRequest('seeds_not_applicable', 'The bracket of a pool-to-bracket event is seeded from pool standings; entry seeds belong to the pools stage.');
-    }
+    const plan = planDraw(request, tournament.format);
     const existing = await tx
       .select({ id: matches.id, poolId: matches.poolId, bracketPosition: matches.bracketPosition, status: matches.status, scheduledAt: matches.scheduledAt })
       .from(matches)
       .where(eq(matches.tournamentId, tournament.id));
 
-    if (drawsFromEntrySeeds) {
+    if (plan.stage !== 'pool_bracket') {
       // The first (or only) stage: registration must be closed and nothing may have been played.
       if (tournament.status !== 'registration_closed') {
-        throw failure.invalidState('draw_stage_not_allowed', `The ${format === 'single_elim' ? 'bracket' : 'pools'} are drawn once registration is closed; the tournament is ${tournament.status}.`);
+        throw failure.invalidState('draw_stage_not_allowed', `The ${plan.stage === 'single_elim' ? 'bracket' : 'pools'} are drawn once registration is closed; the tournament is ${tournament.status}.`);
       }
       const played = existing.filter((m) => m.status !== 'scheduled' && m.status !== 'bye');
       if (played.length > 0) {
@@ -148,10 +182,9 @@ export async function runDraw(
       }
     }
 
-    if (request.stage === 'pools') {
-      if (format === 'single_elim') throw failure.invalidRequest('stage_not_applicable', 'Single elimination has no pool stage; draw the bracket.');
-      const field = await fieldWithSeeds(tx, tournament.id, request.seeds, preview);
-      const config = poolsConfig(format, request);
+    if (plan.stage === 'pools') {
+      const field = await fieldWithSeeds(tx, tournament.id, plan.request.seeds, preview);
+      const config = poolsConfig(plan.format, plan.request);
       const draw = tryDraw(() =>
         drawPools({
           teams: field,
@@ -166,18 +199,17 @@ export async function runDraw(
       return outcome;
     }
 
-    // Bracket stage.
-    if (format === 'single_elim') {
-      const field = await fieldWithSeeds(tx, tournament.id, request.seeds, preview);
+    if (plan.stage === 'single_elim') {
+      const field = await fieldWithSeeds(tx, tournament.id, plan.request.seeds, preview);
       const config: DrawConfig = {
         version: DRAW_CONFIG_VERSION,
         format: 'single_elim',
-        courts: request.courts ?? DRAW_DEFAULTS.courts,
-        rngSeed: request.rngSeed ?? randomInt(0, 0x1_0000_0000),
-        bestOf: { bracket: request.bestOf?.bracket ?? DRAW_DEFAULTS.bestOf.bracket },
+        courts: plan.request.courts ?? DRAW_DEFAULTS.courts,
+        rngSeed: plan.request.rngSeed ?? randomInt(0, 0x1_0000_0000),
+        bestOf: { bracket: plan.request.bestOf?.bracket ?? DRAW_DEFAULTS.bestOf.bracket },
       };
       const draw = tryDraw(() => drawSingleElimination({ teams: field, courts: config.courts, bestOf: config.bestOf.bracket, rng: createRng(config.rngSeed) }));
-      const outcome = bracketOutcome(config, draw, tournament.startsAt, preview);
+      const outcome = bracketOutcome(config, draw, tournament.startsAt, preview, []);
       if (!preview) await persistBracket(tx, { tournament, config, draw, outcome, actor: input.actor, now, saveConfig: true });
       return outcome;
     }
@@ -206,11 +238,11 @@ export async function runDraw(
 
     const stage = await loadPoolStage(tx, tournament.id);
     const standings = standingsForStage(stage);
-    const seeds = tryDraw(() => rankForBracket(standings.map((s) => ({ sequence: s.sequence, standings: s.standings })), config.advancement));
-    const draw = tryDraw(() => drawBracket({ seeds, courts: config.courts, bestOf: config.bestOf.bracket }));
+    const ranking = tryDraw(() => rankForBracket(standings, config.advancement, createRng(config.rngSeed)));
+    const draw = tryDraw(() => drawBracket({ seeds: ranking.seeds, courts: config.courts, bestOf: config.bestOf.bracket }));
     const lastPoolSlot = Math.max(...poolMatches.map((m) => m.scheduledAt?.getTime() ?? tournament.startsAt.getTime()));
     const bracketStart = new Date(lastPoolSlot + minutes(POOL_MATCH_MINUTES + STAGE_BREAK_MINUTES));
-    const outcome = bracketOutcome(config, draw, bracketStart, preview);
+    const outcome = bracketOutcome(config, draw, bracketStart, preview, ranking.lots);
     if (!preview) await persistBracket(tx, { tournament, config, draw, outcome, actor: input.actor, now, saveConfig: false });
     return outcome;
   });
@@ -224,7 +256,7 @@ function tryDraw<T>(fn: () => T): T {
   }
 }
 
-function poolsConfig(format: 'pool_to_bracket' | 'round_robin', request: DrawRequest): PoolToBracketConfig | RoundRobinConfig {
+function poolsConfig(format: 'pool_to_bracket' | 'round_robin', request: PoolsDrawRequest): PoolToBracketConfig | RoundRobinConfig {
   const rngSeed = request.rngSeed ?? randomInt(0, 0x1_0000_0000);
   const courts = request.courts ?? DRAW_DEFAULTS.courts;
   if (format === 'round_robin') {
@@ -246,7 +278,7 @@ function poolsConfig(format: 'pool_to_bracket' | 'round_robin', request: DrawReq
  * after applying the request's seed list. In a preview the list is applied to the
  * in-memory field only.
  */
-async function fieldWithSeeds(tx: DbOrTx, tournamentId: string, seedList: DrawRequest['seeds'], preview: boolean): Promise<DrawTeam[]> {
+async function fieldWithSeeds(tx: DbOrTx, tournamentId: string, seedList: SeedList | undefined, preview: boolean): Promise<DrawTeam[]> {
   const rows = await tx.select({ id: teams.id, seed: teams.seed }).from(teams).where(confirmedTeamsFilter(tournamentId)).orderBy(asc(teams.createdAt));
   if (seedList === undefined) return rows;
 
@@ -290,6 +322,7 @@ function poolsOutcome(config: DrawConfig, draw: PoolDraw, startsAt: Date, previe
     config,
     pools: draw.pools.map((p) => ({ sequence: p.sequence, label: p.label, courtLabel: p.courtLabel, teamIds: p.teamIds })),
     bracket: null,
+    lots: [],
     matches: draw.matches.map((m) => ({
       poolSequence: m.poolSequence,
       round: m.round,
@@ -308,7 +341,7 @@ function poolsOutcome(config: DrawConfig, draw: PoolDraw, startsAt: Date, previe
   };
 }
 
-function bracketOutcome(config: DrawConfig, draw: BracketDraw, startsAt: Date, preview: boolean): DrawOutcome {
+function bracketOutcome(config: DrawConfig, draw: BracketDraw, startsAt: Date, preview: boolean, lots: LotDrawn[]): DrawOutcome {
   const seeds: BracketSeedEntry[] = draw.matches
     .filter((m) => m.round === 1)
     .flatMap((m) => [
@@ -323,6 +356,7 @@ function bracketOutcome(config: DrawConfig, draw: BracketDraw, startsAt: Date, p
     config,
     pools: [],
     bracket: { size: draw.size, rounds: draw.rounds, seeds },
+    lots,
     matches: draw.matches.map((m) => ({
       poolSequence: null,
       round: m.round,
@@ -460,6 +494,7 @@ async function persistBracket(
       rounds: input.draw.rounds,
       byes: input.outcome.matches.filter((m) => m.status === 'bye').length,
       seeds: input.outcome.bracket?.seeds ?? [],
+      lots: input.outcome.lots,
       replaced: previous.length > 0,
     },
     at: now,

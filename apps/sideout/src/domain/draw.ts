@@ -1,7 +1,7 @@
 import type { BestOf, MatchSlot, TournamentFormat } from '../db/schema';
 import type { AdvancementRule } from './draw-config';
 import type { Rng } from './rng';
-import { compareAcrossPools, type StandingRow } from './standings';
+import { compareAcrossPools, levelAcrossPools, type StandingRow } from './standings';
 
 /**
  * Draw generation. Pure and deterministic: the only randomness is the injected `Rng`,
@@ -416,33 +416,119 @@ export function drawSingleElimination(input: { teams: readonly DrawTeam[]; court
 
 export type PoolStandings = { sequence: number; standings: readonly StandingRow[] };
 
+/** A tie at a cut line that the standings could not break, and the order the lot gave it. */
+export type LotDrawn = {
+  /** The pool whose last advancing place was tied, or null for the wildcard cut across pools. */
+  poolSequence: number | null;
+  /** The tied teams, in standings order. */
+  tied: string[];
+  /** The same teams in the order the lot decided; the first advance. */
+  order: string[];
+};
+
+export type CutLineResolution = {
+  /** The pools with every cut-line tie broken: distinct ranks and `tiebreak: 'lot'` on the rows a lot ordered. */
+  pools: PoolStandings[];
+  lots: LotDrawn[];
+  /** Every team outside the top `perPool` of its pool, in the order wildcards are taken. */
+  wildcardOrder: string[];
+};
+
+type Contender = { teamId: string; place: number; row: StandingRow };
+
+function byPlaceThenStrength(x: Contender, y: Contender): number {
+  return x.place - y.place || compareAcrossPools(x.row, y.row);
+}
+
 /**
- * Who advances from pool play and in what bracket-seed order. The top `perPool` of every
- * pool advance; then the `wildcards` best remaining teams, ranked by place in pool and
- * then the cross-pool standings comparator. Bracket seeds are assigned by place first
- * (every pool winner before every runner-up), then by that same comparator, so the
- * strongest pool winner is seed 1.
+ * The drawing of lots. Standings leave teams that are level on every competitive key
+ * sharing a rank, which is fine until the shared rank straddles a place that advances: the
+ * last spot in a pool's top `perPool`, or the last wildcard across pools. Those ties are
+ * broken here by shuffling the tied teams with the draw's `Rng` (seeded from the persisted
+ * `rngSeed`, so the outcome is reproducible), and the rows a lot ordered get distinct ranks
+ * and `tiebreak: 'lot'`. Ties that do not touch a cut line are left shared.
  */
-export function rankForBracket(pools: readonly PoolStandings[], rule: AdvancementRule): BracketSeedEntry[] {
-  const advancing: Array<{ teamId: string; place: number; row: StandingRow }> = [];
-  const remaining: Array<{ teamId: string; place: number; row: StandingRow }> = [];
-  for (const pool of pools) {
-    pool.standings.forEach((row, index) => {
-      const entry = { teamId: row.teamId, place: index + 1, row };
-      if (index < rule.perPool) advancing.push(entry);
-      else remaining.push(entry);
+export function resolveCutLineTies(pools: readonly PoolStandings[], rule: AdvancementRule, rng: Rng): CutLineResolution {
+  const lots: LotDrawn[] = [];
+  const resolved: Array<{ sequence: number; standings: StandingRow[] }> = pools.map((pool) => {
+    const rows = pool.standings.map((row) => ({ ...row }));
+    const last = rows[rule.perPool - 1];
+    if (last === undefined || rule.perPool >= rows.length) return { sequence: pool.sequence, standings: rows };
+    const start = rows.findIndex((row) => row.rank === last.rank);
+    const group = rows.filter((row) => row.rank === last.rank);
+    if (start + group.length <= rule.perPool) return { sequence: pool.sequence, standings: rows };
+    const order = rng.shuffle(group.map((row) => row.teamId));
+    lots.push({ poolSequence: pool.sequence, tied: group.map((row) => row.teamId), order });
+    order.forEach((teamId, offset) => {
+      const row = group.find((candidate) => candidate.teamId === teamId);
+      if (row !== undefined) rows[start + offset] = { ...row, rank: start + offset + 1, tiebreak: 'lot' };
     });
+    return { sequence: pool.sequence, standings: rows };
+  });
+
+  const remaining: Contender[] = resolved.flatMap((pool) => pool.standings.slice(rule.perPool).map((row) => ({ teamId: row.teamId, place: row.rank, row })));
+  remaining.sort(byPlaceThenStrength);
+  const last = remaining[rule.wildcards - 1];
+  const next = remaining[rule.wildcards];
+  const level = (x: Contender, y: Contender) => x.place === y.place && levelAcrossPools(x.row, y.row);
+  if (last !== undefined && next !== undefined && level(last, next)) {
+    let start = rule.wildcards - 1;
+    while (start > 0) {
+      const before = remaining[start - 1];
+      if (before === undefined || !level(before, last)) break;
+      start -= 1;
+    }
+    let end = rule.wildcards;
+    while (end + 1 < remaining.length) {
+      const after = remaining[end + 1];
+      if (after === undefined || !level(after, last)) break;
+      end += 1;
+    }
+    const group = remaining.slice(start, end + 1);
+    const order = rng.shuffle(group.map((entry) => entry.teamId));
+    lots.push({ poolSequence: null, tied: group.map((entry) => entry.teamId), order });
+    remaining.splice(start, group.length, ...order.flatMap((teamId) => group.filter((entry) => entry.teamId === teamId)));
+    for (const pool of resolved) {
+      const positions = pool.standings.flatMap((row, index) => (group.some((entry) => entry.teamId === row.teamId) ? [index] : []));
+      const inLotOrder = order.flatMap((teamId) => pool.standings.filter((row) => row.teamId === teamId));
+      positions.forEach((position, offset) => {
+        const row = inLotOrder[offset];
+        const first = positions[0];
+        if (row !== undefined && first !== undefined) pool.standings[position] = { ...row, rank: first + offset + 1, tiebreak: 'lot' };
+      });
+    }
   }
-  if (rule.wildcards > remaining.length) {
+
+  return { pools: resolved, lots, wildcardOrder: remaining.map((entry) => entry.teamId) };
+}
+
+export type BracketRanking = { seeds: BracketSeedEntry[]; lots: LotDrawn[]; pools: PoolStandings[] };
+
+/**
+ * Who advances from pool play and in what bracket-seed order. Cut-line ties are settled
+ * first by `resolveCutLineTies`; then the top `perPool` of every pool advance, and the
+ * `wildcards` best remaining teams follow, ranked by place in pool and then the cross-pool
+ * standings comparator. Bracket seeds are assigned by place first (every pool winner
+ * before every runner-up), then by that same comparator, so the strongest pool winner is
+ * seed 1.
+ */
+export function rankForBracket(pools: readonly PoolStandings[], rule: AdvancementRule, rng: Rng): BracketRanking {
+  const { pools: resolved, lots, wildcardOrder } = resolveCutLineTies(pools, rule, rng);
+  const advancing: Contender[] = resolved.flatMap((pool) => pool.standings.slice(0, rule.perPool).map((row) => ({ teamId: row.teamId, place: row.rank, row })));
+  const remaining = new Map<string, Contender>(
+    resolved.flatMap((pool) => pool.standings.slice(rule.perPool).map((row) => [row.teamId, { teamId: row.teamId, place: row.rank, row }])),
+  );
+  if (rule.wildcards > remaining.size) {
     throw new DrawError(
       'advancement_exceeds_field',
-      `The advancement rule asks for ${rule.wildcards} wildcard(s) but only ${remaining.length} team(s) remain after the top ${rule.perPool} per pool.`,
+      `The advancement rule asks for ${rule.wildcards} wildcard(s) but only ${remaining.size} team(s) remain after the top ${rule.perPool} per pool.`,
     );
   }
-  const byPlaceThenStrength = (x: { place: number; row: StandingRow }, y: { place: number; row: StandingRow }) =>
-    x.place - y.place || compareAcrossPools(x.row, y.row);
-  remaining.sort(byPlaceThenStrength);
-  const field = [...advancing, ...remaining.slice(0, rule.wildcards)].sort(byPlaceThenStrength);
+  const wildcards = wildcardOrder.slice(0, rule.wildcards).flatMap((teamId) => {
+    const entry = remaining.get(teamId);
+    return entry === undefined ? [] : [entry];
+  });
+  const field = [...advancing, ...wildcards].sort(byPlaceThenStrength);
   if (field.length < 2) throw new DrawError('too_few_teams', 'Fewer than two teams advance; there is no bracket to draw.');
-  return field.map((entry, index) => ({ teamId: entry.teamId, seed: index + 1 }));
+  return { seeds: field.map((entry, index) => ({ teamId: entry.teamId, seed: index + 1 })), lots, pools: resolved };
 }

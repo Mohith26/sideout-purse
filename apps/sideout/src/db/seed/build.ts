@@ -509,7 +509,7 @@ class SeedBuilder {
         stage.played.get(pool.row.id) ?? [],
       ),
     }));
-    const seeds = rankForBracket(standings, stage.config.advancement);
+    const { seeds, lots } = rankForBracket(standings, stage.config.advancement, createRng(stage.config.rngSeed));
     const draw = drawBracket({ seeds, courts: stage.config.courts, bestOf: stage.config.bestOf.bracket });
     const byId = new Map(teams.map((team) => [team.row.id, team]));
 
@@ -565,7 +565,7 @@ class SeedBuilder {
       action: 'tournament.drawn',
       subjectType: 'tournament',
       subjectId: t.id,
-      detail: { stage: 'bracket', config: stage.config, size: draw.size, rounds: draw.rounds, byes: draw.matches.filter((m) => m.isBye).length, seeds, replaced: false },
+      detail: { stage: 'bracket', config: stage.config, size: draw.size, rounds: draw.rounds, byes: draw.matches.filter((m) => m.isBye).length, seeds, lots, replaced: false },
       createdAt: options.drawnAt,
     });
 

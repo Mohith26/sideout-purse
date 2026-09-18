@@ -42,7 +42,7 @@ export function buildAppContext(config: Env, db: Db, overrides: AppContextOverri
       : config.donationProvider === 'stripe' && config.stripe !== undefined
         ? stripeDonationProvider({ secretKey: config.stripe.secretKey })
         : config.donationProvider === 'dev'
-          ? devDonationProvider
+          ? devDonationProvider({ db, reservationTtlMs: config.reservationTtlMs })
           : null;
   const auth = createAuthService({
     db,

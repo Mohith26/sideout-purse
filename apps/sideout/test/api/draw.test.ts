@@ -9,6 +9,7 @@ import { POST as createTournament } from '../../src/app/api/admin/tournaments/ro
 import { GET as getMatch } from '../../src/app/api/matches/[id]/route';
 import { GET as getTournament } from '../../src/app/api/tournaments/[slug]/route';
 import { GET as getStandings } from '../../src/app/api/tournaments/[slug]/standings/route';
+import { GET as listTournaments } from '../../src/app/api/tournaments/route';
 import { auditLog, donations, matches, pools, poolTeams, sets, teamMembers, teams, tournaments, type Charity, type User } from '../../src/db/schema';
 import { judgeMatch, type SetScore } from '../../src/domain/scoreline';
 import type { StandingRow } from '../../src/domain/standings';
@@ -17,7 +18,7 @@ import { applyStripeEvent } from '../../src/server/donations/service';
 import { stripeEventSchema } from '../../src/server/donations/stripe';
 import type { DrawOutcome } from '../../src/server/draw';
 import type { MatchView } from '../../src/server/matches';
-import type { PublicTournamentDetail } from '../../src/server/public-shape';
+import type { PublicTournament, PublicTournamentDetail } from '../../src/server/public-shape';
 import { cookieFor, createCharity, createUser, data, errorOf, expectNoPurseKeys, params, request, testDatabase, truncateAll, type Database } from '../helpers';
 import { tournamentBody } from './tournaments.test';
 
@@ -151,10 +152,20 @@ describe('draw, forfeit and standings', () => {
       expect(pool.standings.every((r, i, all) => i === 0 || (all[i - 1]?.wins ?? 0) >= r.wins)).toBe(true);
     }
 
-    // Entry seeds belong to the pools stage; the bracket is seeded from standings and refuses a list.
-    const misplacedSeeds = await runDraw(t.id, { stage: 'bracket', seeds: [{ teamId: teamIds[0] ?? '', seed: 1 }] });
-    expect(misplacedSeeds.status).toBe(400);
-    expect((await errorOf(misplacedSeeds)).code).toBe('seeds_not_applicable');
+    // The bracket of a pool-to-bracket event takes no configuration: its knobs were fixed at the
+    // pools stage and it is seeded from the standings, so anything but `stage` is refused.
+    for (const body of [
+      { stage: 'bracket', seeds: [{ teamId: teamIds[0] ?? '', seed: 1 }] },
+      { stage: 'bracket', courts: 12 },
+      { stage: 'bracket', rngSeed: 9 },
+      { stage: 'bracket', bestOf: { bracket: 1 } },
+      { stage: 'bracket', advancement: { perPool: 3, wildcards: 0 } },
+      { stage: 'bracket', poolSize: 3 },
+    ]) {
+      const refused = await runDraw(t.id, body);
+      expect(refused.status).toBe(400);
+      expect((await errorOf(refused)).code).toBe('validation_failed');
+    }
     const seedsUntouched = await database.db.select({ id: teams.id, seed: teams.seed }).from(teams).where(eq(teams.tournamentId, t.id));
     expect(seedsUntouched.filter((s) => s.seed !== null)).toEqual([{ id: teamIds[5], seed: 1 }]);
 
@@ -165,9 +176,16 @@ describe('draw, forfeit and standings', () => {
     expect(bracketPreview.matches.filter((m) => m.status === 'bye')).toHaveLength(1);
     expect(await database.db.select().from(matches).where(and(eq(matches.tournamentId, t.id), isNull(matches.poolId)))).toEqual([]);
 
-    const bracket = await data<DrawOutcome>(await runDraw(t.id, { stage: 'bracket', courts: 12, advancement: { perPool: 3, wildcards: 0 } }));
-    // The bracket stage read the persisted pools configuration (the last redraw) back, not the request's knobs.
+    const bracket = await data<DrawOutcome>(await runDraw(t.id, { stage: 'bracket' }));
+    // The bracket stage read the persisted pools configuration (the last redraw) back.
     expect(bracket.config).toEqual(reseeded.config);
+    // Identical results leave ties at the cut lines; each is a lot over exactly the tied teams, and the preview drew the same ones.
+    expect(bracket.lots.length).toBeGreaterThan(0);
+    for (const lot of bracket.lots) expect([...lot.order].sort()).toEqual([...lot.tied].sort());
+    expect(bracketPreview.lots).toEqual(bracket.lots);
+    const lotTeams = new Set(bracket.lots.flatMap((lot) => lot.tied));
+    const afterLots = await data<{ pools: Array<{ standings: StandingRow[] }> }>(await getStandings(request('GET', '/x'), params({ slug: t.slug })));
+    for (const row of afterLots.pools.flatMap((p) => p.standings)) expect(row.tiebreak).toBe(lotTeams.has(row.teamId) ? 'lot' : null);
     expect(bracket.config).toMatchObject({ rngSeed: 8, courts: 3, advancement: { perPool: 2, wildcards: 1 } });
     expect(bracket.bracket?.seeds).toEqual(bracketPreview.bracket?.seeds);
     const bracketRows = await database.db.select().from(matches).where(and(eq(matches.tournamentId, t.id), isNull(matches.poolId)));
@@ -391,6 +409,85 @@ describe('draw, forfeit and standings', () => {
     expect((await errorOf(reopen)).code).toBe('draw_already_in_play');
     expect(await database.db.select().from(matches).where(eq(matches.tournamentId, t.id))).toHaveLength(3);
     expect((await database.db.select().from(tournaments).where(eq(tournaments.id, t.id)))[0]?.status).toBe('registration_closed');
+  });
+
+  it('breaks a rock-paper-scissors pool at the cut line by lot, shows it in the standings, and records it with the bracket', async () => {
+    const t = await create({ maxTeams: 8, format: 'pool_to_bracket' });
+    await transition(t.id, 'registration_open');
+    const [a, b, c] = await registerTeams(database, t.id, 3);
+    await transition(t.id, 'registration_closed');
+    await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', poolSize: 3, courts: 1, rngSeed: 21, advancement: { perPool: 2, wildcards: 0 } }));
+    await transition(t.id, 'live');
+    const poolMatches = await database.db.select().from(matches).where(eq(matches.tournamentId, t.id));
+    expect(poolMatches).toHaveLength(3);
+    // Every team beats one and loses to one, all 21–15: level on wins, sets, differential and points.
+    const beats = new Map([
+      [a, b],
+      [b, c],
+      [c, a],
+    ]);
+    for (const m of poolMatches) {
+      const aWins = beats.get(m.teamAId ?? '') === m.teamBId;
+      await finishMatch(database, m.id, [{ setNumber: 1, teamAPoints: aWins ? 21 : 15, teamBPoints: aWins ? 15 : 21 }]);
+    }
+
+    const standings = await data<{ pools: Array<{ standings: StandingRow[] }> }>(await getStandings(request('GET', '/x'), params({ slug: t.slug })));
+    const rows = standings.pools[0]?.standings ?? [];
+    expect(rows.map((r) => r.wins)).toEqual([1, 1, 1]);
+    expect(rows.map((r) => r.rank)).toEqual([1, 2, 3]);
+    expect(rows.every((r) => r.tiebreak === 'lot')).toBe(true);
+    const lotOrder = rows.map((r) => r.teamId);
+    expect([...lotOrder].sort()).toEqual([a, b, c].sort());
+
+    const bracket = await data<DrawOutcome>(await runDraw(t.id, { stage: 'bracket' }));
+    expect(bracket.lots).toEqual([{ poolSequence: 0, tied: [a, b, c].sort(), order: lotOrder }]);
+    expect(bracket.bracket?.seeds.map((s) => s.teamId)).toEqual(lotOrder.slice(0, 2));
+    const drawn = await database.db.select().from(auditLog).where(and(eq(auditLog.subjectId, t.id), eq(auditLog.action, 'tournament.drawn')));
+    expect((drawn.at(-1)?.detail as { stage: string; lots: unknown }).lots).toEqual(bracket.lots);
+    // The detail shows the same standings the bracket took.
+    const detail = await data<PublicTournamentDetail>(await getTournament(request('GET', '/x'), params({ slug: t.slug })));
+    expect(detail.pools[0]?.standings.map((r) => [r.teamId, r.rank, r.tiebreak])).toEqual(lotOrder.map((id, i) => [id, i + 1, 'lot']));
+  });
+
+  it('keeps a team withdrawn after going live in the public detail, since the draw still refers to it', async () => {
+    const t = await create({ maxTeams: 8, format: 'round_robin' });
+    await transition(t.id, 'registration_open');
+    const [a, b, c] = await registerTeams(database, t.id, 3);
+    const captain = await createUser(database);
+    await database.db.insert(donations).values({
+      id: newId('don'),
+      tournamentId: t.id,
+      teamId: c ?? '',
+      userId: captain.id,
+      amountCents: 5000n,
+      currency: 'USD',
+      provider: 'stripe',
+      providerRef: 'pi_team_c',
+      status: 'succeeded',
+    });
+    await transition(t.id, 'registration_closed');
+    await data<DrawOutcome>(await runDraw(t.id, { stage: 'pools', courts: 1, rngSeed: 1 }));
+    await transition(t.id, 'live');
+
+    const refunded = stripeEventSchema.parse({
+      id: 'evt_refund_team_c',
+      type: 'charge.refunded',
+      data: { object: { id: 'ch_team_c', object: 'charge', payment_intent: 'pi_team_c', amount_refunded: 5000, refunded: true } },
+    });
+    expect(await applyStripeEvent(database.db, refunded, { now: new Date(), reservationTtlMs: 30 * 60_000 })).toMatchObject({ applied: true, registration: 'withdrawn' });
+
+    const detail = await data<PublicTournamentDetail>(await getTournament(request('GET', '/x'), params({ slug: t.slug })));
+    expect(detail.teamCount).toBe(2);
+    expect(detail.teams.map((team) => [team.id, team.status])).toEqual([
+      [a, 'registered'],
+      [b, 'registered'],
+      [c, 'withdrawn'],
+    ]);
+    expect(detail.teams.find((team) => team.id === c)?.members).toHaveLength(2);
+    expect(detail.pools[0]?.teams.map((pt) => pt.teamId).sort()).toEqual([a, b, c].sort());
+    const list = await data<{ tournaments: PublicTournament[] }>(await listTournaments(request('GET', '/api/tournaments')));
+    expect(list.tournaments.find((x) => x.id === t.id)?.teamCount).toBe(2);
+    expectNoPurseKeys(detail);
   });
 
   it('refuses to go live while a drawn team has withdrawn, until the draw is made again', async () => {

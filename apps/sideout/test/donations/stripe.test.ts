@@ -11,6 +11,7 @@ import { resetAppContext } from '../../src/server/context';
 import { DonationProviderError, type DonationProvider } from '../../src/server/donations/provider';
 import { DONATION_TRANSITIONS } from '../../src/server/donations/service';
 import { interpretStripeEvent, signStripePayload, stripeDonationProvider, verifyStripeSignature } from '../../src/server/donations/stripe';
+import { countedTeams } from '../../src/server/field';
 import { createCharity, createUser, data, errorOf, params, request, testDatabase, truncateAll, type Database } from '../helpers';
 
 const DEV_URL = 'postgres://sideout_app:secret@localhost:5432/sideout';
@@ -33,11 +34,25 @@ const FIXTURES = {
     type: 'payment_intent.succeeded',
     data: { object: { id: paymentIntentId, object: 'payment_intent', amount: 5000, status: 'succeeded' } },
   }),
+  /** A declined attempt: Stripe keeps the intent open (`requires_payment_method`) for a retry. */
   failed: (paymentIntentId: string, eventId = 'evt_fixture_failed_1') => ({
     id: eventId,
     object: 'event',
     type: 'payment_intent.payment_failed',
-    data: { object: { id: paymentIntentId, object: 'payment_intent', status: 'requires_payment_method' } },
+    data: {
+      object: {
+        id: paymentIntentId,
+        object: 'payment_intent',
+        status: 'requires_payment_method',
+        last_payment_error: { code: 'card_declined', decline_code: 'insufficient_funds', message: 'Your card has insufficient funds.' },
+      },
+    },
+  }),
+  canceled: (paymentIntentId: string, eventId = 'evt_fixture_canceled_1') => ({
+    id: eventId,
+    object: 'event',
+    type: 'payment_intent.canceled',
+    data: { object: { id: paymentIntentId, object: 'payment_intent', status: 'canceled', last_payment_error: null } },
   }),
   refunded: (paymentIntentId: string, eventId = 'evt_fixture_refunded_1') => ({
     id: eventId,
@@ -97,14 +112,15 @@ describe('Stripe signature verification', () => {
 
   it('interprets the events that matter and ignores the rest', () => {
     expect(interpretStripeEvent(FIXTURES.succeeded('pi_1'))).toEqual({ paymentIntentId: 'pi_1', status: 'succeeded' });
-    expect(interpretStripeEvent(FIXTURES.failed('pi_1'))).toEqual({ paymentIntentId: 'pi_1', status: 'failed' });
+    expect(interpretStripeEvent(FIXTURES.failed('pi_1'))).toEqual({ paymentIntentId: 'pi_1', status: 'pending', paymentError: 'insufficient_funds: Your card has insufficient funds.' });
+    expect(interpretStripeEvent(FIXTURES.canceled('pi_1'))).toEqual({ paymentIntentId: 'pi_1', status: 'failed' });
     expect(interpretStripeEvent(FIXTURES.refunded('pi_1'))).toEqual({ paymentIntentId: 'pi_1', status: 'refunded', refundedCents: 5000n });
     expect(interpretStripeEvent(FIXTURES.partiallyRefunded('pi_1', 500))).toEqual({ paymentIntentId: 'pi_1', status: 'succeeded', refundedCents: 500n });
     expect(interpretStripeEvent(FIXTURES.unrelated)).toBeNull();
   });
 
   it('documents the donation transitions the receiver will apply', () => {
-    expect(DONATION_TRANSITIONS).toEqual({ pending: ['succeeded', 'failed', 'refunded'], failed: ['succeeded', 'refunded'], succeeded: ['refunded'], refunded: [] });
+    expect(DONATION_TRANSITIONS).toEqual({ pending: ['succeeded', 'failed', 'refunded'], failed: ['refunded'], succeeded: ['refunded'], refunded: [] });
   });
 });
 
@@ -254,22 +270,47 @@ describe('POST /api/webhooks/stripe', () => {
     expect(await data(replayed)).toMatchObject({ duplicate: false, applied: false, reason: 'no_transition' });
   });
 
-  it('a failed payment releases the team, a later success restores it, and a full refund withdraws it', async () => {
-    expect(await data(await deliver(FIXTURES.failed(paymentIntentId)))).toMatchObject({ applied: true, registration: 'released' });
-    expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]).toMatchObject({ status: 'forming', registeredAt: null });
+  it('a declined attempt keeps the place and notes the decline; the retry confirms it; a full refund withdraws it', async () => {
+    const declined = await data(await deliver(FIXTURES.failed(paymentIntentId)));
+    expect(declined).toMatchObject({ applied: true, from: 'pending', to: 'pending', registration: 'unchanged', refundDue: null });
+    expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]).toMatchObject({
+      status: 'pending',
+      lastPaymentError: 'insufficient_funds: Your card has insufficient funds.',
+    });
+    expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('registered');
+    expect(await countedTeams(database.db, tournamentId, { now: new Date(), reservationTtlMs: 30 * 60_000 })).toBe(1);
+    // The same decline again is nothing new; a different one is noted.
+    expect(await data(await deliver(FIXTURES.failed(paymentIntentId, 'evt_fixture_failed_2')))).toMatchObject({ applied: false, reason: 'no_transition' });
+    const another = {
+      id: 'evt_fixture_failed_3',
+      object: 'event',
+      type: 'payment_intent.payment_failed',
+      data: { object: { id: paymentIntentId, object: 'payment_intent', status: 'requires_payment_method', last_payment_error: { code: 'card_declined', decline_code: 'do_not_honor' } } },
+    };
+    expect(await data(await deliver(another))).toMatchObject({ applied: true, to: 'pending' });
+    expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]?.lastPaymentError).toBe('do_not_honor');
+
     expect(await data(await deliver(FIXTURES.succeeded(paymentIntentId)))).toMatchObject({ applied: true, registration: 'confirmed' });
     expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('registered');
     expect(await data(await deliver(FIXTURES.refunded(paymentIntentId)))).toMatchObject({ applied: true, to: 'refunded', refundedCents: '5000', registration: 'withdrawn' });
     expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]).toMatchObject({ status: 'refunded', refundedCents: 5000n });
     expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('withdrawn');
     const teamTrail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, teamId)).orderBy(auditLog.createdAt, auditLog.id);
-    expect(teamTrail.map((a) => (a.detail as { to: string; reason: string }))).toEqual([
-      expect.objectContaining({ to: 'forming', reason: 'donation_failed' }),
-      expect.objectContaining({ to: 'registered', reason: 'donation_succeeded' }),
-      expect.objectContaining({ to: 'withdrawn', reason: 'donation_refunded' }),
-    ]);
+    expect(teamTrail.map((a) => a.detail as { to: string; reason: string })).toEqual([expect.objectContaining({ to: 'withdrawn', reason: 'donation_refunded' })]);
+    const donationTrail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, donationId)).orderBy(auditLog.createdAt, auditLog.id);
+    expect(donationTrail.map((a) => a.action)).toEqual(['donation.payment_failed', 'donation.payment_failed', 'donation.succeeded', 'donation.refunded']);
+    expect(donationTrail[0]?.detail).toMatchObject({ eventId: 'evt_fixture_failed_1', lastPaymentError: 'insufficient_funds: Your card has insufficient funds.' });
     const impact = await data<{ raisedCents: string; donationCount: number }>(await getImpact(request('GET', '/x'), params({ slug: 'hooked' })));
     expect(impact).toMatchObject({ raisedCents: '0', donationCount: 0 });
+  });
+
+  it('a cancelled payment releases the place, and no success can follow it', async () => {
+    expect(await data(await deliver(FIXTURES.canceled(paymentIntentId)))).toMatchObject({ applied: true, from: 'pending', to: 'failed', registration: 'released' });
+    expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]).toMatchObject({ status: 'forming', registeredAt: null });
+    expect(await countedTeams(database.db, tournamentId, { now: new Date(), reservationTtlMs: 30 * 60_000 })).toBe(0);
+    expect(await data(await deliver(FIXTURES.succeeded(paymentIntentId)))).toMatchObject({ applied: false, reason: 'no_transition' });
+    expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]?.status).toBe('failed');
+    expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('forming');
   });
 
   it('a partial refund keeps the team and the donation, records the amount, and lowers the impact figure', async () => {

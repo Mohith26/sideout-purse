@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import type { ActorKind, User } from '../db/schema';
+import type { User } from '../db/schema';
 
 /** Who is performing a change, as the audit log records it. */
 export type Actor = { kind: 'player' | 'organizer'; userId: string } | { kind: 'system'; userId: null };
@@ -9,10 +9,6 @@ export const SYSTEM_ACTOR: Actor = { kind: 'system', userId: null };
 
 export function actorFor(user: User): Actor {
   return { kind: user.role, userId: user.id };
-}
-
-export function actorKind(actor: Actor): ActorKind {
-  return actor.kind;
 }
 
 /**

@@ -19,7 +19,7 @@ export type MeSnapshot = {
   teams: Array<{ team: PublicTeam & PlaceState; tournament: { id: string; slug: string; name: string; status: string; startsAt: string } }>;
   /** Teams that invited this user's phone number and are still waiting on them. */
   invites: Array<{ teamId: string; teamName: string; captain: string; tournament: { id: string; slug: string; name: string; status: string } }>;
-  donations: Array<{ id: string; tournamentSlug: string; amountCents: string; currency: string; status: string; at: string } & PlaceState>;
+  donations: Array<{ id: string; tournamentSlug: string; amountCents: string; currency: string; status: string; lastPaymentError: string | null; at: string } & PlaceState>;
 };
 
 export async function meSnapshot(db: DbOrTx, user: User, clock: ReservationClock): Promise<MeSnapshot> {
@@ -85,6 +85,7 @@ export async function meSnapshot(db: DbOrTx, user: User, clock: ReservationClock
       amountCents: centsToJson(donation.amountCents),
       currency: donation.currency,
       status: donation.status,
+      lastPaymentError: donation.lastPaymentError,
       at: donation.createdAt.toISOString(),
       holdsPlace: holds && donation.teamId !== null && teamHolds.get(donation.teamId) === true,
       reservationExpiresAt: donation.status === 'pending' ? reservationExpiresAt(donation, clock).toISOString() : null,

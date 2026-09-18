@@ -14,7 +14,7 @@ import { AUTH_RATE_LIMITS, resetAppContext } from '../../src/server/context';
 import { cookieFor, createUser, data, errorOf, nextPhone, request, testDatabase, truncateAll, type Database } from '../helpers';
 
 type CodeResponse = { expiresAt: string; code?: string };
-type VerifyResponse = { user: { id: string; displayName: string; phoneE164: string | null; role: string }; created: boolean };
+type VerifyResponse = { user: { id: string; displayName: string; displayNameIsDefault: boolean; phoneE164: string | null; role: string }; created: boolean };
 
 describe('phone sign-in', () => {
   let database: Database;
@@ -45,7 +45,7 @@ describe('phone sign-in', () => {
     expect(cookie).not.toContain('Secure'); // test is not production
     const body = await data<VerifyResponse>(response);
     expect(body.created).toBe(true);
-    expect(body.user).toMatchObject({ displayName: 'Maya Delgado', phoneE164: phone, role: 'player' });
+    expect(body.user).toMatchObject({ displayName: 'Maya Delgado', displayNameIsDefault: false, phoneE164: phone, role: 'player' });
     expect(body.user).not.toHaveProperty('purseExternalId');
 
     const [row] = await database.db.select().from(users).where(eq(users.phoneE164, phone));
@@ -59,11 +59,13 @@ describe('phone sign-in', () => {
     expect(snapshot.user.id).toBe(row?.id);
   });
 
-  it('a second sign-in finds the same account and defaults a display name from the number', async () => {
+  it('a second sign-in finds the same account; a default display name comes from the opaque id, never the number', async () => {
     const phone = nextPhone();
     const first = await data<CodeResponse>(await requestCode(request('POST', '/api/auth/request-code', { body: { phone } })));
     const created = await data<VerifyResponse>(await verify(request('POST', '/api/auth/verify', { body: { phone, code: first.code } })));
-    expect(created.user.displayName).toBe(`Player ${phone.slice(-4)}`);
+    expect(created.user.displayName).toBe(`Player ${created.user.id.slice(-4)}`);
+    expect(created.user.displayName).not.toContain(phone.slice(-4));
+    expect(created.user.displayNameIsDefault).toBe(true);
     const second = await data<CodeResponse>(await requestCode(request('POST', '/api/auth/request-code', { body: { phone } })));
     const again = await data<VerifyResponse>(await verify(request('POST', '/api/auth/verify', { body: { phone, code: second.code } })));
     expect(again.created).toBe(false);

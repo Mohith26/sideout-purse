@@ -1,5 +1,6 @@
 import type { Charity, Match, Pool, PoolTeam, SetRow, Sponsor, Team, TeamMember, Tournament, User } from '../db/schema';
 import type { StandingRow } from '../domain/standings';
+import { isDefaultDisplayName } from './auth/display-name';
 import { centsToJson } from './money';
 
 /**
@@ -194,11 +195,20 @@ export type PublicTournamentDetail = PublicTournament & {
 export type PublicProfile = {
   id: string;
   displayName: string;
+  /** True while the name is the sign-in default; the profile screen prompts for a real one. */
+  displayNameIsDefault: boolean;
   phoneE164: string | null;
   avatarUrl: string | null;
   role: User['role'];
 };
 
 export function toPublicProfile(user: User): PublicProfile {
-  return { id: user.id, displayName: user.displayName, phoneE164: user.phoneE164, avatarUrl: user.avatarUrl, role: user.role };
+  return {
+    id: user.id,
+    displayName: user.displayName,
+    displayNameIsDefault: isDefaultDisplayName(user),
+    phoneE164: user.phoneE164,
+    avatarUrl: user.avatarUrl,
+    role: user.role,
+  };
 }

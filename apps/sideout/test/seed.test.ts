@@ -12,6 +12,7 @@ import { donations, matches, sets, sponsors, teamMembers, teams, tournaments } f
 import { buildSeed, SEED_ORGANIZER_PHONE, SEED_PHONE_PREFIX, SEED_SLUGS, writeSeed, type SeedDataset } from '../src/db/seed';
 import { drawBracket, rankForBracket } from '../src/domain/draw';
 import { drawConfigSchema } from '../src/domain/draw-config';
+import { createRng } from '../src/domain/rng';
 import { judgeMatch, type SetScore } from '../src/domain/scoreline';
 import { checkTeamRoster } from '../src/domain/team';
 import type { PublicTournament, PublicTournamentDetail } from '../src/server/public-shape';
@@ -129,7 +130,7 @@ describe('seed dataset', () => {
     expect(poolMatches.every((m) => m.status === 'final')).toBe(true);
 
     const standings = standingsForStage(stage);
-    const seeds = rankForBracket(standings.map((s) => ({ sequence: s.sequence, standings: s.standings })), config.advancement);
+    const { seeds } = rankForBracket(standings, config.advancement, createRng(config.rngSeed));
     const expected = drawBracket({ seeds, courts: config.courts, bestOf: config.bestOf.bracket });
     const bracket = stage.matches.filter((m) => m.bracketPosition !== null).sort((x, y) => (x.bracketPosition ?? 0) - (y.bracketPosition ?? 0));
     expect(bracket).toHaveLength(15);

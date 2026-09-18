@@ -163,6 +163,11 @@ export const stripeEventSchema = z.object({
       refunded: z.boolean().optional(),
       /** On a charge: the running total refunded so far, in minor units. */
       amount_refunded: z.number().int().min(0).optional(),
+      /** On a PaymentIntent after a declined attempt: why. */
+      last_payment_error: z
+        .object({ code: z.string().optional(), decline_code: z.string().optional(), message: z.string().optional() })
+        .nullable()
+        .optional(),
     }),
   }),
 });
@@ -171,25 +176,34 @@ export type StripeEvent = z.infer<typeof stripeEventSchema>;
 
 export type StripeEventEffect = {
   paymentIntentId: string;
-  status: 'succeeded' | 'failed' | 'refunded';
+  /** `pending` means the payment is still open: a declined attempt changes nothing but the note. */
+  status: 'pending' | 'succeeded' | 'failed' | 'refunded';
   /** Set by `charge.refunded`: Stripe's cumulative `amount_refunded` for the charge. */
   refundedCents?: bigint;
+  /** Set by `payment_intent.payment_failed`: the decline, as Stripe describes it. */
+  paymentError?: string;
 };
 
 /**
  * The PaymentIntent id an event is about, and the donation status it implies. Events
  * about anything else are recorded and ignored. A `payment_failed` is not terminal for
- * Stripe (the customer may retry on the same intent), which is why `failed → succeeded`
- * is an allowed donation transition in `service.ts`. Stripe sends `charge.refunded` for
- * partial refunds too: only `refunded: true` means the donation is refunded; otherwise the
- * donation stays `succeeded` and the running `amount_refunded` is recorded against it.
+ * Stripe (the customer may retry on the same intent), so it leaves the donation `pending`
+ * and its reservation in place, recording only the decline; `payment_intent.canceled` is
+ * the terminal one and maps to `failed`. Stripe sends `charge.refunded` for partial refunds
+ * too: only `refunded: true` means the donation is refunded; otherwise the donation stays
+ * `succeeded` and the running `amount_refunded` is recorded against it.
  */
 export function interpretStripeEvent(event: StripeEvent): StripeEventEffect | null {
   const object = event.data.object;
   switch (event.type) {
     case 'payment_intent.succeeded':
       return object.id === undefined ? null : { paymentIntentId: object.id, status: 'succeeded' };
-    case 'payment_intent.payment_failed':
+    case 'payment_intent.payment_failed': {
+      if (object.id === undefined) return null;
+      const error = object.last_payment_error;
+      const code = error?.decline_code ?? error?.code ?? 'payment_failed';
+      return { paymentIntentId: object.id, status: 'pending', paymentError: error?.message === undefined ? code : `${code}: ${error.message}` };
+    }
     case 'payment_intent.canceled':
       return object.id === undefined ? null : { paymentIntentId: object.id, status: 'failed' };
     case 'charge.refunded': {

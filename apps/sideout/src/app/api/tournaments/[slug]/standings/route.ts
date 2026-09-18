@@ -15,7 +15,7 @@ export async function GET(request: Request, context: RouteContext<{ slug: string
     const { slug } = await context.params;
     const found = await findPublicTournament(db, slug);
     if (found === null) throw failure.notFound('tournament_not_found', 'No such tournament.');
-    const pools = await tournamentStandings(db, found.tournament.id);
+    const pools = await tournamentStandings(db, found.tournament);
     return ok(
       { tournamentId: found.tournament.id, slug, status: found.tournament.status, pools },
       { headers: { 'cache-control': 'public, max-age=10, stale-while-revalidate=10' } },

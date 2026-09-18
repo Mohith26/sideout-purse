@@ -12,7 +12,7 @@ import { GET as getTournament } from '../../src/app/api/tournaments/[slug]/route
 import { auditLog, donations, teams, type Charity, type User } from '../../src/db/schema';
 import { logger } from '../../src/lib/logger';
 import { resetAppContext } from '../../src/server/context';
-import { DEV_SETTLE_DELAY_MS, settleDueDevDonations } from '../../src/server/donations/dev';
+import { DEV_SETTLE_DELAY_MS, devDonationProvider, settleDueDevDonations } from '../../src/server/donations/dev';
 import { DonationProviderError, type DonationProvider } from '../../src/server/donations/provider';
 import { applyStripeEvent } from '../../src/server/donations/service';
 import { stripeEventSchema } from '../../src/server/donations/stripe';
@@ -410,6 +410,28 @@ describe('teams and registration', () => {
       const trail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, a.teamId)).orderBy(auditLog.createdAt, auditLog.id);
       expect(trail.map((x) => x.action)).toEqual(['team.created', 'team.member_joined', 'team.status_changed', 'team.reservation_renewed']);
       expect(trail[3]?.detail).toMatchObject({ from: 'registered', to: 'registered', donationId: alphaAgain.donation?.id });
+    });
+
+    it('with the dev provider, registering again after a lapse fails the old payment so it is never settled', async () => {
+      const dev = devDonationProvider({ db: database.db, reservationTtlMs: TTL_MS });
+      const devDeps = { ...deps(), provider: dev };
+      const a = await completeTeam('Alpha');
+      const first = await registerTeamService(devDeps, { tournamentSlug: slug, teamId: a.teamId, user: a.captain, requestId: 'dev-1', now: at(0).now });
+      const second = await registerTeamService(devDeps, { tournamentSlug: slug, teamId: a.teamId, user: a.captain, requestId: 'dev-2', now: at(31).now });
+      const rows = await database.db.select().from(donations).where(eq(donations.teamId, a.teamId)).orderBy(donations.createdAt);
+      expect(rows.map((d) => [d.id, d.status])).toEqual([
+        [first.donation?.id, 'failed'],
+        [second.donation?.id, 'pending'],
+      ]);
+      const cancelledTrail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, first.donation?.id ?? ''));
+      expect(cancelledTrail.map((x) => x.action).sort()).toEqual(['donation.created', 'donation.failed']);
+      expect(cancelledTrail.find((x) => x.action === 'donation.failed')?.detail).toMatchObject({ provider: 'dev', reason: 'cancelled' });
+
+      // Only the replacement settles; the team is confirmed once and nothing is owed back.
+      expect(await settleDueDevDonations(database.db, at(32))).toEqual([second.donation?.id]);
+      expect((await database.db.select().from(teams).where(eq(teams.id, a.teamId)))[0]?.status).toBe('registered');
+      expect(await countedTeams(database.db, tournamentId, at(500))).toBe(1);
+      expect(await database.db.select().from(auditLog).where(eq(auditLog.action, 'donation.refund_due'))).toEqual([]);
     });
 
     it('honours a late payment while there is room, and withdraws the team with a refund due once the event is full', async () => {

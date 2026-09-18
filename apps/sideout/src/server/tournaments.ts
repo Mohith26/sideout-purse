@@ -38,7 +38,7 @@ import {
   type PublicTournament,
   type PublicTournamentDetail,
 } from './public-shape';
-import { loadPoolStage, standingsForStage } from './standings';
+import { loadPoolStage, publicStandings } from './standings';
 
 const isoDate = z.iso.datetime({ offset: true }).transform((value) => new Date(value));
 const timezone = z.string().min(1).refine((zone) => isValidTimezone(zone), 'must be an IANA time zone');
@@ -442,12 +442,24 @@ export async function findPublicTournament(db: DbOrTx, slug: string): Promise<{ 
 
 type Charity = typeof charities.$inferSelect;
 
+/**
+ * The public detail. `teams` is every team holding a place plus every team the persisted
+ * draw still refers to (a team withdrawn after going live stays in its pool, its matches
+ * and its opponents' results, with `status: 'withdrawn'`); `teamCount` is the counted set.
+ */
 export async function tournamentDetail(db: DbOrTx, slug: string, clock: ReservationClock): Promise<PublicTournamentDetail | null> {
   const found = await findPublicTournament(db, slug);
   if (found === null) return null;
   const { tournament, beneficiary } = found;
 
-  const teamRows = await db.select().from(teams).where(countedTeamsFilter(tournament.id, clock)).orderBy(asc(teams.seed), asc(teams.createdAt));
+  const countedRows = await db.select().from(teams).where(countedTeamsFilter(tournament.id, clock)).orderBy(asc(teams.seed), asc(teams.createdAt));
+  const stage = await loadPoolStage(db, tournament.id);
+  const countedIds = new Set(countedRows.map((t) => t.id));
+  const drawnOnly = [
+    ...new Set([...stage.poolTeams.map((pt) => pt.teamId), ...stage.matches.flatMap((m) => [m.teamAId, m.teamBId, m.winnerTeamId])]),
+  ].filter((id): id is string => id !== null && !countedIds.has(id));
+  const drawnRows = drawnOnly.length === 0 ? [] : await db.select().from(teams).where(inArray(teams.id, drawnOnly)).orderBy(asc(teams.createdAt));
+  const teamRows = [...countedRows, ...drawnRows];
   const teamIds = teamRows.map((t) => t.id);
   const memberRows =
     teamIds.length === 0
@@ -458,8 +470,7 @@ export async function tournamentDetail(db: DbOrTx, slug: string, clock: Reservat
           .innerJoin(users, eq(users.id, teamMembers.userId))
           .where(inArray(teamMembers.teamId, teamIds));
 
-  const stage = await loadPoolStage(db, tournament.id);
-  const standings = standingsForStage(stage);
+  const standings = publicStandings(stage, tournament.drawConfig);
   const publicMatches: PublicMatch[] = stage.matches.map((m) => toPublicMatch(m, stage.sets));
   const publicPools = stage.pools.map((pool) =>
     toPublicPool(pool, stage.poolTeams, publicMatches, standings.find((s) => s.poolId === pool.id)?.standings ?? []),
@@ -476,7 +487,7 @@ export async function tournamentDetail(db: DbOrTx, slug: string, clock: Reservat
   const sponsorRows = await db.select().from(sponsors).where(eq(sponsors.tournamentId, tournament.id)).orderBy(asc(sponsors.createdAt));
 
   return {
-    ...toPublicTournament(tournament, beneficiary, teamRows.length),
+    ...toPublicTournament(tournament, beneficiary, countedRows.length),
     teams: teamRows.map((team) => toPublicTeam(team, memberRows.filter((m) => m.member.teamId === team.id))),
     pools: publicPools,
     bracket,

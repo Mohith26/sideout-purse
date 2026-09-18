@@ -18,16 +18,18 @@ import { interpretStripeEvent, type StripeEvent } from './stripe';
  */
 
 /**
- * pending → succeeded | failed | refunded; failed → succeeded (a retried payment on the
- * same intent) | refunded; succeeded → refunded. `refunded` is terminal: a refund proves
- * the charge existed, so a success event that arrives after it (Stripe does not order
+ * pending → succeeded | failed | refunded; failed → refunded; succeeded → refunded. A
+ * declined attempt is not a transition: the payment stays `pending` (the customer retries
+ * on the same intent) with the decline noted on the row; `failed` means the provider
+ * cancelled the payment, or never created it. `refunded` is terminal: a refund proves the
+ * charge existed, so a success event that arrives after it (Stripe does not order
  * deliveries) is recorded in the audit log and changes nothing. Anything else is ignored,
  * which is what keeps an out-of-order or redelivered provider event from corrupting a
  * donation.
  */
 export const DONATION_TRANSITIONS: Readonly<Record<DonationStatus, readonly DonationStatus[]>> = {
   pending: ['succeeded', 'failed', 'refunded'],
-  failed: ['succeeded', 'refunded'],
+  failed: ['refunded'],
   succeeded: ['refunded'],
   refunded: [],
 };
@@ -52,16 +54,16 @@ export type ApplyStatusResult = {
 };
 
 /**
- * Move a donation to `status` if the transition is legal, record any refunded amount, and
- * keep its team's registration in step: a succeeded entry donation confirms the team, or
- * leaves it out with a `donation.refund_due` audit row when there is no place for it; a
- * failed one with no other live payment releases the spot; a full refund withdraws the
- * team unless another succeeded donation still pays for it. `refundedCents` is a running
- * total, so an older event never lowers it.
+ * Move a donation to `status` if the transition is legal, record any refunded amount or
+ * declined attempt, and keep its team's registration in step: a succeeded entry donation
+ * confirms the team, or leaves it out with a `donation.refund_due` audit row when there is
+ * no place for it; a failed one with no other live payment releases the spot; a full
+ * refund withdraws the team unless another succeeded donation still pays for it.
+ * `refundedCents` is a running total, so an older event never lowers it.
  */
 export async function applyDonationStatus(
   tx: DbOrTx,
-  input: { donationId: string; status: DonationStatus; refundedCents?: bigint | undefined; clock: ReservationClock },
+  input: { donationId: string; status: DonationStatus; refundedCents?: bigint | undefined; lastPaymentError?: string | undefined; clock: ReservationClock },
 ): Promise<ApplyStatusResult> {
   const [donation] = await tx.select().from(donations).where(eq(donations.id, input.donationId)).for('update');
   if (donation === undefined) throw new Error(`donation ${input.donationId} not found`);
@@ -71,12 +73,13 @@ export async function applyDonationStatus(
   const nextStatus = previous !== input.status && DONATION_TRANSITIONS[previous].includes(input.status) ? input.status : previous;
   const nextRefunded =
     input.refundedCents === undefined ? donation.refundedCents : input.refundedCents > donation.refundedCents ? input.refundedCents : donation.refundedCents;
-  if (nextStatus === previous && nextRefunded === donation.refundedCents) {
+  const nextPaymentError = input.lastPaymentError ?? donation.lastPaymentError;
+  if (nextStatus === previous && nextRefunded === donation.refundedCents && nextPaymentError === donation.lastPaymentError) {
     return { changed: false, donation, previous, registration: 'unchanged', refundDue: null };
   }
   const [updated] = await tx
     .update(donations)
-    .set({ status: nextStatus, refundedCents: nextRefunded, updatedAt: now })
+    .set({ status: nextStatus, refundedCents: nextRefunded, lastPaymentError: nextPaymentError, updatedAt: now })
     .where(eq(donations.id, donation.id))
     .returning();
   if (updated === undefined) throw new Error('donation update returned no row');
@@ -240,7 +243,13 @@ export async function applyStripeEvent(db: Db, event: StripeEvent, clock: Reserv
     if (donation === undefined) return { duplicate: false, applied: false, reason: 'unknown_payment_intent' };
 
     await tx.update(donationProviderEvents).set({ donationId: donation.id }).where(eq(donationProviderEvents.id, recorded.id));
-    const result = await applyDonationStatus(tx, { donationId: donation.id, status: interpreted.status, refundedCents: interpreted.refundedCents, clock });
+    const result = await applyDonationStatus(tx, {
+      donationId: donation.id,
+      status: interpreted.status,
+      refundedCents: interpreted.refundedCents,
+      lastPaymentError: interpreted.paymentError,
+      clock,
+    });
     if (!result.changed) {
       if (interpreted.status !== 'succeeded' || result.donation.status !== 'refunded') return { duplicate: false, applied: false, reason: 'no_transition' };
       await writeAudit(tx, {
@@ -255,9 +264,10 @@ export async function applyStripeEvent(db: Db, event: StripeEvent, clock: Reserv
     }
 
     const to = result.donation.status;
+    const noted = interpreted.paymentError === undefined ? 'donation.refund_recorded' : 'donation.payment_failed';
     await writeAudit(tx, {
       actor: SYSTEM_ACTOR,
-      action: to === result.previous ? 'donation.refund_recorded' : `donation.${to}`,
+      action: to === result.previous ? noted : `donation.${to}`,
       subjectType: 'donation',
       subjectId: donation.id,
       detail: {
@@ -266,6 +276,7 @@ export async function applyStripeEvent(db: Db, event: StripeEvent, clock: Reserv
         eventType: event.type,
         from: result.previous,
         refundedCents: result.donation.refundedCents.toString(),
+        lastPaymentError: result.donation.lastPaymentError,
         registration: result.registration,
         refundDue: result.refundDue,
       },

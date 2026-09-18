@@ -1,14 +1,10 @@
-import { createHash } from 'node:crypto';
-
-import { z } from 'zod';
-
 import type { BestOf } from '../db/schema';
 
 /**
- * Beach volleyball scoreline rules and the canonical hash the consensus state machine
- * compares (system spec 5.2, rules 1 and 3). Pure functions, no I/O. Phase 7 builds the
- * consensus state machine on these; the seed uses them today so every seeded result is a
- * legal one.
+ * Beach volleyball scoreline rules (system spec 5.2, rule 3): sets to 21, the deciding
+ * set to 15, win by two, best of one or three. Pure functions, no I/O. The seed uses them
+ * so every seeded result is a legal one; phase 7 builds the consensus state machine (the
+ * canonical form and hash of rule 1) on top of them.
  */
 
 export const SET_TARGET = 21;
@@ -17,18 +13,7 @@ export const WIN_BY = 2;
 
 export type Side = 'a' | 'b';
 
-export const setScoreSchema = z.object({
-  setNumber: z.number().int().min(1).max(3),
-  teamAPoints: z.number().int().min(0).max(99),
-  teamBPoints: z.number().int().min(0).max(99),
-});
-export type SetScore = z.infer<typeof setScoreSchema>;
-
-export const scorelineSchema = z.object({
-  matchId: z.string().min(1),
-  sets: z.array(setScoreSchema).min(1).max(3),
-});
-export type Scoreline = z.infer<typeof scorelineSchema>;
+export type SetScore = { setNumber: number; teamAPoints: number; teamBPoints: number };
 
 export type SetVerdict = { legal: true; winner: Side } | { legal: false; reason: string };
 
@@ -97,37 +82,4 @@ export function judgeMatch(sets: readonly SetScore[], bestOf: BestOf): MatchVerd
   if (won.a === needed) return { legal: true, winner: 'a', setsWon: won };
   if (won.b === needed) return { legal: true, winner: 'b', setsWon: won };
   return { legal: false, reason: `Nobody has won ${needed} set(s) yet; the match is not finished.` };
-}
-
-/**
- * Canonical form: sets ordered by number, always oriented from team A's side, keys in a
- * fixed order, no whitespace. Two honest submissions of the same result, one typed by
- * each team, produce byte-identical output.
- *
- * `perspective` says which team the submitter typed as "us": a team-B submitter enters
- * their own points first, and canonicalization flips them back.
- */
-export function canonicalizeScoreline(scoreline: Scoreline, perspective: Side = 'a'): string {
-  const parsed = scorelineSchema.parse(scoreline);
-  const sets = [...parsed.sets]
-    .sort((x, y) => x.setNumber - y.setNumber)
-    .map((s) => {
-      const a = perspective === 'a' ? s.teamAPoints : s.teamBPoints;
-      const b = perspective === 'a' ? s.teamBPoints : s.teamAPoints;
-      return `[${s.setNumber},${a},${b}]`;
-    });
-  return `{"matchId":${JSON.stringify(parsed.matchId)},"sets":[${sets.join(',')}]}`;
-}
-
-/** sha256 hex of the canonical scoreline; agreement between two submissions is equality of this. */
-export function hashScoreline(scoreline: Scoreline, perspective: Side = 'a'): string {
-  return createHash('sha256').update(canonicalizeScoreline(scoreline, perspective)).digest('hex');
-}
-
-/** Human-readable "21–18, 19–21, 15–12" from team A's side. */
-export function formatSets(sets: ReadonlyArray<Pick<SetScore, 'setNumber' | 'teamAPoints' | 'teamBPoints'>>): string {
-  return [...sets]
-    .sort((x, y) => x.setNumber - y.setNumber)
-    .map((s) => `${s.teamAPoints}–${s.teamBPoints}`)
-    .join(', ');
 }
