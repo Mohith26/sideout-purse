@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertDrawableFormat,
+  resolveCutLineTies,
   bracketSizeFor,
   drawBracket,
   drawPools,
@@ -16,7 +17,7 @@ import {
   type DrawTeam,
 } from '../../src/domain/draw';
 import { createRng } from '../../src/domain/rng';
-import { computeStandings } from '../../src/domain/standings';
+import { computeStandings, type StandingRow } from '../../src/domain/standings';
 
 const team = (n: number, seed: number | null = null): DrawTeam => ({ id: `tm_${String(n).padStart(3, '0')}`, seed });
 
@@ -434,6 +435,39 @@ describe('rankForBracket', () => {
     }
     // With both losers advancing there is no wildcard cut, and only the per-pool lots are drawn.
     expect(rankForBracket(pools, { perPool: 2, wildcards: 2 }, createRng(5)).lots.map((l) => l.poolSequence)).toEqual([0, 1]);
+  });
+
+  it('ranks a wildcard lot by the position each team lands in, so a level team the lot did not cover keeps its shared rank', () => {
+    // Pool 0 is mid-play: r and t share second place with s, but s has played twice, so only r and t are level with u across pools.
+    const row = (teamId: string, rank: number, wins: number, played: number): StandingRow => ({
+      teamId,
+      played,
+      wins,
+      losses: played - wins,
+      setsWon: 0,
+      setsLost: 0,
+      pointsFor: 0,
+      pointsAgainst: 0,
+      pointDiff: 0,
+      rank,
+      tiebreak: null,
+    });
+    const pools = [
+      { sequence: 0, standings: [row('x', 1, 2, 2), row('r', 2, 1, 1), row('s', 2, 1, 2), row('t', 2, 1, 1)] },
+      { sequence: 1, standings: [row('y', 1, 2, 2), row('u', 2, 1, 1)] },
+    ];
+    const { lots, pools: resolved } = resolveCutLineTies(pools, { perPool: 1, wildcards: 1 }, createRng(3));
+    expect(lots).toHaveLength(1);
+    expect([...(lots[0]?.tied ?? [])].sort()).toEqual(['r', 't', 'u']);
+    const poolZero = resolved[0]?.standings ?? [];
+    expect(poolZero.map((r) => r.rank)).toEqual([1, 2, 2, 4]);
+    expect(poolZero.map((r) => r.tiebreak)).toEqual([null, 'lot', null, 'lot']);
+    expect(poolZero[2]?.teamId).toBe('s');
+    expect([poolZero[1]?.teamId, poolZero[3]?.teamId].sort()).toEqual(['r', 't']);
+    expect(resolved[1]?.standings.map((r) => [r.rank, r.tiebreak])).toEqual([
+      [1, null],
+      [2, 'lot'],
+    ]);
   });
 });
 

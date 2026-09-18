@@ -420,19 +420,41 @@ describe('draw, forfeit and standings', () => {
     await transition(t.id, 'live');
     const poolMatches = await database.db.select().from(matches).where(eq(matches.tournamentId, t.id));
     expect(poolMatches).toHaveLength(3);
+    const publicRows = async () => (await data<{ pools: Array<{ standings: StandingRow[] }> }>(await getStandings(request('GET', '/x'), params({ slug: t.slug })))).pools[0]?.standings ?? [];
+
+    // Nothing played: everyone shares first place and no lot is drawn over an unplayed pool.
+    const unplayed = await publicRows();
+    expect(unplayed.map((r) => [r.rank, r.tiebreak])).toEqual([
+      [1, null],
+      [1, null],
+      [1, null],
+    ]);
+
     // Every team beats one and loses to one, all 21–15: level on wins, sets, differential and points.
     const beats = new Map([
       [a, b],
       [b, c],
       [c, a],
     ]);
-    for (const m of poolMatches) {
+    const finish = async (m: (typeof poolMatches)[number]) => {
       const aWins = beats.get(m.teamAId ?? '') === m.teamBId;
       await finishMatch(database, m.id, [{ setNumber: 1, teamAPoints: aWins ? 21 : 15, teamBPoints: aWins ? 15 : 21 }]);
-    }
+    };
+    const [firstMatch, ...restMatches] = poolMatches;
+    if (firstMatch === undefined) throw new Error('no pool matches');
+    await finish(firstMatch);
+    // Mid-play the standings are what the results say (the unplayed team's zero differential
+    // outranks the loser's), and still no lot is drawn.
+    const midPlay = await publicRows();
+    expect(midPlay.reduce((n, r) => n + r.played, 0)).toBe(2);
+    expect(midPlay.map((r) => [r.wins, r.rank, r.tiebreak])).toEqual([
+      [1, 1, null],
+      [0, 2, null],
+      [0, 3, null],
+    ]);
+    for (const m of restMatches) await finish(m);
 
-    const standings = await data<{ pools: Array<{ standings: StandingRow[] }> }>(await getStandings(request('GET', '/x'), params({ slug: t.slug })));
-    const rows = standings.pools[0]?.standings ?? [];
+    const rows = await publicRows();
     expect(rows.map((r) => r.wins)).toEqual([1, 1, 1]);
     expect(rows.map((r) => r.rank)).toEqual([1, 2, 3]);
     expect(rows.every((r) => r.tiebreak === 'lot')).toBe(true);

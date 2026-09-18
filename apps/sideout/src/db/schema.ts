@@ -524,7 +524,7 @@ export const donations = pgTable(
     status: donationStatus('status').notNull().default('pending'),
     /** Cents the provider has refunded so far, in `currency`; never more than `amount_cents`. */
     refundedCents: cents('refunded_cents').notNull().default(sql`0`),
-    /** The provider's reason for the most recent declined attempt on a still-pending payment. */
+    /** The provider's reason for the most recent declined attempt; describes the payment while it is still pending. */
     lastPaymentError: text('last_payment_error'),
     ...timestamps,
   },

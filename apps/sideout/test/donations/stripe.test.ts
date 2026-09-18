@@ -12,6 +12,7 @@ import { DonationProviderError, type DonationProvider } from '../../src/server/d
 import { DONATION_TRANSITIONS } from '../../src/server/donations/service';
 import { interpretStripeEvent, signStripePayload, stripeDonationProvider, verifyStripeSignature } from '../../src/server/donations/stripe';
 import { countedTeams } from '../../src/server/field';
+import { meSnapshot } from '../../src/server/me';
 import { createCharity, createUser, data, errorOf, params, request, testDatabase, truncateAll, type Database } from '../helpers';
 
 const DEV_URL = 'postgres://sideout_app:secret@localhost:5432/sideout';
@@ -290,8 +291,12 @@ describe('POST /api/webhooks/stripe', () => {
     expect(await data(await deliver(another))).toMatchObject({ applied: true, to: 'pending' });
     expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]?.lastPaymentError).toBe('do_not_honor');
 
+    // The captain sees the decline while the payment is still open, and not once it has gone through.
+    const clock = { now: new Date(), reservationTtlMs: 30 * 60_000 };
+    expect((await meSnapshot(database.db, captain, clock)).donations[0]).toMatchObject({ status: 'pending', lastPaymentError: 'do_not_honor' });
     expect(await data(await deliver(FIXTURES.succeeded(paymentIntentId)))).toMatchObject({ applied: true, registration: 'confirmed' });
     expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('registered');
+    expect((await meSnapshot(database.db, captain, clock)).donations[0]).toMatchObject({ status: 'succeeded', lastPaymentError: null });
     expect(await data(await deliver(FIXTURES.refunded(paymentIntentId)))).toMatchObject({ applied: true, to: 'refunded', refundedCents: '5000', registration: 'withdrawn' });
     expect((await database.db.select().from(donations).where(eq(donations.id, donationId)))[0]).toMatchObject({ status: 'refunded', refundedCents: 5000n });
     expect((await database.db.select().from(teams).where(eq(teams.id, teamId)))[0]?.status).toBe('withdrawn');

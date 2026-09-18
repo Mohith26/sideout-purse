@@ -11,9 +11,10 @@ import type { DbOrTx } from './db';
 /**
  * Standings are computed from `sets` and match results on every read; nothing stores a
  * rank. A pool's standings count its complete matches (`final` and `forfeited`); a match
- * still in play contributes nothing until it is decided. For a pool-to-bracket event the
- * persisted draw configuration also fixes any tie at a cut line by lot, so what the public
- * standings show is exactly what the bracket draw will take (`domain/draw.ts`).
+ * still in play contributes nothing until it is decided. For a pool-to-bracket event whose
+ * pool play is complete, the persisted draw configuration also fixes any tie at a cut line
+ * by lot, so what the public standings show is exactly what the bracket draw will take
+ * (`domain/draw.ts`); while pools are still being played, level teams share a rank.
  */
 
 export type PoolStage = {
@@ -71,10 +72,16 @@ export function standingsForStage(stage: PoolStage): PoolStandings[] {
   });
 }
 
-/** The public standings: `standingsForStage`, with cut-line ties drawn by lot when a pool-to-bracket draw is on file. */
+/** True once every pool match has been decided: the precondition for a bracket draw, and for drawing lots. */
+export function poolPlayComplete(stage: PoolStage): boolean {
+  const poolMatches = stage.matches.filter((m) => m.poolId !== null);
+  return poolMatches.length > 0 && poolMatches.every((m) => isMatchComplete(m.status));
+}
+
+/** The public standings: `standingsForStage`, with cut-line ties drawn by lot once a pool-to-bracket event's pool play is complete. */
 export function publicStandings(stage: PoolStage, drawConfig: DrawConfig | null): PoolStandings[] {
   const base = standingsForStage(stage);
-  if (drawConfig?.format !== 'pool_to_bracket') return base;
+  if (drawConfig?.format !== 'pool_to_bracket' || !poolPlayComplete(stage)) return base;
   const resolved = resolveCutLineTies(base, drawConfig.advancement, createRng(drawConfig.rngSeed)).pools;
   return base.map((pool) => ({ ...pool, standings: [...(resolved.find((r) => r.sequence === pool.sequence)?.standings ?? pool.standings)] }));
 }

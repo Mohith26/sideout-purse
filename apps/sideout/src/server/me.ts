@@ -85,7 +85,7 @@ export async function meSnapshot(db: DbOrTx, user: User, clock: ReservationClock
       amountCents: centsToJson(donation.amountCents),
       currency: donation.currency,
       status: donation.status,
-      lastPaymentError: donation.lastPaymentError,
+      lastPaymentError: donation.status === 'pending' ? donation.lastPaymentError : null,
       at: donation.createdAt.toISOString(),
       holdsPlace: holds && donation.teamId !== null && teamHolds.get(donation.teamId) === true,
       reservationExpiresAt: donation.status === 'pending' ? reservationExpiresAt(donation, clock).toISOString() : null,

@@ -405,8 +405,8 @@ marks the donation `failed`, which releases the spot, and the captain can regist
 declined attempt (`payment_intent.payment_failed`) is not a failure: Stripe keeps the intent
 open for a retry, so the donation stays `pending`, the reservation keeps holding the place
 until it lapses, and the decline is recorded as a `donation.payment_failed` audit row and in
-`donations.last_payment_error` (shown on `/api/me`). Only `payment_intent.canceled` maps to
-`failed`. The Purse contest entry is not part of this route yet: `PurseContestEntry` in
+`donations.last_payment_error` (shown on `/api/me` while the payment is pending). Only
+`payment_intent.canceled` maps to `failed`. The Purse contest entry is not part of this route yet: `PurseContestEntry` in
 `apps/sideout/src/server/registration.ts` is the documented hook phase 7 fills, its default
 does nothing, and the response says `purseEntry: { status: 'not_wired' }`.
 
@@ -472,10 +472,13 @@ straddles a place that advances, the last of a pool's top `perPool` or the last 
 pools, the classic rock-paper-scissors pool, the draw breaks it by a drawing of lots: the tied
 teams are shuffled with the draw's `Rng` seeded from the persisted `rngSeed`
 (`resolveCutLineTies` in `apps/sideout/src/domain/draw.ts`), so the outcome is reproducible
-and never falls to the team id. The rows a lot ordered get distinct ranks and `tiebreak: 'lot'`
-in the public standings (computed under the same seed, so they show exactly what the bracket
-will take); the bracket draw result and its `tournament.drawn` audit row record every lot with
-the tied teams and the order drawn. Ties that touch no cut line stay shared.
+and never falls to the team id. Once every pool match is complete (the same precondition the
+bracket draw enforces), the public standings apply the same lots under the same seed, so the
+rows a lot ordered show distinct ranks and `tiebreak: 'lot'` and the standings show exactly
+what the bracket will take; while pool play is still going, level teams simply share a rank,
+since a lot drawn over an unfinished pool would change with every result. The bracket draw
+result and its `tournament.drawn` audit row record every lot with the tied teams and the order
+drawn. Ties that touch no cut line stay shared.
 
 ### The bracket of a pool-to-bracket event takes no configuration
 

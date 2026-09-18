@@ -445,8 +445,11 @@ function byPlaceThenStrength(x: Contender, y: Contender): number {
  * sharing a rank, which is fine until the shared rank straddles a place that advances: the
  * last spot in a pool's top `perPool`, or the last wildcard across pools. Those ties are
  * broken here by shuffling the tied teams with the draw's `Rng` (seeded from the persisted
- * `rngSeed`, so the outcome is reproducible), and the rows a lot ordered get distinct ranks
- * and `tiebreak: 'lot'`. Ties that do not touch a cut line are left shared.
+ * `rngSeed`, so the outcome is reproducible), and the rows a lot ordered take the rank of
+ * the position they land in (competition ranking, so a level team the lot did not cover
+ * keeps its shared rank) and `tiebreak: 'lot'`. Ties that do not touch a cut line are left
+ * shared. Meant for a completed pool stage, where a shared rank within a pool is also a
+ * level record across pools.
  */
 export function resolveCutLineTies(pools: readonly PoolStandings[], rule: AdvancementRule, rng: Rng): CutLineResolution {
   const lots: LotDrawn[] = [];
@@ -493,8 +496,7 @@ export function resolveCutLineTies(pools: readonly PoolStandings[], rule: Advanc
       const inLotOrder = order.flatMap((teamId) => pool.standings.filter((row) => row.teamId === teamId));
       positions.forEach((position, offset) => {
         const row = inLotOrder[offset];
-        const first = positions[0];
-        if (row !== undefined && first !== undefined) pool.standings[position] = { ...row, rank: first + offset + 1, tiebreak: 'lot' };
+        if (row !== undefined) pool.standings[position] = { ...row, rank: position + 1, tiebreak: 'lot' };
       });
     }
   }
