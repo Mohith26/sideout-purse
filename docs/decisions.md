@@ -3,7 +3,7 @@
 The system spec ([`system-spec.md`](./system-spec.md), section 3) leaves twelve decisions
 open and gives each a DEFAULT with a stated reason. Every one of them is taken at its
 DEFAULT. The reason recorded next to each answer is the spec's own; where phase 0 had to
-depart from a spec value for a stated reason, that is recorded separately at the bottom.
+depart from a spec value for a stated reason, that is recorded separately below.
 
 | # | Decision | Answer | Spec's reason |
 |---|---|---|---|

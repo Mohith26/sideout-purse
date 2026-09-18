@@ -67,7 +67,7 @@ Then:
 ```sh
 curl localhost:4000/health   # { data: { sha, migrations, rulesetVersion, sdkVersion, lastReconcile } }
 curl localhost:3000/health   # { data: { sha, migrations, purseSdkVersion } }
-open http://localhost:3000   # the Sideout shell, reading "no events yet" from its database
+open http://localhost:3000   # the Sideout shell: "No events yet", plus a beneficiary count read from its database
 ```
 
 Send `X-Request-Id: anything-you-like` to either and it comes back on the response and in

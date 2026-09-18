@@ -31,7 +31,10 @@
   --surf: #35d6c3; /* live, agreed, positive delta */
   --fault: #ff4d4d; /* error, dispute, failed invariant */
 
-  /* 6.2 Type. Families are supplied by the app through next/font as --font-ui / --font-display. */
+  /*
+   * 6.2 Type. The app loads the families through next/font (--font-instrument-sans,
+   * --font-archivo); these map them to --font-ui / --font-display.
+   */
   --font-ui: var(--font-instrument-sans, 'Instrument Sans'), ui-sans-serif, system-ui, sans-serif;
   /*
    * "Archivo Expanded" is not a separate Google Fonts family. Archivo ships as a variable
