@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev --port 3000",
-    "build": "next build",
+    "build": "next build && tsx scripts/check-bundle.ts",
     "start": "next start --port 3000",
     "typecheck": "tsc -b",
     "test": "vitest run",
@@ -14,7 +14,8 @@
     "db:generate:custom": "drizzle-kit generate --custom",
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts",
-    "clean": "rm -rf .next dist"
+    "clean": "rm -rf .next dist",
+    "check:bundle": "tsx scripts/check-bundle.ts"
   },
   "dependencies": {
     "@purse/sdk": "workspace:*",

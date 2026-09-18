@@ -1,8 +1,10 @@
 /**
  * Sideout schema, system spec section 5.1: only what Purse does not own. Phase 6 ships
  * the domain: local accounts and their Purse link (decision D8), charities, sponsors,
- * donations, tournaments, teams, pools, matches, sets and the audit log. The consensus
- * tables (`score_submissions`, `match_consensus`) and the `purse_calls` audit are phase 7.
+ * donations, tournaments, teams, pools, matches, sets and the audit log. Phase 7 adds the
+ * consensus tables (`score_submissions`, `match_consensus`, spec 5.2), the Purse link and
+ * entry records (`users.purse_user_id`, `purse_entries`) and the two Purse audits
+ * (`purse_calls`, every request and response; `purse_webhook_events`, every event received).
  *
  * Conventions (shared with Purse through `@repo/db`):
  * - Ids are typed-prefix UUID v7 strings checked at the database; every prefix is
@@ -12,8 +14,10 @@
  *   `*_VALUES` arrays exported next to each enum are what Zod schemas validate against.
  * - Money that appears here is real currency (charitable donations via Stripe), stored as
  *   `bigint` cents with an explicit `currency` on the `donations` row, and it never crosses
- *   into Purse (spec 4.2.6, decision D3). Contest value never appears in this database at
- *   all; no table here holds a `POINTS` or `CREDIT` amount.
+ *   into Purse (spec 4.2.6, decision D3). Contest value never appears in this database as
+ *   a figure of its own: no column holds a `POINTS` or `CREDIT` amount. What Purse said is
+ *   kept verbatim as an audit (`purse_calls.response_body`, a tournament's frozen close
+ *   preview), never summed, moved or displayed as money Sideout holds.
  * - Purse objects are referenced by opaque `purse_*` id columns, never by foreign key, and
  *   the public API projection (`server/public-shape.ts`) omits every one of them.
  * - Row-count rules the database cannot express as a CHECK (a team is exactly two members,
@@ -38,6 +42,8 @@ import {
 import { idCheck, timestamps } from '@repo/db';
 
 import type { DrawConfig } from '../domain/draw-config';
+import type { FrozenClosePreview } from '../domain/close-preview';
+import type { SetDifference, SubmittedSet } from '../domain/consensus';
 
 const tz = (name: string) => timestamp(name, { withTimezone: true });
 /** Real-currency minor units. Read into JavaScript as `bigint`, never `number`. */
@@ -121,6 +127,29 @@ export const actorKind = pgEnum('actor_kind', ['player', 'organizer', 'system'])
 export const ACTOR_KINDS = actorKind.enumValues;
 export type ActorKind = (typeof ACTOR_KINDS)[number];
 
+/**
+ * The score consensus machine (spec 5.2): `awaiting_first` until a team submits,
+ * `awaiting_second` until the other team does, then `agreed` (hashes equal) or `disputed`
+ * (they differ; the organizer resolves it back to `agreed`). `pushed_to_purse` once Purse
+ * accepted the agreed scores under the key minted at `agreed`, `confirmed` once Purse's
+ * idempotent replay of that key proved it holds them (docs/decisions.md, phase 7).
+ */
+export const consensusState = pgEnum('consensus_state', ['awaiting_first', 'awaiting_second', 'agreed', 'disputed', 'pushed_to_purse', 'confirmed']);
+export const CONSENSUS_STATES = consensusState.enumValues;
+export type ConsensusState = (typeof CONSENSUS_STATES)[number];
+
+/** Which side of the net the submitter typed from: `a` means "us" is team A. */
+export const submissionPerspective = pgEnum('submission_perspective', ['a', 'b']);
+
+/** `in_flight` until Purse answers; `succeeded` (2xx), `refused` (an error envelope) or `failed` (no answer at all). */
+export const purseCallStatus = pgEnum('purse_call_status', ['in_flight', 'succeeded', 'refused', 'failed']);
+export const PURSE_CALL_STATUSES = purseCallStatus.enumValues;
+export type PurseCallStatus = (typeof PURSE_CALL_STATUSES)[number];
+
+export const purseEntryState = pgEnum('purse_entry_state', ['entered', 'withdrawn']);
+export const PURSE_ENTRY_STATES = purseEntryState.enumValues;
+export type PurseEntryState = (typeof PURSE_ENTRY_STATES)[number];
+
 /** Sets to 21 (deciding set to 15), best of one or three. Stored as a checked integer. */
 export const BEST_OF_VALUES = [1, 3] as const;
 export type BestOf = (typeof BEST_OF_VALUES)[number];
@@ -141,11 +170,17 @@ export const users = pgTable(
     phoneE164: text('phone_e164'),
     avatarUrl: text('avatar_url'),
     role: userRole('role').notNull().default('player'),
+    /** The Purse user (`usr_`) created for `purse_external_id` by `POST /api/me/purse/link`; null until linked. */
+    purseUserId: text('purse_user_id'),
+    purseLinkedAt: tz('purse_linked_at'),
+    /** Purse's verification state as last read back or announced by `user.verification.updated`. The wallet is never stored: the profile reads it live. */
+    purseVerificationState: text('purse_verification_state'),
     ...timestamps,
   },
   (table) => [
     idCheck('users_id_prefix', table.id, 'sou'),
     uniqueIndex('users_purse_external_id_key').on(table.purseExternalId),
+    uniqueIndex('users_purse_user_id_key').on(table.purseUserId),
     uniqueIndex('users_phone_e164_key').on(table.phoneE164),
     check('users_phone_e164_shape', sql`${table.phoneE164} IS NULL OR ${table.phoneE164} ~ ${sql.raw(`'${PHONE_E164_PATTERN}'`)}`),
   ],
@@ -234,6 +269,10 @@ export const tournaments = pgTable(
     status: tournamentStatus('status').notNull().default('draft'),
     purseContestId: text('purse_contest_id'),
     purseExternalId: text('purse_external_id').notNull(),
+    /** The contest's state as Purse last reported it (a response or a webhook); a mirror, never authoritative. */
+    purseContestState: text('purse_contest_state'),
+    /** The frozen settlement preview the close page showed (`server/purse/close.ts`); cleared when Purse refuses its hash. */
+    purseClosePreview: jsonb('purse_close_preview').$type<FrozenClosePreview>(),
     drawConfig: jsonb('draw_config').$type<DrawConfig>(),
     ...timestamps,
   },
@@ -565,6 +604,182 @@ export const donationProviderEvents = pgTable(
 );
 
 export type DonationProviderEvent = typeof donationProviderEvents.$inferSelect;
+
+// ---- Score consensus (the trust boundary, spec 5.2) --------------------------------------
+
+/**
+ * One row per scoreline a person submitted for a match, exactly as they typed it (their
+ * own points first, `perspective` saying which team "us" was) plus the hash of its
+ * canonical form. Never updated, only superseded: a team's second reading sets
+ * `superseded_by_id` on its first, and the first stays as the record. `submitted_for_team_id`
+ * is resolved from `team_members` in the query, never trusted from the client (rule 2);
+ * it is null for an organizer's resolution.
+ */
+export const scoreSubmissions = pgTable(
+  'score_submissions',
+  {
+    id: text('id').primaryKey(),
+    matchId: text('match_id')
+      .notNull()
+      .references(() => matches.id),
+    submittedByUserId: text('submitted_by_user_id')
+      .notNull()
+      .references(() => users.id),
+    submittedForTeamId: text('submitted_for_team_id').references(() => teams.id),
+    perspective: submissionPerspective('perspective').notNull(),
+    sets: jsonb('sets').$type<SubmittedSet[]>().notNull(),
+    /** SHA-256 of the canonical, match-oriented scoreline (`domain/scoreline-hash.ts`). */
+    hash: text('hash').notNull(),
+    supersededById: text('superseded_by_id').references((): AnyPgColumn => scoreSubmissions.id),
+    createdAt: tz('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    idCheck('score_submissions_id_prefix', table.id, 'ssb'),
+    index('score_submissions_match_idx').on(table.matchId),
+    index('score_submissions_team_idx').on(table.submittedForTeamId),
+    check('score_submissions_hash_shape', sql`${table.hash} ~ '^[0-9a-f]{64}$'`),
+  ],
+);
+
+export type ScoreSubmission = typeof scoreSubmissions.$inferSelect;
+export type NewScoreSubmission = typeof scoreSubmissions.$inferInsert;
+
+/**
+ * The consensus of one match: its state, what was agreed, why it is disputed, who
+ * resolved it, and the one idempotency key minted when it first reached `agreed`, reused
+ * by every Purse attempt for the match (rule 4). Every transition writes `audit_log`.
+ */
+export const matchConsensus = pgTable(
+  'match_consensus',
+  {
+    id: text('id').primaryKey(),
+    matchId: text('match_id')
+      .notNull()
+      .references(() => matches.id),
+    state: consensusState('state').notNull().default('awaiting_first'),
+    /** Hash of the agreed scoreline; the agreed sets themselves are the match's `sets` rows with `agreed = true`. */
+    agreedHash: text('agreed_hash'),
+    /** Neutral wording of what differs, for the dispute queue; never who is wrong. */
+    disputedReason: text('disputed_reason'),
+    /** The differing sets, match-oriented, `a` being team A's reading and `b` team B's. */
+    disputedSets: jsonb('disputed_sets').$type<SetDifference[]>(),
+    resolvedByUserId: text('resolved_by_user_id').references(() => users.id),
+    idempotencyKey: text('idempotency_key'),
+    pushedAt: tz('pushed_at'),
+    confirmedAt: tz('confirmed_at'),
+    /** The last Purse refusal or failure, as the organizer's retry queue shows it; cleared when a push lands. */
+    lastPushError: jsonb('last_push_error').$type<{ type: string; code: string; message: string; at: string }>(),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('match_consensus_id_prefix', table.id, 'mcs'),
+    uniqueIndex('match_consensus_match_key').on(table.matchId),
+    uniqueIndex('match_consensus_idempotency_key').on(table.idempotencyKey),
+    index('match_consensus_state_idx').on(table.state),
+    check('match_consensus_agreed_hash_shape', sql`${table.agreedHash} IS NULL OR ${table.agreedHash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'match_consensus_key_once_agreed',
+      sql`${table.state} IN ('awaiting_first', 'awaiting_second', 'disputed') OR ${table.idempotencyKey} IS NOT NULL`,
+    ),
+  ],
+);
+
+export type MatchConsensus = typeof matchConsensus.$inferSelect;
+export type NewMatchConsensus = typeof matchConsensus.$inferInsert;
+
+// ---- The Purse integration -------------------------------------------------------------
+
+/**
+ * Which players Purse holds as entrants of a tournament's contest, as read back from the
+ * contest (`POST /api/teams/:id/purse/entries`) or announced by `contest.entry.created`.
+ * Keyed by the Purse user id so a participant Sideout cannot match to a local player (an
+ * "extra") is still recorded and shown to the organizer.
+ */
+export const purseEntries = pgTable(
+  'purse_entries',
+  {
+    id: text('id').primaryKey(),
+    tournamentId: text('tournament_id')
+      .notNull()
+      .references(() => tournaments.id),
+    purseUserId: text('purse_user_id').notNull(),
+    /** The local player, when the Purse user is linked to one. */
+    userId: text('user_id').references(() => users.id),
+    purseParticipantId: text('purse_participant_id').notNull(),
+    state: purseEntryState('state').notNull().default('entered'),
+    /** `read_back` (the contest was read) or `webhook` (an event announced it). */
+    source: text('source').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('purse_entries_id_prefix', table.id, 'pen'),
+    uniqueIndex('purse_entries_tournament_user_key').on(table.tournamentId, table.purseUserId),
+    index('purse_entries_user_idx').on(table.userId),
+  ],
+);
+
+export type PurseEntry = typeof purseEntries.$inferSelect;
+export type NewPurseEntry = typeof purseEntries.$inferInsert;
+
+/**
+ * Every request Sideout makes to Purse and what came back (spec 5.1, the `/admin/purse`
+ * page): written before the call as `in_flight` and completed after it. The secret key is
+ * never stored (headers are not recorded and bodies are scrubbed of anything key-shaped).
+ * A row that stays `in_flight` is a call whose process died before Purse answered.
+ */
+export const purseCalls = pgTable(
+  'purse_calls',
+  {
+    id: text('id').primaryKey(),
+    requestId: text('request_id').notNull(),
+    method: text('method').notNull(),
+    path: text('path').notNull(),
+    idempotencyKey: text('idempotency_key'),
+    subjectType: text('subject_type'),
+    subjectId: text('subject_id'),
+    requestBody: jsonb('request_body'),
+    status: purseCallStatus('status').notNull().default('in_flight'),
+    responseStatus: integer('response_status'),
+    responseBody: jsonb('response_body'),
+    /** Why no response arrived (a refused connection, a timeout, a malformed body). */
+    error: text('error'),
+    /** True when Purse answered from its idempotency store rather than performing the request again. */
+    replayed: boolean('replayed'),
+    startedAt: tz('started_at').notNull(),
+    finishedAt: tz('finished_at'),
+    durationMs: integer('duration_ms'),
+  },
+  (table) => [
+    idCheck('purse_calls_id_prefix', table.id, 'pcl'),
+    index('purse_calls_started_idx').on(table.startedAt),
+    index('purse_calls_subject_idx').on(table.subjectType, table.subjectId),
+    index('purse_calls_idempotency_key_idx').on(table.idempotencyKey),
+  ],
+);
+
+export type PurseCall = typeof purseCalls.$inferSelect;
+export type NewPurseCall = typeof purseCalls.$inferInsert;
+
+/**
+ * Every webhook event Purse delivered, keyed on the event id, which is what makes the
+ * receiver idempotent: a redelivery (Purse retries, and replays are the same event) is
+ * recognised and acknowledged without being applied again.
+ */
+export const purseWebhookEvents = pgTable(
+  'purse_webhook_events',
+  {
+    id: text('id').primaryKey(),
+    eventId: text('event_id').notNull(),
+    eventType: text('event_type').notNull(),
+    payload: jsonb('payload').notNull(),
+    /** `applied`, `ignored` (an unknown type or an unknown subject) or the reason it could not be applied. */
+    outcome: text('outcome').notNull(),
+    receivedAt: tz('received_at').notNull().defaultNow(),
+  },
+  (table) => [idCheck('purse_webhook_events_id_prefix', table.id, 'pwe'), uniqueIndex('purse_webhook_events_event_id_key').on(table.eventId)],
+);
+
+export type PurseWebhookEvent = typeof purseWebhookEvents.$inferSelect;
 
 // ---- Audit ------------------------------------------------------------------------------
 

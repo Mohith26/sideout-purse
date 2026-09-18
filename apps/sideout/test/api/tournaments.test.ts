@@ -22,26 +22,7 @@ import {
   truncateAll,
   type Database,
 } from '../helpers';
-
-const SOON = new Date(Date.now() + 14 * 24 * 3600 * 1000);
-
-export function tournamentBody(charity: Charity, overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    slug: 'sandbar-classic-2027',
-    name: 'Sandbar Classic',
-    subtitle: 'The flagship',
-    beneficiaryId: charity.id,
-    venue: { name: 'Sandbar Courts', city: 'Santa Cruz', region: 'CA', timezone: 'America/Los_Angeles' },
-    startsAt: SOON.toISOString(),
-    endsAt: new Date(SOON.getTime() + 8 * 3600 * 1000).toISOString(),
-    format: 'pool_to_bracket',
-    division: 'open',
-    maxTeams: 24,
-    entryDonationCents: '5000',
-    fundraisingGoalCents: '500000',
-    ...overrides,
-  };
-}
+import { SOON, tournamentBody } from './fixtures';
 
 type AdminTournament = { tournament: PublicTournament & { drawConfig: unknown }; changedFields?: string[]; transition?: { from: string; to: string } | null };
 

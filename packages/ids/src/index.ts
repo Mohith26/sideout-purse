@@ -61,6 +61,12 @@ export const ID_PREFIXES = {
   match: 'mch',
   set: 'set',
   authCode: 'otp',
+  // Sideout consensus and the Purse integration (system spec 5.1, 5.2)
+  scoreSubmission: 'ssb',
+  matchConsensus: 'mcs',
+  purseCall: 'pcl',
+  purseWebhookEvent: 'pwe',
+  purseEntry: 'pen',
 } as const;
 
 export type IdEntity = keyof typeof ID_PREFIXES;

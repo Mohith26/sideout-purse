@@ -8,8 +8,10 @@ import type {
   NewCharity,
   NewDonation,
   NewMatch,
+  NewMatchConsensus,
   NewPool,
   NewPoolTeam,
+  NewScoreSubmission,
   NewSetRow,
   NewSponsor,
   NewTeam,
@@ -19,6 +21,8 @@ import type {
   TournamentStatus,
 } from '../schema';
 import { advanceWinner } from '../../domain/bracket';
+import { CONSENSUS_AUDIT, describeDifferences, diffScorelines, toPerspective } from '../../domain/consensus';
+import { hashScoreline } from '../../domain/scoreline-hash';
 import { drawBracket, drawPools, rankForBracket, type BracketDraw, type DrawTeam } from '../../domain/draw';
 import { DRAW_CONFIG_VERSION, type PoolToBracketConfig } from '../../domain/draw-config';
 import { createRng, type Rng } from '../../domain/rng';
@@ -33,7 +37,11 @@ import { ORGANIZER_NAMES, PLAYER_NAMES } from './names';
  * ends up on screen (standings, bracket seeds, winners, impact totals) follows from these
  * rows rather than being typed. The pools and brackets come from the same draw engine the
  * organizer's draw endpoint uses, and every set is checked by the scoreline rules, so the
- * seed and the engine cannot disagree.
+ * seed and the engine cannot disagree. Every played match carries the consensus that
+ * made it final: two agreeing submissions, one from each captain, and an `agreed` row with
+ * the key minted for Purse; the live event also holds one disputed quarterfinal and one
+ * waiting on its second reading. What Purse holds is not in the dataset: `purse.ts` walks
+ * the API after the rows are written, when a Purse is reachable.
  *
  * Nothing here touches the database; `write.ts` persists the result idempotently.
  */
@@ -56,6 +64,8 @@ export type SeedDataset = {
   matches: NewMatch[];
   sets: NewSetRow[];
   donations: NewDonation[];
+  scoreSubmissions: NewScoreSubmission[];
+  matchConsensus: NewMatchConsensus[];
   auditLog: NewAuditLogEntry[];
 };
 
@@ -106,6 +116,8 @@ class SeedBuilder {
     matches: [],
     sets: [],
     donations: [],
+    scoreSubmissions: [],
+    matchConsensus: [],
     auditLog: [],
   };
 
@@ -128,6 +140,12 @@ class SeedBuilder {
 
   opaque(kind: 'user' | 'contest'): string {
     return `sideout-${kind}-${hex(this.rng.bytes(16))}`;
+  }
+
+  /** The idempotency key a consensus mints on entering `agreed`: a UUID, stable across runs. */
+  mintKey(): string {
+    this.idClock += 1;
+    return uuidv7({ msecs: this.idClock, random: this.rng.bytes(16) });
   }
 
   audit(entry: Omit<NewAuditLogEntry, 'id'>): void {
@@ -300,7 +318,7 @@ class SeedBuilder {
       action: 'team.status_changed',
       subjectType: 'team',
       subjectId: team.row.id,
-      detail: { from: 'forming', to: 'registered', reason: 'registration', donationId: donation.id, purseEntry: 'not_wired' },
+      detail: { from: 'forming', to: 'registered', reason: 'registration', donationId: donation.id, purseEntry: 'second_step' },
       createdAt,
     });
     if (status !== 'pending') {
@@ -403,6 +421,108 @@ class SeedBuilder {
       detail: { winnerTeamId: match.winnerTeamId, sets: result.sets },
       createdAt: finalizedAt,
     });
+    this.agree(match, a, b, result.sets, finalizedAt);
+  }
+
+  // ---- consensus -----------------------------------------------------------------------
+
+  private submission(match: NewMatch, team: SeedTeam, perspective: Side, sets: SetScore[], at: Date): NewScoreSubmission {
+    const row: NewScoreSubmission = {
+      id: this.mint('ssb'),
+      matchId: match.id,
+      submittedByUserId: team.captain.row.id,
+      submittedForTeamId: team.row.id,
+      perspective,
+      sets: toPerspective(sets, perspective),
+      hash: hashScoreline({ matchId: match.id, sets }, 'a'),
+      supersededById: null,
+      createdAt: at,
+    };
+    this.data.scoreSubmissions.push(row);
+    this.audit({
+      actorKind: 'player',
+      actorUserId: team.captain.row.id,
+      action: CONSENSUS_AUDIT.scoreSubmitted,
+      subjectType: 'match',
+      subjectId: match.id,
+      detail: { submissionId: row.id, teamId: team.row.id, side: perspective, hash: row.hash, replaced: false },
+      createdAt: at,
+    });
+    return row;
+  }
+
+  private consensusMoved(match: NewMatch, consensusId: string, from: string, to: string, actor: { kind: 'player' | 'system'; userId: string | null }, at: Date, detail: Record<string, unknown>): void {
+    this.audit({
+      actorKind: actor.kind,
+      actorUserId: actor.userId,
+      action: CONSENSUS_AUDIT.stateChanged,
+      subjectType: 'match',
+      subjectId: match.id,
+      detail: { consensusId, from, to, ...detail },
+      createdAt: at,
+    });
+  }
+
+  /** Both captains submitted the same result: the consensus is `agreed`, its key minted, the match final (the caller wrote the sets). */
+  private agree(match: NewMatch, a: SeedTeam, b: SeedTeam, sets: SetScore[], finalizedAt: Date): void {
+    const firstAt = new Date(finalizedAt.getTime() - 3 * MINUTE);
+    const first = this.submission(match, a, 'a', sets, firstAt);
+    const second = this.submission(match, b, 'b', sets, finalizedAt);
+    const consensus: NewMatchConsensus = {
+      id: this.mint('mcs'),
+      matchId: match.id,
+      state: 'agreed',
+      agreedHash: second.hash,
+      idempotencyKey: this.mintKey(),
+      createdAt: firstAt,
+      updatedAt: finalizedAt,
+    };
+    this.data.matchConsensus.push(consensus);
+    this.consensusMoved(match, consensus.id, 'awaiting_first', 'awaiting_second', { kind: 'player', userId: a.captain.row.id }, firstAt, { event: 'first_submission', teamId: a.row.id, submissionId: first.id });
+    this.consensusMoved(match, consensus.id, 'awaiting_second', 'agreed', { kind: 'player', userId: b.captain.row.id }, finalizedAt, {
+      event: 'matching_submission',
+      hash: second.hash,
+      idempotencyKey: consensus.idempotencyKey,
+      mintedKey: true,
+      winnerTeamId: match.winnerTeamId,
+    });
+  }
+
+  /** The two captains' readings differ on the last set: `disputed`, waiting on the organizer. */
+  dispute(match: NewMatch, a: SeedTeam, b: SeedTeam, result: { sets: SetScore[] }, at: Date): void {
+    const last = result.sets[result.sets.length - 1];
+    if (last === undefined) throw new Error('seed: a dispute needs a played set');
+    const other = result.sets.map((s) =>
+      s.setNumber === last.setNumber ? { ...s, ...(s.teamAPoints > s.teamBPoints ? { teamBPoints: Math.max(0, s.teamBPoints - 2) } : { teamAPoints: Math.max(0, s.teamAPoints - 2) }) } : s,
+    );
+    const firstAt = new Date(at.getTime() - 4 * MINUTE);
+    const first = this.submission(match, a, 'a', result.sets, firstAt);
+    const second = this.submission(match, b, 'b', other, at);
+    const differences = diffScorelines(result.sets, other);
+    const reason = describeDifferences(differences);
+    const consensus: NewMatchConsensus = {
+      id: this.mint('mcs'),
+      matchId: match.id,
+      state: 'disputed',
+      disputedReason: reason,
+      disputedSets: differences,
+      createdAt: firstAt,
+      updatedAt: at,
+    };
+    this.data.matchConsensus.push(consensus);
+    match.status = 'disputed';
+    match.updatedAt = at;
+    this.consensusMoved(match, consensus.id, 'awaiting_first', 'awaiting_second', { kind: 'player', userId: a.captain.row.id }, firstAt, { event: 'first_submission', teamId: a.row.id, submissionId: first.id });
+    this.consensusMoved(match, consensus.id, 'awaiting_second', 'disputed', { kind: 'player', userId: b.captain.row.id }, at, { event: 'conflicting_submission', reason, differences, hashes: [first.hash, second.hash] });
+    this.audit({ actorKind: 'system', actorUserId: null, action: 'match.status_changed', subjectType: 'match', subjectId: match.id, detail: { from: 'awaiting_scores', to: 'disputed', consensusId: consensus.id, reason }, createdAt: at });
+  }
+
+  /** Team A's captain has submitted; the match waits on team B's reading. */
+  awaitSecond(match: NewMatch, a: SeedTeam, result: { sets: SetScore[] }, at: Date): void {
+    const first = this.submission(match, a, 'a', result.sets, at);
+    const consensus: NewMatchConsensus = { id: this.mint('mcs'), matchId: match.id, state: 'awaiting_second', createdAt: at, updatedAt: at };
+    this.data.matchConsensus.push(consensus);
+    this.consensusMoved(match, consensus.id, 'awaiting_first', 'awaiting_second', { kind: 'player', userId: a.captain.row.id }, at, { event: 'first_submission', teamId: a.row.id, submissionId: first.id });
   }
 
   // ---- pool stage ----------------------------------------------------------------------
@@ -502,6 +622,7 @@ class SeedBuilder {
     organizer: SeedUser,
     options: { drawnAt: Date; plan: Partial<Record<number, MatchStatus>> },
   ): BracketDraw {
+    // `disputed`: both captains submitted and differ on the last set; `awaiting_scores`: only team A's captain has.
     const standings = stage.pools.map((pool) => ({
       sequence: pool.row.sequence,
       standings: computeStandings(
@@ -592,6 +713,12 @@ class SeedBuilder {
       if (desired === 'awaiting_scores') {
         row.status = 'awaiting_scores';
         row.updatedAt = new Date(startedAt.getTime() + 41 * MINUTE);
+        this.awaitSecond(row, a, this.playMatch(a, b, 3), row.updatedAt);
+        continue;
+      }
+      if (desired === 'disputed') {
+        row.status = 'awaiting_scores';
+        this.dispute(row, a, b, this.playMatch(a, b, 3), new Date(startedAt.getTime() + 44 * MINUTE));
         continue;
       }
       if (desired !== 'final') throw new Error(`seed: bracket plan status ${desired} is not supported`);
@@ -696,7 +823,8 @@ export function buildSeed(options: SeedOptions): SeedDataset {
   }
 
   // ---- Live: Sandbar Classic, today. 24 teams, 6 pools of 4 (complete), 16-bracket with one bye,
-  // quarterfinals in progress: one final, one in progress, one awaiting scores, one scheduled.
+  // quarterfinals in progress: two agreed (and, once a Purse is reachable, pushed), one disputed,
+  // one waiting on its second reading.
   {
     const start = options.anchor;
     const created = b.at(-45 * DAY);
@@ -745,7 +873,7 @@ export function buildSeed(options: SeedOptions): SeedDataset {
     b.transitions(t, organizer, [['registration_closed', 'live', new Date(start.getTime() - 45 * MINUTE), 'organizer']]);
     b.bracketStage(t, stage, teams, organizer, {
       drawnAt: new Date(start.getTime() + 3 * HOUR + 40 * MINUTE),
-      plan: { 1: 'final', 2: 'final', 3: 'final', 4: 'final', 5: 'final', 6: 'final', 7: 'final', 8: 'final', 9: 'final', 10: 'in_progress', 11: 'awaiting_scores' },
+      plan: { 1: 'final', 2: 'final', 3: 'final', 4: 'final', 5: 'final', 6: 'final', 7: 'final', 8: 'final', 9: 'final', 10: 'final', 11: 'disputed', 12: 'awaiting_scores' },
     });
     for (const sponsor of [
       { name: 'Driftline Boardshop', tier: 'presenting' as const, cents: 150_000n },

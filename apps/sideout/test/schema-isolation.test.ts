@@ -16,7 +16,27 @@ const tables = Object.values(exported).filter((value): value is PgTable => is(va
 describe('Sideout never shares a table with contest value', () => {
   it('exports the domain tables', () => {
     expect(tables.map(getTableName).sort()).toEqual(
-      ['audit_log', 'auth_codes', 'charities', 'donation_provider_events', 'donations', 'matches', 'pool_teams', 'pools', 'sets', 'sponsors', 'team_members', 'teams', 'tournaments', 'users'].sort(),
+      [
+        'audit_log',
+        'auth_codes',
+        'charities',
+        'donation_provider_events',
+        'donations',
+        'match_consensus',
+        'matches',
+        'pool_teams',
+        'pools',
+        'purse_calls',
+        'purse_entries',
+        'purse_webhook_events',
+        'score_submissions',
+        'sets',
+        'sponsors',
+        'team_members',
+        'teams',
+        'tournaments',
+        'users',
+      ].sort(),
     );
   });
 
@@ -28,6 +48,17 @@ describe('Sideout never shares a table with contest value', () => {
         .map((name) => `${getTableName(table)}.${name}`),
     );
     expect(offenders).toEqual([]);
+  });
+
+  it('the consensus and Purse tables reference no donation, and the donations table references none of them', () => {
+    const purseSide: PgTable[] = [schema.scoreSubmissions, schema.matchConsensus, schema.purseEntries, schema.purseCalls, schema.purseWebhookEvents];
+    for (const table of purseSide) {
+      const referenced = getTableConfig(table).foreignKeys.map((fk) => getTableName(fk.reference().foreignTable));
+      expect(referenced, getTableName(table)).not.toContain('donations');
+      expect(referenced, getTableName(table)).not.toContain('donation_provider_events');
+      const columns = Object.values(getTableColumns(table)).map((column) => column.name);
+      expect(columns.filter((name) => /donat|stripe|cents|currency/.test(name)), getTableName(table)).toEqual([]);
+    }
   });
 
   it('donations carry a real currency and reference no Purse object, by column or by foreign key', () => {

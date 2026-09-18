@@ -7,7 +7,7 @@ import type { DbOrTx } from './db';
 export type AuditInput = {
   actor: Actor;
   action: string;
-  subjectType: 'tournament' | 'team' | 'match' | 'donation' | 'user';
+  subjectType: 'tournament' | 'team' | 'match' | 'donation' | 'user' | 'purse_event';
   subjectId: string;
   detail: Record<string, unknown>;
   at: Date;

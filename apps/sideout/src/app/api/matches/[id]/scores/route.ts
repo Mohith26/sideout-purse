@@ -1,0 +1,44 @@
+import { submittedScorelineSchema } from '../../../../../domain/consensus';
+import { eq } from 'drizzle-orm';
+
+import { sets } from '../../../../../db/schema';
+import { SYSTEM_ACTOR } from '../../../../../server/actor';
+import { requireUser } from '../../../../../server/auth/current-user';
+import { consensusView, submitScoreline } from '../../../../../server/consensus';
+import { appContext } from '../../../../../server/context';
+import type { RouteContext } from '../../../../../server/http/input';
+import { parseJsonBody } from '../../../../../server/http/input';
+import { handle, ok } from '../../../../../server/http/respond';
+import { toPublicMatch } from '../../../../../server/public-shape';
+import { pushAfterAgreed } from '../../../../../server/purse/after-commit';
+
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
+/**
+ * A player's scoreline for their match, from their own side of the net (spec 5.2). The
+ * consensus decides `awaiting_second`, `agreed` or `disputed`; on `agreed` the scores are
+ * pushed to Purse after the transaction commits, and the answer says how far that got.
+ */
+export async function POST(request: Request, context: RouteContext<{ id: string }>): Promise<Response> {
+  return handle(request, async ({ requestId }) => {
+    const app = appContext();
+    const now = new Date();
+    const user = await requireUser(request, { db: app.db, sessionSecret: app.env.sessionSecret, now });
+    const { id } = await context.params;
+    const body = await parseJsonBody(request, submittedScorelineSchema);
+    const result = await submitScoreline(app.db, { matchId: id, user, scoreline: body, now });
+    // The push is the platform's act, not the player's: it runs as the system.
+    const purse = result.outcome === 'agreed' ? await pushAfterAgreed(app, { matchId: id, actor: SYSTEM_ACTOR, requestId, now }) : null;
+    const setRows = result.outcome === 'agreed' ? await app.db.select().from(sets).where(eq(sets.matchId, id)) : [];
+    return ok({
+      outcome: result.outcome,
+      replaced: result.replaced,
+      submissionId: result.submissionId,
+      perspective: result.perspective,
+      match: toPublicMatch(result.match, setRows),
+      consensus: await consensusView(app.db, id),
+      purse,
+    });
+  });
+}

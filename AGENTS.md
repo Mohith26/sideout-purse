@@ -217,7 +217,30 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   a response there. Cents are `bigint` in the server and decimal strings on the wire.
 - Status changes go through `transitionTournament` / `forfeitMatch` (validated by
   `domain/state.ts`) and write `audit_log` in the same transaction. `final` and `disputed`
-  are phase 7's consensus (system actor); no route sets them.
+  are written only by the consensus (`server/consensus.ts`, system actor); no route sets them.
+- Consensus (spec 5.2): `domain/consensus.ts` is the pure machine (transition table,
+  canonical form and hash via `scoreline-hash.ts`, `judgeSubmission`, the
+  `assertMayPushToPurse` gate); `server/consensus.ts` owns the two writers
+  (`submitScoreline`, `resolveDispute`), both taking the tournament lock then the match lock,
+  resolving the submitter's team from `team_members`, and entering `agreed` through one
+  `enterAgreed` (sets written, key minted once, match `final`, winner advanced).
+  `score_submissions` rows are never updated, only superseded.
+- Purse, server side, lives in `src/purse/` (the one `PurseClient`; every call recorded in
+  `purse_calls` through `databaseCallRecorder`, bodies redacted, 429s retried) and
+  `src/server/purse/` (`contests.ts` mirrors the tournament and reads entrants back,
+  `scores.ts` pushes agreed matches and the final standings, `close.ts` is the two-step
+  close, `webhooks.ts` the receiver, `users.ts` the link and embed tokens). Keys: the
+  consensus key for a match's scores, `<purse_external_id>:<step>` for contest steps,
+  `<external id>:close:<hash>:<previewed at>` for the close. A route mirrors Purse only
+  after its own transaction commits (`after-commit.ts`, the admin PATCH), never fatally.
+  `docs/decisions.md` (phase 7) records what a score means, the `confirmed` rule and the
+  prize mapping. The client never reaches a browser: `test/purse/bundle.test.ts` checks the
+  client components and `scripts/check-bundle.ts` greps `.next/static` as part of `pnpm build`.
+- Purse variables (`src/env.ts`): `PURSE_API_URL`, `PURSE_SECRET_KEY`, `PURSE_WEBHOOK_SECRET`
+  on the server; `NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_PURSE_ORIGIN`,
+  `NEXT_PUBLIC_PURSE_TENANT_ID` for the SDK; all required in production, and outside it a
+  missing secret key means the Purse routes answer 503 `purse_unavailable`. An exported but
+  empty variable counts as unset.
 - Who holds a place is `server/field.ts` (confirmed vs. an unlapsed reservation, judged
   against a `ReservationClock`); capacity, public team lists, the live guard and the draw
   go through it rather than filtering `teams.status` by hand.
@@ -228,10 +251,25 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   (`server/donations/provider.ts`); `env.ts` selects the implementation and refuses
   `log`/`dev` in production. Donations never touch anything Purse-shaped; public responses go
   through `server/public-shape.ts`, which lists fields by hand and omits every `purse_*`.
-- Seed: `src/db/seed/build.ts` is pure and uses the draw engine and scoreline rules;
-  `write.ts` upserts by id. `pnpm db:seed` at the root seeds both apps.
+- Seed: `src/db/seed/build.ts` is pure and uses the draw engine and scoreline rules, and
+  gives every played match its consensus rows; `write.ts` upserts by id, leaving the Purse
+  columns and a consensus's push state alone. `pnpm db:seed` at the root seeds both apps.
+  With `PURSE_SECRET_KEY` set and the Purse API answering `PURSE_API_URL`, Sideout's seed
+  then mirrors the seeded events to Purse through the app's services (`src/db/seed/purse.ts`:
+  links, entries, pushes, the settled event closed); otherwise it logs that the walk was
+  skipped and `purse_contest_id` stays null. Rerunning replays under the same keys.
 - Route tests call handlers directly with `Request` objects (`test/helpers.ts`), truncate
-  the test database per file, and override seams with `resetAppContext({...})`.
+  the test database per file, and override seams with `resetAppContext({...})`; Purse is
+  `test/purse/fake-purse.ts` behind `resetAppContext({ purse: new PurseClient({ fetch }) })`.
+  Shared fixtures are `test/api/fixtures.ts` (never import another test file).
+- Both apps together for the integration walk (`test/integration/purse-walk.test.ts`, skipped
+  unless configured): migrate and seed a Purse database
+  (`pnpm --filter @purse/api db:seed -- --print-keys` prints the sandbox keys once), start
+  the API (`pnpm --filter @purse/api dev`, or `tsx src/index.ts` with `PORT`), then
+  `PURSE_INTEGRATION_API_URL=http://localhost:4000 PURSE_INTEGRATION_SECRET_KEY=sk_sandbox_...
+  pnpm --filter @sideout/web test test/integration`. The gating variables are named apart from
+  `PURSE_*` so the rest of the suite keeps to the in-memory Purse. CI does exactly this
+  (`.github/workflows/ci.yml`), then seeds Sideout against the same Purse and reconciles.
 
 ## Sharp edges
 

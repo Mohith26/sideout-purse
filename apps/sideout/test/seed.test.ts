@@ -1,6 +1,7 @@
 import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { GET as listDisputes } from '../src/app/api/admin/disputes/route';
 import { POST as devLogin } from '../src/app/api/dev/login/route.dev';
 import { GET as getMatch } from '../src/app/api/matches/[id]/route';
 import { GET as getMe } from '../src/app/api/me/route';
@@ -8,7 +9,7 @@ import { GET as getImpact } from '../src/app/api/tournaments/[slug]/impact/route
 import { GET as getTournament } from '../src/app/api/tournaments/[slug]/route';
 import { GET as getStandings } from '../src/app/api/tournaments/[slug]/standings/route';
 import { GET as listTournaments } from '../src/app/api/tournaments/route';
-import { donations, matches, sets, sponsors, teamMembers, teams, tournaments } from '../src/db/schema';
+import { donations, matchConsensus, matches, scoreSubmissions, sets, sponsors, teamMembers, teams, tournaments, users } from '../src/db/schema';
 import { buildSeed, SEED_ORGANIZER_PHONE, SEED_PHONE_PREFIX, SEED_SLUGS, writeSeed, type SeedDataset } from '../src/db/seed';
 import { drawBracket, rankForBracket } from '../src/domain/draw';
 import { drawConfigSchema } from '../src/domain/draw-config';
@@ -17,7 +18,7 @@ import { judgeMatch, type SetScore } from '../src/domain/scoreline';
 import { checkTeamRoster } from '../src/domain/team';
 import type { PublicTournament, PublicTournamentDetail } from '../src/server/public-shape';
 import { loadPoolStage, standingsForStage } from '../src/server/standings';
-import { data, expectNoPurseKeys, params, request, testDatabase, truncateAll, type Database } from './helpers';
+import { cookieFor, data, expectNoPurseKeys, params, request, testDatabase, truncateAll, type Database } from './helpers';
 
 const ANCHOR = new Date('2026-09-19T16:00:00.000Z');
 
@@ -116,6 +117,52 @@ describe('seed dataset', () => {
     }
   });
 
+  it('every played match carries an agreed consensus with a minted key; the live event holds one dispute and one first reading', async () => {
+    const matchRows = await database.db.select().from(matches);
+    const consensusRows = await database.db.select().from(matchConsensus);
+    const submissionRows = await database.db.select().from(scoreSubmissions);
+    const byMatch = new Map(consensusRows.map((c) => [c.matchId, c]));
+    for (const m of matchRows) {
+      const consensus = byMatch.get(m.id);
+      const subs = submissionRows.filter((s) => s.matchId === m.id);
+      if (m.status === 'final') {
+        expect(consensus, m.id).toMatchObject({ state: 'agreed' });
+        expect(consensus?.idempotencyKey, m.id).toMatch(/^[0-9a-f-]{36}$/);
+        expect(subs, m.id).toHaveLength(2);
+        expect(new Set(subs.map((s) => s.submittedForTeamId)).size).toBe(2);
+        expect(new Set(subs.map((s) => s.hash)).size).toBe(1);
+        expect(subs.map((s) => s.hash)).toContain(consensus?.agreedHash);
+      } else if (m.status === 'disputed') {
+        expect(consensus).toMatchObject({ state: 'disputed', idempotencyKey: null });
+        expect(consensus?.disputedReason).toMatch(/^Set \d differs/);
+        expect(new Set(subs.map((s) => s.hash)).size).toBe(2);
+      } else if (m.status === 'awaiting_scores') {
+        expect(consensus).toMatchObject({ state: 'awaiting_second', idempotencyKey: null });
+        expect(subs).toHaveLength(1);
+      } else {
+        expect(consensus).toBeUndefined();
+        expect(subs).toHaveLength(0);
+      }
+    }
+    expect(consensusRows.filter((c) => c.state === 'disputed')).toHaveLength(1);
+    expect(consensusRows.filter((c) => c.state === 'awaiting_second')).toHaveLength(1);
+    expect(new Set(consensusRows.map((c) => c.idempotencyKey).filter((k) => k !== null)).size).toBe(consensusRows.filter((c) => c.state === 'agreed').length);
+    // The dispute is in the organizer's queue.
+    const [organizer] = await database.db.select().from(users).where(eq(users.phoneE164, SEED_ORGANIZER_PHONE));
+    if (organizer === undefined) throw new Error('organizer missing');
+    const queue = await data<{ disputes: Array<{ match: { id: string }; consensus: { differences: unknown[] } }> }>(await listDisputes(request('GET', '/x', { cookie: cookieFor(organizer) })));
+    expect(queue.disputes).toHaveLength(1);
+    expect(queue.disputes[0]?.consensus.differences).toHaveLength(1);
+    expectNoPurseKeys(queue);
+    // A Purse that was never reached: the contest columns say so, and a reseed leaves them alone.
+    expect((await database.db.select().from(tournaments)).every((t) => t.purseContestId === null && t.purseContestState === null)).toBe(true);
+    const [target] = consensusRows;
+    if (target === undefined) throw new Error('no consensus');
+    await database.db.update(matchConsensus).set({ state: 'confirmed', pushedAt: new Date(), confirmedAt: new Date() }).where(eq(matchConsensus.id, target.id));
+    await writeSeed(database.db, dataset);
+    expect((await database.db.select().from(matchConsensus).where(eq(matchConsensus.id, target.id)))[0]?.state).toBe('confirmed');
+  });
+
   it('the live bracket is what the engine derives from the seeded pool results', async () => {
     const [live] = await database.db.select().from(tournaments).where(eq(tournaments.slug, SEED_SLUGS.live));
     if (live === undefined) throw new Error('live tournament missing');
@@ -139,7 +186,7 @@ describe('seed dataset', () => {
       expect(row).toMatchObject({ teamAId: m.teamAId, teamBId: m.teamBId, teamASeed: m.teamASeed, teamBSeed: m.teamBSeed, status: m.isBye ? 'bye' : 'final' });
     }
     const quarterfinals = bracket.filter((m) => m.round === 2).map((m) => m.status);
-    expect(quarterfinals.sort()).toEqual(['awaiting_scores', 'final', 'in_progress', 'scheduled']);
+    expect(quarterfinals.sort()).toEqual(['awaiting_scores', 'disputed', 'final', 'final']);
     expect(bracket.filter((m) => m.status === 'bye')).toHaveLength(1);
     // Every decided match's winner sits in the slot its next link names.
     for (const m of bracket.filter((r) => r.winnerTeamId !== null && r.nextMatchId !== null)) {
