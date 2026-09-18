@@ -14,6 +14,7 @@
     "db:generate:custom": "drizzle-kit generate --custom",
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts",
+    "reconcile": "tsx --env-file-if-exists=.env scripts/reconcile.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -33,6 +34,7 @@
     "@repo/config": "workspace:*",
     "@types/node": "^22.20.3",
     "drizzle-kit": "^0.31.10",
+    "fast-check": "^4.10.1",
     "tsup": "^8.5.1",
     "tsx": "^4.23.13",
     "vitest": "^5.0.1"

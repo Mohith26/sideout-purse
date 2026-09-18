@@ -9,13 +9,25 @@ import { idCheckPattern, type IdPrefix } from '@repo/ids';
  */
 
 /**
- * CHECK constraint pinning an id column to one prefix, e.g. `CHECK (id ~ '^tnt_...')`.
- * The pattern is inlined as a SQL literal (not a bind parameter) because it has to appear
+ * The prefix pattern as a SQL literal (not a bind parameter) because it has to appear
  * verbatim in the generated migration.
  */
+function patternLiteral(prefix: IdPrefix) {
+  return sql.raw(`'${idCheckPattern(prefix).replaceAll("'", "''")}'`);
+}
+
+/** CHECK constraint pinning an id column to one prefix, e.g. `CHECK (id ~ '^tnt_...')`. */
 export function idCheck(constraintName: string, column: PgColumn, prefix: IdPrefix) {
-  const literal = `'${idCheckPattern(prefix).replaceAll("'", "''")}'`;
-  return check(constraintName, sql`${column} ~ ${sql.raw(literal)}`);
+  return check(constraintName, sql`${column} ~ ${patternLiteral(prefix)}`);
+}
+
+/**
+ * The same check for a nullable reference column: NULL passes, anything else must carry
+ * the prefix. Used where the referenced table does not exist yet (a later phase adds the
+ * foreign key) so a mis-typed id is still refused today.
+ */
+export function nullableIdCheck(constraintName: string, column: PgColumn, prefix: IdPrefix) {
+  return check(constraintName, sql`${column} is null or ${column} ~ ${patternLiteral(prefix)}`);
 }
 
 /** `created_at` / `updated_at` as `timestamptz not null default now()`. */

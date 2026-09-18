@@ -4,12 +4,14 @@ import { migrationState, type MigrationState, type Sql } from '@repo/db';
 
 import { ApiFailure, ok } from '../http/envelope';
 import type { RequestScope } from '../http/request-id';
+import type { LastReconcile, ReconcileTracker } from '../ledger';
 
 /**
  * `GET /health`, spec 4.7 and section 10: commit sha, migration state, active ruleset
  * version, SDK version, last reconcile result. `rulesetVersion` arrives with the
- * eligibility engine (phase 3) and `lastReconcile` with the ledger (phase 1); both are
- * `null` until then rather than absent, so the shape is stable for uptime checks.
+ * eligibility engine (phase 3) and is `null` until then rather than absent, so the shape
+ * is stable for uptime checks. `lastReconcile` is this process's memory of its most
+ * recent `reconcile()` run, `null` before the first.
  *
  * The response never includes a connection string, a key, or a hostname.
  */
@@ -18,13 +20,14 @@ export type HealthReport = {
   migrations: MigrationState;
   rulesetVersion: string | null;
   sdkVersion: string;
-  lastReconcile: string | null;
+  lastReconcile: LastReconcile | null;
 };
 
 export type HealthDeps = {
   sql: Sql;
   migrationsFolder: string;
   sha: string;
+  tracker: ReconcileTracker;
 };
 
 export function healthRoutes(deps: HealthDeps) {
@@ -45,7 +48,7 @@ export function healthRoutes(deps: HealthDeps) {
       migrations,
       rulesetVersion: null,
       sdkVersion: SDK_VERSION,
-      lastReconcile: null,
+      lastReconcile: deps.tracker.last(),
     };
     return ok(c, report);
   });

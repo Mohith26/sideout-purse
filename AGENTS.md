@@ -13,8 +13,33 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - Local Postgres: `pnpm db:setup` (any reachable Postgres; writes `apps/*/.env`) or
   `docker compose up -d` plus `cp apps/<app>/.env.example apps/<app>/.env` for both apps (the
   examples match compose), then `pnpm db:migrate` and `pnpm db:seed`. Tests use the `*_test`
-  databases and wipe them in each app's `test/global-setup.ts`.
+  databases and wipe them in each app's `test/global-setup.ts`. A compose volume from
+  before phase 1 lacks `purse_migrator`; `pnpm db:setup --admin-url ...` upgrades it in place.
 - `pnpm dev` starts Purse on :4000 and Sideout on :3000; both expose `/health`.
+- CI also migrates and seeds Purse's `purse` database and runs
+  `pnpm --filter @purse/api reconcile`; a failing invariant fails the build.
+
+## Purse roles and the ledger
+
+- Two Purse roles (`docs/decisions.md`): `purse_migrator` owns the databases and runs
+  `db:migrate`, `db:seed`, `db:setup` and the test reset (`PURSE_MIGRATOR_DATABASE_URL`);
+  `purse_app` is the runtime (`PURSE_DATABASE_URL`), owns nothing, and holds only what
+  `apps/purse/drizzle/0002_ledger_roles.sql` grants. Every new table needs an explicit
+  `GRANT ... TO purse_app` in a custom migration (`db:generate:custom`); an append-only
+  table gets `SELECT, INSERT` only. `test/ledger/roles.test.ts` fails on a table with no
+  grant. Tests take the runtime connection from `test/helpers.ts` (`connectRuntime`) and
+  the owner connection only for fixtures and teardown (`connectMigrator`). The API refuses
+  to boot on a role that can `UPDATE` the journal (`src/ledger/role-check.ts`).
+- The ledger lives in `apps/purse/src/ledger/`. `postEntry` is the only way value moves
+  (rules 1-7 of spec 4.2.2, the wallet and escrow non-negative guard, sorted `FOR UPDATE`
+  locks, idempotent replay by key with a request-hash conflict check); the 4.2.5 flows are
+  typed wrappers in `flows.ts`; corrections are `reverseEntry`, never an update. Pass a
+  transaction to post atomically with your own writes. `reconcile()` (`reconcile.ts`) is
+  the invariant registry; I4, I5 and I7 are `not_applicable` entries phase 2 replaces.
+- Money is `bigint` end to end; raw SQL sums are cast `::text` and parsed with `BigInt`.
+- The randomized ledger test (`apps/purse/test/ledger/random-ops.test.ts`) runs 10,000
+  operations by default and refuses fewer under `CI`. Locally:
+  `LEDGER_RANDOM_OPS=500 LEDGER_RANDOM_SEED=1 pnpm --filter @purse/api test test/ledger/random-ops`.
 
 ## The boundary, and where things go
 

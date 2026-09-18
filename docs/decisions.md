@@ -35,6 +35,50 @@ lightest surface, and 5.4:1 on `--bg-base`, so every tier passes on every surfac
 contrast unit test in `@sideout/ui` asserts this for every text tier on every background
 tier and would fail against the original value.
 
+## Phase 1 decisions
+
+### Two Purse database roles: `purse_migrator` owns, `purse_app` runs
+
+Spec 4.2.2 rule 5 requires `UPDATE` and `DELETE` on the journal tables to be revoked from
+the application role "at the database level so this is not merely a convention". Phase 0
+had one Purse role, `purse_app`, which owned the databases. In Postgres an owner holds
+every privilege on what it owns and can re-grant anything that was revoked, so a `REVOKE`
+against an owner is exactly the convention the spec rules out: it documents an intent
+without enforcing it.
+
+Phase 1 therefore splits the role. `purse_migrator` owns the `purse` and `purse_test`
+databases and every object in them and is used only by `pnpm db:migrate`, `pnpm db:seed`,
+`pnpm db:setup` and the test reset. `purse_app` is the API's runtime role: it owns nothing,
+holds no grant option, and receives exactly the privileges the runtime needs from the
+custom migration `apps/purse/drizzle/0002_ledger_roles.sql`, which runs as the owner. On
+`journal_entries`, `journal_lines` and `audit_log` that is `SELECT` and `INSERT` only. A
+non-owner's `GRANT` is a no-op in Postgres and `ALTER TABLE ... OWNER TO` is refused, so
+the runtime cannot widen its own privileges; `test/ledger/roles.test.ts` proves all of
+this, including that the same `UPDATE` and `DELETE` statements succeed as the owner, so
+it is the role and not the SQL that is refused. The API also checks at boot that the role
+it connected as cannot rewrite the journal and refuses to serve otherwise.
+
+Sideout keeps one role. It has no append-only requirement, and a second role there would
+be ceremony without a guarantee behind it.
+
+### Journal timestamps at millisecond precision
+
+`posted_at` and `created_at` on `journal_entries` are `timestamptz(3)`. A JavaScript
+`Date` carries milliseconds; at Postgres's default microsecond precision an entry's
+`posted_at` read back and passed to `balanceOf(asOf)` would fall a fraction of a
+millisecond before the entry itself and exclude it. At millisecond precision the value
+round-trips exactly, so "the balance as of this entry" means what it says. `posted_at` is
+`clock_timestamp()` taken after every lock is held, so for any one account it follows
+commit order; `created_at` keeps the transaction start.
+
+### `contest_escrow` may not go negative either
+
+Spec I3 protects `user_wallet`. `postEntry` applies the same write-time guard to
+`contest_escrow`: funds held for a contest cannot be less than nothing, and refusing it in
+the ledger means phase 2 cannot refund or settle more than was escrowed by construction.
+The debit-normal source accounts and the liability accounts run negative by design
+(issuing points debits `promo_liability`).
+
 ## Phase 0 implementation choices worth knowing
 
 These are not spec decisions; they are the answers phase 0 gave to questions the spec

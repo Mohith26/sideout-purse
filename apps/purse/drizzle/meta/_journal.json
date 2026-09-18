@@ -8,6 +8,20 @@
       "when": 1789688281683,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789693975437,
+      "tag": "0001_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789693975835,
+      "tag": "0002_ledger_roles",
+      "breakpoints": true
     }
   ]
 }

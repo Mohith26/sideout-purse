@@ -1,8 +1,9 @@
 import { createLogger, type Logger } from '@repo/logger';
 
 import { createApp } from '../src/app';
-import { connect, type Database } from '../src/db/client';
-import { env } from '../src/env';
+import { connect, type ConnectOptions, type Database } from '../src/db/client';
+import { env, requireMigratorUrl } from '../src/env';
+import { createReconcileTracker, type ReconcileTracker } from '../src/ledger';
 import { MIGRATIONS_FOLDER } from '../src/paths';
 
 export type TestHarness = {
@@ -10,11 +11,24 @@ export type TestHarness = {
   database: Database;
   logger: Logger;
   lines: Array<Record<string, unknown>>;
+  tracker: ReconcileTracker;
   close(): Promise<void>;
 };
 
-/** An app wired to the test database with a logger that captures JSON lines in memory. */
-export function harness(overrides: { sha?: string } = {}): TestHarness {
+/** The runtime role's connection, which is what the code under test uses. */
+export function connectRuntime(options: ConnectOptions = {}): Database {
+  return connect(env().databaseUrl, { max: 2, applicationName: 'purse-test', ...options });
+}
+
+/** The owner role's connection, for fixtures and teardown that the runtime role is not allowed to do. */
+export function connectMigrator(options: ConnectOptions = {}): Database {
+  return connect(requireMigratorUrl(env()), { max: 1, applicationName: 'purse-test-migrator', ...options });
+}
+
+export type HarnessOptions = { sha?: string; internalApiToken?: string };
+
+/** An app wired to the test database (as the runtime role) with a logger that captures JSON lines in memory. */
+export function harness(overrides: HarnessOptions = {}): TestHarness {
   const lines: Array<Record<string, unknown>> = [];
   const logger = createLogger({
     service: 'purse-api-test',
@@ -23,12 +37,27 @@ export function harness(overrides: { sha?: string } = {}): TestHarness {
       lines.push(JSON.parse(line) as Record<string, unknown>);
     },
   });
-  const database = connect(env().databaseUrl, { max: 2 });
+  const database = connectRuntime();
+  const tracker = createReconcileTracker();
   const app = createApp({
     sql: database.sql,
+    db: database.db,
     logger,
     migrationsFolder: MIGRATIONS_FOLDER,
     sha: overrides.sha ?? 'test-sha',
+    nodeEnv: 'test',
+    internalApiToken: overrides.internalApiToken,
+    tracker,
   });
-  return { app, database, logger, lines, close: () => database.close() };
+  return { app, database, logger, lines, tracker, close: () => database.close() };
+}
+
+/** Await a promise that is expected to reject, returning the rejection. Fails when it resolves. */
+export async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error('Expected the promise to reject');
 }

@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm';
 import type { Id } from '@repo/ids';
 
+import { openAccount } from '../ledger/accounts';
 import type { Db } from './client';
-import { tenants, type Tenant } from './schema';
+import { asset, tenants, type Account, type AccountKind, type Tenant } from './schema';
 
 /**
  * Reference data Purse cannot run without, applied by `pnpm db:seed` after migrations.
@@ -36,4 +37,28 @@ export async function seedSideoutTenant(db: Db): Promise<SeedResult> {
     throw new Error(`Tenant "${SIDEOUT_TENANT_NAME}" was neither inserted nor found`);
   }
   return { tenant: existing, created: false };
+}
+
+/**
+ * The platform-level accounts every tenant has, one per asset (spec 4.2.1): the promo
+ * liability points are issued from, the platform fee account (zero in v1 but modelled),
+ * and the external settlement boundary redemptions leave through. `openAccount` is
+ * idempotent on the unique key, so this creates nothing on a second run. User wallets and
+ * contest escrows are opened on demand, never seeded.
+ */
+export const PLATFORM_ACCOUNT_KINDS: readonly AccountKind[] = ['promo_liability', 'platform_fee', 'external_settlement'];
+
+export type PlatformAccountsResult = { accounts: Account[]; created: number };
+
+export async function seedPlatformAccounts(db: Db, tenantId: string): Promise<PlatformAccountsResult> {
+  const opened: Account[] = [];
+  let created = 0;
+  for (const kind of PLATFORM_ACCOUNT_KINDS) {
+    for (const each of asset.enumValues) {
+      const result = await openAccount(db, { tenantId: tenantId as Id<'tnt'>, kind, ownerRef: null, asset: each });
+      opened.push(result.account);
+      if (result.created) created += 1;
+    }
+  }
+  return { accounts: opened, created };
 }

@@ -2,16 +2,17 @@ import { runMigrations } from '@repo/db';
 import { createLogger, errorFields } from '@repo/logger';
 
 import { connect } from '../src/db/client';
-import { env } from '../src/env';
+import { env, requireMigratorUrl } from '../src/env';
 import { MIGRATIONS_FOLDER } from '../src/paths';
 
 /**
- * Apply Purse's pending migrations, forward only. Exits non-zero on any failure so a
- * deploy step that runs this never continues to start a server on a half-migrated schema.
+ * Apply Purse's pending migrations, forward only, as `purse_migrator`, the role that owns
+ * the schema. Exits non-zero on any failure so a deploy step that runs this never
+ * continues to start a server on a half-migrated schema.
  */
 const logger = createLogger({ service: 'purse-migrate', level: 'info' });
 const config = env();
-const database = connect(config.databaseUrl, { max: 1 });
+const database = connect(requireMigratorUrl(config), { max: 1, applicationName: 'purse-migrate' });
 
 try {
   const before = Date.now();
