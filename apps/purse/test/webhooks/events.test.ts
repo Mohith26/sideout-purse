@@ -1,13 +1,12 @@
 import { asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { WEBHOOK_EVENT_TYPES } from '@purse/types';
-import { newId } from '@repo/ids';
 
 import { enterContest, transition, voidContest, withdrawEntry } from '../../src/contests';
 import type { Database } from '../../src/db/client';
 import { webhookDeliveries, type WebhookDelivery } from '../../src/db/schema';
 import { devIdentityProvider } from '../../src/providers';
-import { startVerification, upsertUser } from '../../src/users';
+import { addRestriction, startVerification, upsertUser } from '../../src/users';
 import { createEndpoint } from '../../src/webhooks';
 import { OPERATOR, TENANT_ACTOR, buildArena, makeContest, type Arena } from '../contests/fixtures';
 import { connectMigrator, connectRuntime, TEST_KEYS } from '../helpers';
@@ -66,10 +65,10 @@ describe('webhook events at their emit sites', () => {
     expect(await queued()).toHaveLength(3);
 
     // A refused entry (a self-excluded user) queues nothing: its transaction rolled back.
+    // The exclusion starts a minute ago: a `now()` start could be microseconds ahead of the
+    // millisecond `asOf` the entry is judged at.
     const excluded = await upsertUser(runtime.db, { tenantId: arena.tenantId, externalId: 'excluded', displayName: 'X', dateOfBirth: '1990-01-01' });
-    await runtime.db.execute(
-      `insert into user_restrictions (id, user_id, kind, created_by) values ('${newId('rst')}', '${excluded.user.id}', 'self_exclusion', 'user:${excluded.user.id}')`,
-    );
+    await addRestriction(runtime.db, { tenantId: arena.tenantId, userId: excluded.user.id, kind: 'self_exclusion', startsAt: new Date(Date.now() - 60_000), actor: { kind: 'user', ref: excluded.user.id } });
     await expect(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: excluded.user.id, idempotencyKey: key('refused'), actor: TENANT_ACTOR })).rejects.toMatchObject({ code: 'not_eligible' });
     expect(await queued()).toHaveLength(3);
 
