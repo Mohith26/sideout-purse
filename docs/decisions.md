@@ -1020,3 +1020,120 @@ The `dev` provider has no webhook. Instead, the endpoints that report donation s
 `DEV_SETTLE_DELAY_MS` as of the request's clock. This is the same "reconcile against the
 provider before reporting" step a production deploy performs against Stripe's records, and it
 never runs in production because the dev provider is never selected there.
+
+## Phase 7 decisions (Sideout consensus and the Purse wiring)
+
+### What a player's Purse score is, and when an attempt is finished
+
+Purse holds one counting score per entrant per contest and ranks entrants by it to settle;
+a finished attempt is final and cannot be superseded (phase 2). A tournament has many
+matches per player, so a per-match score pushed as a finished attempt would refuse every
+player's second match. Phase 7 therefore pushes two kinds of score, both through
+`POST /contests/:id/scores` (`apps/sideout/src/server/purse/scores.ts`,
+`src/domain/purse-score.ts`):
+
+- **A running score at every agreed match**: each player's team's match wins so far,
+  `attemptFinished: false`, `sourceRef` the match id, under the key the consensus minted at
+  `agreed`. Purse lets an unfinished attempt be superseded, so the next agreed match simply
+  advances it.
+- **A final score once every match is complete**: derived from the tournament's final
+  standings (`src/domain/final-standings.ts`: bracket placement by the round a team left,
+  semifinal losers sharing third; pool-to-bracket places the teams the bracket left out after
+  every bracket team by the draw's cross-pool order; round robin by its standings) as
+  `teamCount - placement + 1`, `attemptFinished: true`, `sourceRef` the tournament id, under
+  one key per tournament (`<external id>:final-standings`). A strictly better placement is a
+  strictly higher score and tied teams share one, so Purse's ranking (score descending, ties
+  shared under `split_evenly`) reproduces Sideout's standings exactly. Purse then holds every
+  expected result and moves to `awaiting_settlement` by itself; `finish` covers an entrant
+  Sideout could not place (a Purse participant on no confirmed team), who is scored `null`
+  and places last, as spec 4.4 rule 5 says a no-show does.
+
+Only players Purse holds as entrants are scored, in both pushes: Purse refuses a batch
+naming anyone else, and a player who holds no stake has nothing for Purse to settle. A
+match none of whose players hold an entry has nothing to push and is confirmed as such,
+with the audit row saying so.
+
+### The `confirmed` rule
+
+`pushed_to_purse` is Purse's 201 to the scores batch. `confirmed` is Purse's answer to the
+same request sent again under the same key: `Idempotent-Replayed: true` with the same score
+ids. Purse emits no event for a score, so the read-back that proves the batch is durably
+held is the idempotent replay itself, which also exercises the contract's rule 4 (a replay
+creates nothing new) on every match. A failure at either step leaves the consensus where it
+was with the failure on the row (`last_push_error`) and in the audit log; the organizer's
+retry (`POST /api/admin/matches/:id/purse/retry`) re-sends under the same key, so from
+`pushed_to_purse` the first send is itself a replay and the second the confirmation. A
+tournament's close is blocked while any match is `disputed`, `agreed` (never accepted) or
+`pushed_to_purse` (never confirmed), and the preview names each with why.
+
+The one audited exception to "one key per consensus": Purse stores a refusal under its key,
+so a batch Purse refused (a player disqualified in Purse after the read-back, say) and later
+changed would hit `idempotency_key_reused` for ever. An organizer's retry that meets that
+conflict rotates the key (`consensus.key_rotated`, with the previous key and Purse's answer)
+and sends once more. A player's submission never does.
+
+### Prize structure from sponsor contributions
+
+Sponsor prize contributions are real dollars put up for goods, and they never enter Purse
+(spec 4.2.6). What they shape is the split: sorted largest first they become a
+`placement_table` of amounts, which Purse treats as weights over the escrowed pool
+(phase 2), so the presenting sponsor's prize is first place's share, the next contribution
+second place's, and so on. A tournament with no contributions splits `[50, 30, 20]`, the
+spec's own example. Purse places players, and a team's two players always tie, sharing the
+combined prize of the placements they occupy (`split_evenly`), so each team-level share is
+laid out as two player-level placements of the same weight: 50/30/20 of teams is
+50/50/30/30/20/20 of players, and the champions, tied first, share the two 50s, half the
+pool (`domain/purse-score.ts`). The contest is
+`POINTS` (decision D3's free-to-play asset) with a stake of 100
+per player; linking a Purse account grants 1,000 welcome points once, under a fixed key, so
+the free entry is affordable. Expressing the sponsor pool itself as `CREDIT` in escrow would
+need a sponsor-funding entry Purse's v1 API does not expose (`sponsor_funding` exists only as
+a ledger account); a follow-up when it does.
+
+### Entry verification, and where the entry is made
+
+Each player makes their own entry in Purse's iframe (`flow: 'entry'`, a single-use embed
+token minted server to server for their linked user, `/t/[slug]/enter`), on a surface
+visibly apart from the donation. Sideout never trusts the page: `POST /api/teams/:id/purse/entries`
+reads the contest's entrants back (`GET /contests/:id/preview`, which lists them in every
+state) and records one `purse_entries` row per participant, keyed by the Purse user id so a
+participant Sideout cannot match to a player (an "extra") is still recorded. The
+`contest.entry.created` and `.withdrawn` webhooks upsert the same rows. The organizer's
+reconciliation (`GET /api/admin/tournaments/:id/purse`, the close page) lists every player of
+a confirmed team with whether Purse holds their entry, the missing and the extra.
+
+### Mirroring the tournament, and when the contest is locked
+
+The contest is created and opened when registration opens, locked and started when the
+tournament goes live, voided when it is cancelled, closed by the organizer through the frozen
+preview; every step is idempotent under a key derived from the tournament's opaque
+`purse_external_id`, and runs after the tournament's own transaction commits (never a lock
+held across a call). Purse has no unlock, so the contest is locked at `live`, not at
+`registration_closed`: Sideout's registration can reopen, and a team finishing its Purse
+entry after the organizer closed registration is exactly what the second registration step
+needs. A mirror that fails is audited (`tournament.purse_mirror_failed`) and reported in the
+response, never fatal to the transition; the next transition, the entry step or the close
+preview runs the same mirror again.
+
+### The close is keyed by the frozen preview
+
+Purse stores a refused close under its idempotency key (a stale hash is the answer to that
+request). Sideout's close key is therefore `<external id>:close:<hash>:<previewed at>`: a
+preview the organizer confirms is one request, a later preview that happens to produce the
+same hash is another. A close Purse refuses for `preview_hash_mismatch` clears the frozen
+preview. A close confirmed again with the same hash on a settled tournament replays.
+
+### Contest value in Sideout's database
+
+No column holds a `POINTS` or `CREDIT` amount of Sideout's own, and the schema test holds
+the column names to it. What Purse said is kept verbatim as an audit: `purse_calls.response_body`
+and a tournament's frozen close preview. The wallet is never stored; `wallet.balance.changed`
+is recorded and audited against the linked user, and the profile reads the wallet back live.
+
+### Rate limits and the audit of calls
+
+Every request to Purse is a `purse_calls` row, written before the request leaves and completed
+after, on the pool rather than in a caller's transaction, with bodies scrubbed of anything
+key-shaped (`src/purse/redact.ts`). A 429 is retried after Purse's `Retry-After` up to four
+attempts, each its own row; Purse stores no 429 under an idempotency key, so the repeat is
+safe. The seed's walk over three tournaments meets the default limit and waits it out.

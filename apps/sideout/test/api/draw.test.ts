@@ -10,7 +10,7 @@ import { GET as getMatch } from '../../src/app/api/matches/[id]/route';
 import { GET as getTournament } from '../../src/app/api/tournaments/[slug]/route';
 import { GET as getStandings } from '../../src/app/api/tournaments/[slug]/standings/route';
 import { GET as listTournaments } from '../../src/app/api/tournaments/route';
-import { auditLog, donations, matches, pools, poolTeams, sets, teamMembers, teams, tournaments, type Charity, type User } from '../../src/db/schema';
+import { auditLog, donations, matches, pools, poolTeams, sets, teams, tournaments, type Charity, type User } from '../../src/db/schema';
 import { judgeMatch, type SetScore } from '../../src/domain/scoreline';
 import type { StandingRow } from '../../src/domain/standings';
 import { mintPurseExternalId } from '../../src/server/actor';
@@ -20,27 +20,7 @@ import type { DrawOutcome } from '../../src/server/draw';
 import type { MatchView } from '../../src/server/matches';
 import type { PublicTournament, PublicTournamentDetail } from '../../src/server/public-shape';
 import { cookieFor, createCharity, createUser, data, errorOf, expectNoPurseKeys, params, request, testDatabase, truncateAll, type Database } from '../helpers';
-import { tournamentBody } from './tournaments.test';
-
-/** Registered teams inserted directly: the registration flow has its own tests. */
-export async function registerTeams(database: Database, tournamentId: string, n: number, seeds: Record<number, number> = {}): Promise<string[]> {
-  const ids: string[] = [];
-  for (let i = 0; i < n; i += 1) {
-    const captain = await createUser(database, { displayName: `Captain ${i + 1}` });
-    const player = await createUser(database, { displayName: `Player ${i + 1}` });
-    const [team] = await database.db
-      .insert(teams)
-      .values({ id: newId('tm'), tournamentId, name: `Team ${i + 1}`, status: 'registered', registeredAt: new Date(), seed: seeds[i] ?? null })
-      .returning();
-    if (team === undefined) throw new Error('team insert failed');
-    await database.db.insert(teamMembers).values([
-      { id: newId('tmm'), teamId: team.id, userId: captain.id, role: 'captain' },
-      { id: newId('tmm'), teamId: team.id, userId: player.id, role: 'player' },
-    ]);
-    ids.push(team.id);
-  }
-  return ids;
-}
+import { registerTeams, tournamentBody } from './fixtures';
 
 /** What phase 7's consensus will do: agreed sets and a `final` status written by the system. */
 async function finishMatch(database: Database, matchId: string, scores: SetScore[]): Promise<void> {

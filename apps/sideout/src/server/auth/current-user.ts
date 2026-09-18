@@ -29,3 +29,13 @@ export async function requireOrganizer(request: Request, deps: SessionDeps): Pro
   if (user.role !== 'organizer') throw failure.permission('organizer_required', 'Only an organizer can do that.');
   return user;
 }
+
+/**
+ * The signed-in user for a server component, which has no `Request`: the incoming
+ * `cookie` header is read through `next/headers`. Null for a visitor.
+ */
+export async function pageUser(deps: SessionDeps): Promise<User | null> {
+  const { headers } = await import('next/headers');
+  const cookie = (await headers()).get('cookie');
+  return currentUser(new Request('http://sideout.local/', { headers: cookie === null ? {} : { cookie } }), deps);
+}

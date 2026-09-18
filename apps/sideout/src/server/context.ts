@@ -1,13 +1,16 @@
+import type { Logger } from '@repo/logger';
+
 import { database, type Db } from '../db/client';
 import { env, type Env } from '../env';
 import { logger } from '../lib/logger';
+import { databaseCallRecorder, PurseClient } from '../purse';
 import { createRateLimiter } from './auth/rate-limit';
 import { createAuthService, type AuthService } from './auth/service';
 import { logSmsSender, unavailableSmsSender, type SmsSender } from './auth/sms';
 import { devDonationProvider } from './donations/dev';
 import type { DonationProvider } from './donations/provider';
 import { stripeDonationProvider } from './donations/stripe';
-import { purseContestEntryNotWired, type PurseContestEntry } from './registration';
+import { purseContestEntryNotWired, purseContestEntryWired, type PurseContestEntry } from './registration';
 
 /**
  * The process-wide wiring the route handlers use: the database, the auth service with
@@ -22,6 +25,9 @@ export type AppContext = {
   sms: SmsSender;
   donationProvider: DonationProvider | null;
   purseEntry: PurseContestEntry;
+  /** The Purse client, or null when `SIDEOUT_PURSE_SECRET_KEY` is unset (outside production only); routes answer 503 `purse_unavailable`. */
+  purse: PurseClient | null;
+  log: Logger;
 };
 
 /** Five per address per ten minutes, for code requests and, on its own counter, for verify attempts. */
@@ -42,7 +48,7 @@ export const AUTH_RATE_LIMITS = {
   verifyPerAddress: PER_ADDRESS,
 } as const;
 
-export type AppContextOverrides = Partial<Pick<AppContext, 'sms' | 'donationProvider' | 'purseEntry' | 'env'>>;
+export type AppContextOverrides = Partial<Pick<AppContext, 'sms' | 'donationProvider' | 'purseEntry' | 'env' | 'purse'>>;
 
 export function buildAppContext(base: Env, db: Db, overrides: AppContextOverrides = {}): AppContext {
   const config = overrides.env ?? base;
@@ -68,13 +74,23 @@ export function buildAppContext(base: Env, db: Db, overrides: AppContextOverride
       verifyPerAddress: createRateLimiter(AUTH_RATE_LIMITS.verifyPerAddress),
     },
   });
+  const purse =
+    'purse' in overrides
+      ? (overrides.purse ?? null)
+      : config.purse.secretKey === undefined
+        ? null
+        : new PurseClient({ baseUrl: config.purse.apiUrl, secretKey: config.purse.secretKey, recorder: databaseCallRecorder(db) });
+  if (purse === null && config.nodeEnv !== 'test') log.warn('SIDEOUT_PURSE_SECRET_KEY is not set; the Purse integration answers purse_unavailable until it is');
+  const purseEntry = overrides.purseEntry ?? (purse === null ? purseContestEntryNotWired : purseContestEntryWired({ db, purse, log, env: config.purse }));
   return {
     env: config,
     db,
     auth,
     sms,
     donationProvider,
-    purseEntry: overrides.purseEntry ?? purseContestEntryNotWired,
+    purseEntry,
+    purse,
+    log,
   };
 }
 

@@ -80,7 +80,16 @@ describe('donation provider selection', () => {
   it('picks dev outside production without a key, stripe with one, and nothing in production without one', () => {
     expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).donationProvider).toBe('dev');
     expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: 'whsec_1' }).donationProvider).toBe('stripe');
-    const production = { NODE_ENV: 'production', SIDEOUT_DATABASE_URL: DEV_URL, SESSION_SECRET: 'x'.repeat(32) };
+    const production = {
+      NODE_ENV: 'production',
+      SIDEOUT_DATABASE_URL: DEV_URL,
+      SESSION_SECRET: 'x'.repeat(32),
+      PURSE_API_URL: 'https://purse.example',
+      SIDEOUT_PURSE_SECRET_KEY: `sk_live_${'K'.repeat(32)}`,
+      PURSE_WEBHOOK_SECRET: 'whsec_' + 'w'.repeat(32),
+      NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: `pk_live_${'P'.repeat(32)}`,
+      NEXT_PUBLIC_PURSE_TENANT_ID: 'tnt_01a0b16a-b475-74d4-b1cb-2dbdc08845a9',
+    };
     expect(loadEnv(production).donationProvider).toBe('none');
     expect(loadEnv({ ...production, STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: 'whsec_1' }).donationProvider).toBe('stripe');
     expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, STRIPE_SECRET_KEY: 'sk_test_1' })).toThrow(/set together/);

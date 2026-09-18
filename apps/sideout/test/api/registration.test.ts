@@ -24,7 +24,7 @@ import { meSnapshot, type MeSnapshot } from '../../src/server/me';
 import { purseContestEntryNotWired, registerTeam as registerTeamService } from '../../src/server/registration';
 import { listPublicTournaments, tournamentDetail, updateTournament } from '../../src/server/tournaments';
 import { cookieFor, createCharity, createUser, data, errorOf, params, request, testDatabase, truncateAll, type Database } from '../helpers';
-import { tournamentBody } from './tournaments.test';
+import { tournamentBody } from './fixtures';
 
 type TeamResponse = { team: { id: string; name: string; status: string; invitedPhone?: string | null }; members: Array<{ userId: string; role: string }> };
 type RegistrationResponse = {
@@ -227,7 +227,7 @@ describe('teams and registration', () => {
 
     const trail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, team.id)).orderBy(auditLog.createdAt, auditLog.id);
     expect(trail.map((a) => a.action)).toEqual(['team.created', 'team.member_joined', 'team.status_changed']);
-    expect(trail[2]?.detail).toMatchObject({ from: 'forming', to: 'registered', reason: 'registration', donationId: donation?.id, purseEntry: 'not_wired' });
+    expect(trail[2]?.detail).toMatchObject({ from: 'forming', to: 'registered', reason: 'registration', donationId: donation?.id, purseEntry: 'second_step' });
     const donationTrail = await database.db.select().from(auditLog).where(eq(auditLog.subjectId, donation?.id ?? '')).orderBy(auditLog.createdAt, auditLog.id);
     expect(donationTrail.map((a) => [a.action, a.actorKind])).toEqual([
       ['donation.created', 'player'],

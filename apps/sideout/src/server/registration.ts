@@ -4,7 +4,8 @@ import { newId } from '@repo/ids';
 import { z } from 'zod';
 
 import type { Db } from '../db/client';
-import { donations, teamMembers, teams, tournaments, type Donation, type Team, type Tournament, type User } from '../db/schema';
+import { donations, teamMembers, teams, tournaments, users, type Donation, type Team, type Tournament, type User } from '../db/schema';
+import { describeFailure, isPurseFailure } from '../purse';
 import { checkTeamRoster } from '../domain/team';
 import { actorFor } from './actor';
 import { writeAudit } from './audit';
@@ -13,6 +14,8 @@ import { DonationProviderError, type DonationProvider } from './donations/provid
 import { countedTeams, reservationExpiresAt, teamHoldsPlace, type ReservationClock } from './field';
 import { failure } from './http/errors';
 import { DONATION_CURRENCY } from './money';
+import { ensurePurseContest } from './purse/contests';
+import type { PurseDeps } from './purse/deps';
 
 /**
  * Tournament registration: a complete two-member team, an open window, capacity, then the
@@ -26,18 +29,45 @@ import { DONATION_CURRENCY } from './money';
 export const registerTeamSchema = z.object({ teamId: z.string().startsWith('tm_') });
 
 /**
- * Phase 7's hook. After the donation is accepted, Sideout will create the Purse user (by
- * `users.purse_external_id`) if needed and enter the team's players into the tournament's
- * contest through the SDK's server-to-server call. Until then this is explicitly not
- * wired: the default implementation does nothing and says so in the audit row, and no
- * response claims an entry was made.
+ * The second step of registration (spec 5.3, "Register"): the Purse contest entry, made by
+ * each player in the SDK's entry flow, visually apart from the donation so nobody thinks
+ * their donation is a stake. The server's part is to make sure the tournament's contest
+ * exists and to tell the browser which contest to confirm; the entry itself is the
+ * player's act on the Purse origin, and `POST /api/teams/:id/purse/entries` reads it back.
+ * With no Purse configured (`purseContestEntryNotWired`, outside production only) the
+ * response says so and no entry is claimed.
  */
-export type PurseContestEntry = (input: { tournament: Tournament; team: Team; captain: User }) => Promise<{ status: 'not_wired' }>;
+export type PurseEntryStep =
+  | { status: 'ready'; contestId: string; players: Array<{ userId: string; linked: boolean }> }
+  | { status: 'unavailable'; reason: string }
+  | { status: 'not_wired' };
+
+export type PurseContestEntry = (input: { tournament: Tournament; team: Team; captain: User; requestId: string; now: Date }) => Promise<PurseEntryStep>;
 
 export const purseContestEntryNotWired: PurseContestEntry = async () => {
   await Promise.resolve();
   return { status: 'not_wired' };
 };
+
+/** The wired step: the contest is created (idempotently) if the transition that opened registration could not reach Purse. */
+export function purseContestEntryWired(deps: PurseDeps): PurseContestEntry {
+  return async ({ tournament, team, requestId, now }) => {
+    const members = await deps.db
+      .select({ userId: users.id, purseUserId: users.purseUserId })
+      .from(teamMembers)
+      .innerJoin(users, eq(users.id, teamMembers.userId))
+      .where(eq(teamMembers.teamId, team.id));
+    try {
+      const contest = await ensurePurseContest(deps, tournament, { requestId, now });
+      return { status: 'ready', contestId: contest.id, players: members.map((m) => ({ userId: m.userId, linked: m.purseUserId !== null })) };
+    } catch (error) {
+      if (!isPurseFailure(error)) throw error;
+      const described = describeFailure(error, now);
+      deps.log.warn('purse entry step unavailable', { tournamentId: tournament.id, teamId: team.id, ...described });
+      return { status: 'unavailable', reason: described.message };
+    }
+  };
+}
 
 export type RegistrationDeps = {
   db: Db;
@@ -55,7 +85,7 @@ export type RegistrationResult = {
   reservationExpiresAt: Date | null;
   /** What the browser needs to complete a Stripe payment; null for the dev provider or free entry. */
   clientSecret: string | null;
-  purseEntry: { status: 'not_wired' };
+  purseEntry: PurseEntryStep;
 };
 
 export async function registerTeam(
@@ -138,7 +168,7 @@ export async function registerTeam(
       action: reservationLapsed ? 'team.reservation_renewed' : 'team.status_changed',
       subjectType: 'team',
       subjectId: team.id,
-      detail: { from: team.status, to: 'registered', reason: 'registration', donationId: donation?.id ?? null, purseEntry: 'not_wired' },
+      detail: { from: team.status, to: 'registered', reason: 'registration', donationId: donation?.id ?? null, purseEntry: 'second_step' },
       at: now,
     });
     return { tournament, team: updatedTeam, donation };
@@ -199,7 +229,7 @@ export async function registerTeam(
 
   const [team] = await db.select().from(teams).where(eq(teams.id, reserved.team.id));
   const captain = user;
-  const purseEntry = await deps.purseEntry({ tournament: reserved.tournament, team: team ?? reserved.team, captain });
+  const purseEntry = await deps.purseEntry({ tournament: reserved.tournament, team: team ?? reserved.team, captain, requestId: input.requestId, now });
   const expiresAt = donation?.status === 'pending' ? reservationExpiresAt(donation, clock) : null;
   return { team: team ?? reserved.team, donation, reservationExpiresAt: expiresAt, clientSecret, purseEntry };
 }
