@@ -61,7 +61,7 @@ export async function addOrigin(db: DbOrTx, input: OriginInput): Promise<TenantO
   const origin = normaliseOrigin(input.origin);
   return db.transaction(async (tx) => {
     const [before] = await tx.select().from(tenantOrigins).where(and(eq(tenantOrigins.tenantId, input.tenantId), eq(tenantOrigins.origin, origin))).for('update');
-    if (before !== undefined && before.revokedAt === null) return before;
+    if (before?.revokedAt === null) return before;
     const [after] =
       before === undefined
         ? await tx.insert(tenantOrigins).values({ tenantId: input.tenantId, origin }).returning()

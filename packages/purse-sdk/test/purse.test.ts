@@ -52,7 +52,7 @@ function setup() {
   };
 }
 
-async function mountAndReady(purse: Purse, env: ReturnType<typeof setup>, options: { flow?: 'identity' | 'entry' | 'signin' | 'wallet' | 'rewards'; contestId?: string } = {}) {
+function mountAndReady(purse: Purse, env: ReturnType<typeof setup>, options: { flow?: 'identity' | 'entry' | 'signin' | 'wallet' | 'rewards'; contestId?: string } = {}) {
   const flow = options.flow ?? 'identity';
   const mounting = purse.mount('#slot', { flow, ...(flow === 'signin' ? {} : { embedToken: TOKEN }), ...(options.contestId === undefined ? {} : { contestId: options.contestId }) });
   const frame = document.querySelector('iframe');
@@ -98,12 +98,15 @@ describe('mount and the handshake', () => {
   });
 
   it('creates the frame on the Purse origin and answers ready with hello, to the exact origin, with the token and theme', async () => {
-    const { mounting, frame, hello } = await mountAndReady(purse, env, { flow: 'entry', contestId: 'cnt_1' });
+    const { mounting, frame, hello } = mountAndReady(purse, env, { flow: 'entry', contestId: 'cnt_1' });
     const src = new URL(frame.src);
     expect(src.origin).toBe(ORIGIN);
     expect(src.pathname).toBe('/embed/');
     expect(src.searchParams.get('flow')).toBe('entry');
     expect(src.searchParams.get('parent')).toBe(window.location.origin);
+    expect(src.searchParams.get('pk')).toBe(PK);
+    expect(src.searchParams.has('token')).toBe(false);
+    expect(frame.src).not.toContain(TOKEN);
     expect(frame.getAttribute('scrolling')).toBe('no');
     expect(env.sent).toHaveLength(1);
     expect(env.sent[0]?.targetOrigin).toBe(ORIGIN);
@@ -136,7 +139,7 @@ describe('mount and the handshake', () => {
   });
 
   it('drops and counts a message with a missing or stale nonce', async () => {
-    const { mounting, frame, nonce } = await mountAndReady(purse, env);
+    const { mounting, frame, nonce } = mountAndReady(purse, env);
     env.fromFrame(frame, { v: 1, type: 'hello_ack', nonce: 'stale-stale-stale-stale', flow: 'identity', state: authenticated });
     expect(purse.drops.nonce).toBe(1);
     env.fromFrame(frame, { v: 1, type: 'resize', height: 300 });
@@ -153,7 +156,7 @@ describe('mount and the handshake', () => {
   });
 
   it('drops and counts anything that fails the schema: wrong version, unknown type, bad shape, not an object', async () => {
-    const { mounting, frame, nonce } = await mountAndReady(purse, env);
+    const { mounting, frame, nonce } = mountAndReady(purse, env);
     env.fromFrame(frame, { v: 1, type: 'hello_ack', nonce, flow: 'identity', state: authenticated });
     await mounting;
     env.fromFrame(frame, { v: 2, type: 'resize', nonce, height: 1 });
@@ -167,7 +170,7 @@ describe('mount and the handshake', () => {
   });
 
   it('honours resize reports and relays resize requests with the nonce', async () => {
-    const { mounting, frame, nonce } = await mountAndReady(purse, env);
+    const { mounting, frame, nonce } = mountAndReady(purse, env);
     env.fromFrame(frame, { v: 1, type: 'hello_ack', nonce, flow: 'identity', state: authenticated });
     await mounting;
     const resized = vi.fn();
@@ -180,7 +183,7 @@ describe('mount and the handshake', () => {
   });
 
   it('relays flow:complete and error with the sealed variants, and a fatal error fails the mount', async () => {
-    const { mounting, frame, nonce } = await mountAndReady(purse, env);
+    const { mounting, frame, nonce } = mountAndReady(purse, env);
     const errors = vi.fn();
     purse.on('error', errors);
     const fatal = { type: 'authentication_error', code: 'embed_token_used', message: 'The embed token was already used' };
@@ -189,7 +192,7 @@ describe('mount and the handshake', () => {
     await expect(mounting).rejects.toMatchObject({ type: 'authentication_error', code: 'embed_token_used' });
     expect(errors).toHaveBeenCalledWith(fatal);
 
-    const second = await mountAndReady(purse, env, { flow: 'entry', contestId: 'cnt_1' });
+    const second = mountAndReady(purse, env, { flow: 'entry', contestId: 'cnt_1' });
     env.fromFrame(second.frame, { v: 1, type: 'hello_ack', nonce: second.nonce, flow: 'entry', state: authenticated });
     await second.mounting;
     const notEligible = { type: 'not_eligible', code: 'not_eligible', message: 'Not eligible', detail: { reasons: ['identity_unverified'], requiredAction: 'complete_identity', rulesetVersion: '2026.09.1' } };
@@ -220,7 +223,7 @@ describe('mount and the handshake', () => {
   });
 
   it('reads user state through the frame once mounted', async () => {
-    const { mounting, frame, nonce } = await mountAndReady(purse, env, { flow: 'signin' });
+    const { mounting, frame, nonce } = mountAndReady(purse, env, { flow: 'signin' });
     expect(env.sent[0]?.message).toMatchObject({ type: 'hello', flow: 'signin', embedToken: null });
     env.fromFrame(frame, { v: 1, type: 'hello_ack', nonce, flow: 'signin', state: { authenticated: false, user: null } });
     await mounting;
@@ -234,9 +237,9 @@ describe('mount and the handshake', () => {
 describe('headless getUserState', () => {
   it('reads GET /v1/embed/state on the Purse origin with the publishable key and credentials', async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
-    const fetchImpl: typeof fetch = async (input, init) => {
-      calls.push({ url: String(input), init });
-      return new Response(JSON.stringify({ data: authenticated }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const fetchImpl: typeof fetch = (input, init) => {
+      calls.push({ url: typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, init });
+      return Promise.resolve(new Response(JSON.stringify({ data: authenticated }), { status: 200, headers: { 'content-type': 'application/json' } }));
     };
     const purse = await Purse.init({ publishableKey: PK, tenantId: TENANT, purseOrigin: ORIGIN, fetch: fetchImpl });
     await expect(purse.getUserState()).resolves.toEqual(authenticated);
@@ -246,8 +249,8 @@ describe('headless getUserState', () => {
   });
 
   it('maps an error envelope to the sealed shape and emits it', async () => {
-    const fetchImpl: typeof fetch = async () =>
-      new Response(JSON.stringify({ error: { type: 'authentication_error', code: 'invalid_api_key', message: 'Invalid API key' } }), { status: 401 });
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(new Response(JSON.stringify({ error: { type: 'authentication_error', code: 'invalid_api_key', message: 'Invalid API key' } }), { status: 401 }));
     const purse = await Purse.init({ publishableKey: PK, tenantId: TENANT, purseOrigin: ORIGIN, fetch: fetchImpl });
     const errors = vi.fn();
     purse.on('error', errors);

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/mini';
 
 import type { ApiError } from './errors';
 import type { EmbedFlow, RestrictionResource, VerificationResource, WalletBalanceResource } from './resources';
@@ -25,21 +25,25 @@ export function isTokenFlow(flow: MountableFlow): flow is EmbedFlow {
  * small integer of pixels, a font family is letters, digits, spaces and a few punctuation
  * marks, so nothing that reaches a stylesheet can carry a declaration of its own.
  */
-export const themeSchema = z
-  .object({
-    accent: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'a six-digit hex colour').optional(),
-    surface: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'a six-digit hex colour').optional(),
-    radius: z.number().int().min(0).max(24).optional(),
-    font: z
-      .string()
-      .min(1)
-      .max(64)
-      .regex(/^[A-Za-z0-9 ,'_-]+$/, 'a font family name')
-      .optional(),
-  })
-  .strict();
+const hexColour = z.string().check(z.regex(/^#[0-9a-fA-F]{6}$/, 'a six-digit hex colour'));
+
+export const themeSchema = z.strictObject({
+  accent: z.optional(hexColour),
+  surface: z.optional(hexColour),
+  radius: z.optional(z.int().check(z.minimum(0), z.maximum(24))),
+  font: z.optional(z.string().check(z.minLength(1), z.maxLength(64), z.regex(/^[A-Za-z0-9 ,'_-]+$/, 'a font family name'))),
+});
 
 export type Theme = z.infer<typeof themeSchema>;
+
+export type ThemeIssue = { path: string; message: string };
+
+/** Validate a theme without touching Zod: the SDK and the embed both call this. */
+export function parseTheme(value: unknown): { ok: true; theme: Theme } | { ok: false; issues: ThemeIssue[] } {
+  const result = z.safeParse(themeSchema, value);
+  if (result.success) return { ok: true, theme: result.data };
+  return { ok: false, issues: result.error.issues.map((issue) => ({ path: issue.path.map(String).join('.'), message: issue.message })) };
+}
 
 /**
  * The user as the embed sees them once a session exists: the id and display name the

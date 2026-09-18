@@ -2,8 +2,8 @@ import {
   emptyDropCounts,
   MOUNTABLE_FLOWS,
   PROTOCOL_VERSION,
+  parseTheme,
   parseToParentMessage,
-  themeSchema,
   type ApiError,
   type ApiErrorType,
   type DropCounts,
@@ -146,9 +146,9 @@ export class Purse {
   }
 
   private static validTheme(theme: Theme): Theme {
-    const parsed = themeSchema.safeParse(theme);
-    if (!parsed.success) throw new RangeError(`theme: ${parsed.error.issues.map((issue) => `${issue.path.join('.')} ${issue.message}`).join('; ')}`);
-    return parsed.data;
+    const parsed = parseTheme(theme);
+    if (!parsed.ok) throw new RangeError(`theme: ${parsed.issues.map((issue) => `${issue.path} ${issue.message}`).join('; ')}`);
+    return parsed.theme;
   }
 
   /** Drops by reason since init (spec 4.8 rule 3). A copy: the counter itself is private. */
@@ -187,7 +187,7 @@ export class Purse {
   mount(slot: string | Element, options: MountOptions): Promise<Mounted> {
     const target = typeof slot === 'string' ? this.win.document.querySelector(slot) : slot;
     if (target === null || target === undefined) {
-      return Promise.reject(new PurseError('invalid_request', 'slot_not_found', `No element matches ${String(slot)}`));
+      return Promise.reject(new PurseError('invalid_request', 'slot_not_found', `No element matches ${typeof slot === 'string' ? slot : 'the given element'}`));
     }
     if (!(MOUNTABLE_FLOWS as readonly string[]).includes(options.flow)) {
       return Promise.reject(new PurseError('invalid_request', 'unknown_flow', `Unknown flow ${String(options.flow)}`, { flows: [...MOUNTABLE_FLOWS] }));
@@ -202,9 +202,14 @@ export class Purse {
 
     const doc = this.win.document;
     const frame = doc.createElement('iframe');
+    // The frame learns three things from its URL: the flow, the parent origin it may
+    // answer (checked against the tenant's allowlist before it says a word), and the
+    // publishable key (public by design) it reads that allowlist with. The embed token
+    // never travels in a URL: it goes in `hello`, after the frame has checked the parent.
     const url = new URL('/embed/', this.origin);
     url.searchParams.set('flow', options.flow);
     url.searchParams.set('parent', this.win.location.origin);
+    url.searchParams.set('pk', this.publishableKey);
     url.searchParams.set('v', String(PROTOCOL_VERSION));
     frame.src = url.toString();
     frame.title = `Purse ${options.flow}`;

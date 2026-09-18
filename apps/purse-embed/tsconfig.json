@@ -1,0 +1,12 @@
+{
+  "extends": "../../packages/config/tsconfig/nextjs.json",
+  "compilerOptions": {
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["src", "test", "*.config.ts", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next", "out"],
+  "references": [
+    { "path": "../../packages/ui" },
+    { "path": "../../packages/purse-types" }
+  ]
+}

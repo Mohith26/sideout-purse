@@ -284,8 +284,8 @@ function rowToDelivery(row: Record<string, unknown>): WebhookDelivery {
     nextAttemptAt: date(row['next_attempt_at']),
     deliveredAt: dateOrNull(row['delivered_at']),
     lockedUntil: dateOrNull(row['locked_until']),
-    lockedBy: row['locked_by'] === null ? null : String(row['locked_by']),
-    replayOf: row['replay_of'] === null ? null : String(row['replay_of']),
+    lockedBy: typeof row['locked_by'] === 'string' ? row['locked_by'] : null,
+    replayOf: typeof row['replay_of'] === 'string' ? row['replay_of'] : null,
     createdAt: date(row['created_at']),
     updatedAt: date(row['updated_at']),
   };

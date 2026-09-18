@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DROP_REASONS, MOUNTABLE_FLOWS, PROTOCOL_VERSION, WEBHOOK_EVENT_TYPES, emptyDropCounts, isTokenFlow, parseMessage, themeSchema } from '../src/index';
+import { DROP_REASONS, MOUNTABLE_FLOWS, PROTOCOL_VERSION, WEBHOOK_EVENT_TYPES, emptyDropCounts, isTokenFlow, parseMessage, parseTheme } from '../src/index';
 
 /**
  * The iframe protocol (spec 4.8): a discriminated union with a version field, validated
@@ -58,11 +58,13 @@ describe('embed vocabulary', () => {
   });
 
   it('holds a theme to colours, a small radius and a plain font name', () => {
-    expect(themeSchema.safeParse({}).success).toBe(true);
-    expect(themeSchema.safeParse({ accent: '#d7ff3e', surface: '#101216', radius: 0, font: "Instrument Sans, 'Helvetica Neue'" }).success).toBe(true);
-    for (const bad of [{ accent: 'volt' }, { accent: '#fff' }, { radius: 25 }, { radius: 1.5 }, { font: 'x;}' }, { font: 'url(x)' }, { extra: 1 }]) {
-      expect(themeSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    expect(parseTheme({}).ok).toBe(true);
+    expect(parseTheme({ accent: '#d7ff3e', surface: '#101216', radius: 0, font: "Instrument Sans, 'Helvetica Neue'" })).toEqual({ ok: true, theme: { accent: '#d7ff3e', surface: '#101216', radius: 0, font: "Instrument Sans, 'Helvetica Neue'" } });
+    for (const bad of [{ accent: 'volt' }, { accent: '#fff' }, { radius: 25 }, { radius: 1.5 }, { font: 'x;}' }, { font: 'url(x)' }, { extra: 1 }, 'dark', null]) {
+      expect(parseTheme(bad).ok, JSON.stringify(bad)).toBe(false);
     }
+    const failed = parseTheme({ accent: 'volt' });
+    expect(failed.ok ? [] : failed.issues).toEqual([{ path: 'accent', message: 'a six-digit hex colour' }]);
   });
 
   it('starts every drop counter at zero', () => {

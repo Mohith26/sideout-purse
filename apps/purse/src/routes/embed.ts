@@ -158,7 +158,7 @@ export function embedRoutes(deps: EmbedDeps) {
     return ok(c, await embedUserState(c.get('db'), tenantId, user.id), 201);
   });
 
-  routes.post('/signout', ...guard, async (c) => {
+  routes.post('/signout', ...guard, (c) => {
     parseBody(c, emptySchema);
     clearSessionCookie(c);
     const state: EmbedUserState = { authenticated: false, user: null };

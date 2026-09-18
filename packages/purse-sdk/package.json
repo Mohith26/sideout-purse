@@ -9,9 +9,14 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./bundle": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/purse-sdk.js"
     }
   },
   "scripts": {
+    "build": "tsup",
     "test": "vitest run",
     "clean": "rm -rf dist"
   },
@@ -22,6 +27,7 @@
     "@repo/config": "workspace:*",
     "@types/jsdom": "^30.0.0",
     "jsdom": "^30.1.0",
+    "tsup": "^8.5.1",
     "vitest": "^5.0.1"
   }
 }

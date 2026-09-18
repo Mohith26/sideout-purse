@@ -30,6 +30,8 @@ const INTERNALS_MESSAGE =
 /** File globs that count as "Sideout" and "Purse" for the boundary rule. */
 export const SIDEOUT_FILES = ['apps/sideout/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
 export const PURSE_FILES = ['apps/purse/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
+/** The Purse embed app: Purse's, so it never reaches Sideout, but it renders on the shared design system. */
+export const EMBED_FILES = ['apps/purse-embed/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
 
 /**
  * Rules applied to files under `apps/sideout`.
@@ -114,6 +116,42 @@ export function purseBoundary(repoRoot) {
           zones: [
             { target: './apps/purse', from: './apps/sideout', message: PURSE_MESSAGE },
             { target: './apps/purse', from: './packages/ui', message: PURSE_MESSAGE },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * Rules applied to files under `apps/purse-embed`: the embed is a Purse app (it knows
+ * nothing of Sideout) that talks to the API only over HTTP, never through its source, and
+ * consumes `@sideout/ui`, the one package the spec shares across every app (section 6).
+ *
+ * @param {string} repoRoot absolute path of the repository root
+ * @returns {import('eslint').Linter.Config}
+ */
+export function embedBoundary(repoRoot) {
+  return {
+    name: 'boundary/purse-embed',
+    files: EMBED_FILES,
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['@sideout/*', '!@sideout/ui'], message: PURSE_MESSAGE },
+            { group: ['**/apps/sideout', '**/apps/sideout/**', '**/apps/purse', '**/apps/purse/**', '@purse/api'], message: 'The embed app reaches the Purse API over HTTP (/v1/embed), never through its source.' },
+          ],
+        },
+      ],
+      'import-x/no-restricted-paths': [
+        'error',
+        {
+          basePath: repoRoot,
+          zones: [
+            { target: './apps/purse-embed', from: './apps/sideout', message: PURSE_MESSAGE },
+            { target: './apps/purse-embed', from: './apps/purse', message: 'The embed app reaches the Purse API over HTTP (/v1/embed), never through its source.' },
           ],
         },
       ],

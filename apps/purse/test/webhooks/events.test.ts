@@ -103,9 +103,9 @@ describe('webhook events at their emit sites', () => {
     const started = await startVerification(runtime.db, { tenantId: arena.tenantId, userId: user.user.id, identity, actor: TENANT_ACTOR });
     expect(started.verification.state).toBe('verified');
     const rows = (await queued()).filter((row) => row.eventType === 'user.verification.updated');
-    expect(rows.map((row) => (row.payload as { data: { previousState: string; verification: { state: string } } }).data)).toEqual([
-      expect.objectContaining({ previousState: 'unstarted', verification: expect.objectContaining({ state: 'pending' }) }),
-      expect.objectContaining({ previousState: 'pending', verification: expect.objectContaining({ state: 'verified', provider: 'dev' }) }),
+    expect(rows.map((row) => (row.payload as { data: { previousState: string; verification: { state: string } } }).data)).toMatchObject([
+      { previousState: 'unstarted', verification: { state: 'pending' } },
+      { previousState: 'pending', verification: { state: 'verified', provider: 'dev' } },
     ]);
     expect(rows[0]?.payload).toMatchObject({ data: { userId: user.user.id, externalId: 'yes' } });
     const denied = await upsertUser(runtime.db, { tenantId: arena.tenantId, externalId: 'no', displayName: 'N', dateOfBirth: '1990-01-01' });

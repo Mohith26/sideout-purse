@@ -28,7 +28,7 @@ export type EmitEventInput<T extends WebhookEventType> = {
 export type EmittedEvent = { eventId: Id<'evt'> | null; deliveries: WebhookDelivery[] };
 
 export function buildEvent<T extends WebhookEventType>(input: EmitEventInput<T> & { eventId: Id<'evt'>; createdAt: Date }): WebhookEvent<T> {
-  return { id: input.eventId, type: input.type, createdAt: input.createdAt.toISOString(), tenantId: input.tenantId, data: input.data } as WebhookEvent<T>;
+  return { id: input.eventId, type: input.type, createdAt: input.createdAt.toISOString(), tenantId: input.tenantId, data: input.data };
 }
 
 export async function emitEvent<T extends WebhookEventType>(tx: DbOrTx, input: EmitEventInput<T>): Promise<EmittedEvent> {
@@ -36,7 +36,7 @@ export async function emitEvent<T extends WebhookEventType>(tx: DbOrTx, input: E
   if (endpoints.length === 0) return { eventId: null, deliveries: [] };
   const eventId = newId('evt');
   const now = input.now ?? new Date();
-  const payload = jsonSafe(buildEvent({ ...input, eventId, createdAt: now }) as unknown as Record<string, unknown>);
+  const payload = jsonSafe(buildEvent({ ...input, eventId, createdAt: now }));
   const deliveries = await tx
     .insert(webhookDeliveries)
     .values(

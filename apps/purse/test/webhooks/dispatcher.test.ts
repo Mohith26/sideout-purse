@@ -40,7 +40,7 @@ describe('webhook dispatcher', () => {
   const dispatcher = (instanceId = 'test-a'): WebhookDispatcher =>
     new WebhookDispatcher({ db: runtime.db, keys: TEST_KEYS, logger, now: clock, random: () => 0.5, deliveryTimeoutMs: 1000, instanceId, batchSize: 50 });
 
-  beforeAll(async () => {
+  beforeAll(() => {
     migrator = connectMigrator();
     runtime = connectRuntime({ max: 4 });
     h = harness({ internalApiToken: 'internal-token-for-tests-1234' });

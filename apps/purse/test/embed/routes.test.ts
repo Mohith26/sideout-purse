@@ -38,7 +38,7 @@ describe('embed API', () => {
     await addOrigin(h.database.db, { tenantId: boot.tenantId, origin: PARENT });
     secret = client(h, boot.operatorKey);
     pk = client(h, boot.publishableKey);
-    ana = (await secret.post<UserResource>('/v1/users', { externalId: 'ana', displayName: 'Ana Reyes', dateOfBirth: '1994-03-12', phoneE164: '+15125550101', location: { declaredRegion: 'US-TX' } })).data as UserResource;
+    ana = (await secret.post<UserResource>('/v1/users', { externalId: 'ana', displayName: 'Ana Reyes', dateOfBirth: '1994-03-12', phoneE164: '+15125550101', location: { declaredRegion: 'US-TX' } })).data!;
   });
   afterAll(async () => {
     await wipeLedger(migrator);
@@ -61,7 +61,7 @@ describe('embed API', () => {
   async function openSession(flow: 'identity' | 'wallet' | 'entry' | 'rewards' = 'wallet', userId = ana.id): Promise<{ cookie: string; state: EmbedUserState }> {
     const opened = await pk.post<EmbedUserState>('/v1/embed/session', { embedToken: await mintToken(flow, userId), flow, parentOrigin: PARENT });
     expect(opened.status).toBe(201);
-    return { cookie: cookieOf(opened), state: opened.data as EmbedUserState };
+    return { cookie: cookieOf(opened), state: opened.data! };
   }
 
   it('takes only a publishable key, and tells the tenant its allowed origins', async () => {
@@ -197,7 +197,7 @@ describe('embed API', () => {
   });
 
   it('runs the identity flow for the session user and reports the sealed verification state', async () => {
-    const marcus = (await secret.post<UserResource>('/v1/users', { externalId: 'marcus', displayName: 'Marcus Lee', dateOfBirth: '1991-07-30' })).data as UserResource;
+    const marcus = (await secret.post<UserResource>('/v1/users', { externalId: 'marcus', displayName: 'Marcus Lee', dateOfBirth: '1991-07-30' })).data!;
     const { cookie } = await openSession('identity', marcus.id);
     const noSession = await pk.post('/v1/embed/identity/start', {});
     expect(noSession.status).toBe(401);
@@ -214,7 +214,7 @@ describe('embed API', () => {
   });
 
   it('shows a contest and confirms an entry for the session user, with the sealed refusals', async () => {
-    const contest = (await secret.post<ContestResource>('/v1/contests', { externalId: 'embed-c', kind: 'tournament', title: 'Saturday doubles', asset: 'POINTS', entryAmount: '100', prizeStructure: { type: 'winner_take_all' } })).data as ContestResource;
+    const contest = (await secret.post<ContestResource>('/v1/contests', { externalId: 'embed-c', kind: 'tournament', title: 'Saturday doubles', asset: 'POINTS', entryAmount: '100', prizeStructure: { type: 'winner_take_all' } })).data!;
     await secret.post(`/v1/contests/${contest.id}/open`, {});
     const { cookie } = await openSession('entry');
     const shown = await pk.get<ContestResource>(`/v1/embed/contests/${contest.id}`, { headers: { Cookie: cookie } });
@@ -235,7 +235,7 @@ describe('embed API', () => {
     expect(twice.status).toBe(409);
     expect(twice.error).toMatchObject({ type: 'conflict', code: 'already_entered' });
 
-    const credit = (await secret.post<ContestResource>('/v1/contests', { externalId: 'embed-credit', kind: 'tournament', title: 'Credit cup', asset: 'CREDIT', entryAmount: '100', prizeStructure: { type: 'winner_take_all' } })).data as ContestResource;
+    const credit = (await secret.post<ContestResource>('/v1/contests', { externalId: 'embed-credit', kind: 'tournament', title: 'Credit cup', asset: 'CREDIT', entryAmount: '100', prizeStructure: { type: 'winner_take_all' } })).data!;
     await secret.post(`/v1/contests/${credit.id}/open`, {});
     await secret.post(`/v1/users/${ana.id}/credits`, { asset: 'CREDIT', amount: '1000' });
     const unverified = await pk.post(`/v1/embed/contests/${credit.id}/entries`, {}, { headers: { Cookie: cookie } });
@@ -251,7 +251,7 @@ describe('embed API', () => {
     expect(before.data).toEqual({ results: [] });
     expect((await pk.get('/v1/embed/rewards')).status).toBe(401);
 
-    const contest = (await secret.post<ContestResource>('/v1/contests', { externalId: 'embed-rewards', kind: 'tournament', title: 'Sunday singles', asset: 'POINTS', entryAmount: '100', prizeStructure: { type: 'winner_take_all' } })).data as ContestResource;
+    const contest = (await secret.post<ContestResource>('/v1/contests', { externalId: 'embed-rewards', kind: 'tournament', title: 'Sunday singles', asset: 'POINTS', entryAmount: '100', prizeStructure: { type: 'winner_take_all' } })).data!;
     await secret.post(`/v1/contests/${contest.id}/open`, {});
     await secret.post(`/v1/contests/${contest.id}/entries`, { userId: ana.id });
     await secret.post(`/v1/contests/${contest.id}/lock`, {});
