@@ -195,6 +195,33 @@ describe('append-only enforcement at the role level', () => {
     expect(String(await rejection(runtime.sql`update accounts set user_id = null where id = ${walletId}`))).toMatch(/permission denied for table accounts/);
   });
 
+  it('the embed and webhook tables follow the same model: attempts are history, a delivery moves forward only, a secret envelope may rotate', async () => {
+    const tables = ['tenant_origins', 'embed_signin_codes', 'webhook_endpoints', 'webhook_deliveries', 'webhook_delivery_attempts'];
+    const columns = await runtime.sql<Array<{ table: string; column: string; update: boolean }>>`
+      select c.table_name as "table", c.column_name as "column",
+        has_column_privilege('purse_app', format('public.%I', c.table_name), c.column_name, 'UPDATE') as "update"
+      from information_schema.columns c
+      where c.table_schema = 'public' and c.table_name = any(${runtime.sql.array(tables)}::text[])
+      order by 1, 2
+    `;
+    const updatable = Object.fromEntries(tables.map((table) => [table, columns.filter((row) => row.table === table && row.update).map((row) => row.column)]));
+    expect(updatable).toEqual({
+      tenant_origins: ['revoked_at'],
+      embed_signin_codes: ['attempts', 'consumed_at'],
+      webhook_endpoints: ['description', 'signing_secret', 'status', 'subscribed_events', 'updated_at', 'url'],
+      webhook_deliveries: ['attempt', 'delivered_at', 'locked_by', 'locked_until', 'next_attempt_at', 'response_status', 'status', 'updated_at'],
+      webhook_delivery_attempts: [],
+    });
+    for (const table of tables) {
+      for (const statement of [() => runtime.sql.unsafe(`delete from ${table}`), () => runtime.sql.unsafe(`truncate ${table}`)]) {
+        expect(String(await rejection(statement())), table).toMatch(new RegExp(`permission denied for table ${table}`));
+      }
+    }
+    expect(String(await rejection(runtime.sql`update webhook_delivery_attempts set response_status = 200`))).toMatch(/permission denied for table webhook_delivery_attempts/);
+    expect(String(await rejection(runtime.sql`update webhook_deliveries set payload = '{}'::jsonb`))).toMatch(/permission denied for table webhook_deliveries/);
+    expect(String(await rejection(runtime.sql`update webhook_endpoints set tenant_id = ${newId('tnt')}`))).toMatch(/permission denied for table webhook_endpoints/);
+  });
+
   it('the owner role fails the runtime check, so an API started on the migrator URL refuses to serve', async () => {
     const error = await rejection(assertRuntimeRole(migrator.sql));
     expect(String(error)).toMatch(/Refusing to serve as purse_migrator/);

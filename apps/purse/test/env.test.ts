@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { EnvError, loadEnv, requireMigratorUrl } from '../src/env';
+import { DEVELOPMENT_SECRET_KEY, EnvError, loadEnv, requireMigratorUrl } from '../src/env';
 
 const DEV_URL = 'postgres://purse_app:secret@localhost:5432/purse';
 const TEST_URL = 'postgres://purse_app:secret@localhost:5432/purse_test';
@@ -84,5 +84,24 @@ describe('env', () => {
     expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, RATE_LIMIT_BURST: '0' })).toThrow(EnvError);
     expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, TRUSTED_PROXY_HOPS: '-1' })).toThrow(EnvError);
     expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, TRUSTED_PROXY_HOPS: '1.5' })).toThrow(EnvError);
+  });
+
+  it('derives the process secret, requiring a real one in production, and the embed SMS seam', () => {
+    const dev = loadEnv({ PURSE_DATABASE_URL: DEV_URL });
+    expect(dev.secretKey).toBe(DEVELOPMENT_SECRET_KEY);
+    expect(dev.secretKeyIsDefault).toBe(true);
+    expect(dev.embed).toEqual({ smsProvider: 'log', staticDir: undefined });
+    expect(dev.webhooks).toEqual({ dispatcher: true, pollIntervalMs: 1000, deliveryTimeoutMs: 10_000 });
+    const configured = loadEnv({ PURSE_DATABASE_URL: DEV_URL, PURSE_SECRET_KEY: 'x'.repeat(40), EMBED_SMS_PROVIDER: 'none', PURSE_EMBED_DIR: '/srv/embed', WEBHOOK_DISPATCHER: 'off', WEBHOOK_POLL_INTERVAL_MS: '250', WEBHOOK_DELIVERY_TIMEOUT_MS: '5000' });
+    expect(configured.secretKey).toBe('x'.repeat(40));
+    expect(configured.secretKeyIsDefault).toBe(false);
+    expect(configured.embed).toEqual({ smsProvider: 'none', staticDir: '/srv/embed' });
+    expect(configured.webhooks).toEqual({ dispatcher: false, pollIntervalMs: 250, deliveryTimeoutMs: 5000 });
+    expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, PURSE_SECRET_KEY: 'short' })).toThrow(EnvError);
+    expect(() => loadEnv({ NODE_ENV: 'production', PURSE_DATABASE_URL: DEV_URL })).toThrow(/PURSE_SECRET_KEY is required/);
+    expect(() => loadEnv({ NODE_ENV: 'production', PURSE_DATABASE_URL: DEV_URL, PURSE_SECRET_KEY: 'x'.repeat(40), EMBED_SMS_PROVIDER: 'log' })).toThrow(/EMBED_SMS_PROVIDER=log is refused/);
+    const production = loadEnv({ NODE_ENV: 'production', PURSE_DATABASE_URL: DEV_URL, PURSE_SECRET_KEY: 'x'.repeat(40) });
+    expect(production.embed.smsProvider).toBe('none');
+    expect(() => loadEnv({ PURSE_DATABASE_URL: DEV_URL, WEBHOOK_POLL_INTERVAL_MS: '10' })).toThrow(EnvError);
   });
 });

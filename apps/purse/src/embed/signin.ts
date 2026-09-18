@@ -101,29 +101,39 @@ export type VerifySigninInput = {
 
 /**
  * Check a code against the newest unconsumed one for the phone. A wrong guess counts
- * against that code; the fifth exhausts it. The refusals are told apart in `code` for the
- * UI, but none says whether the phone belongs to anyone.
+ * against that code (committed on its own, so the count survives the refusal); the fifth
+ * exhausts it. Consuming is one conditional update, so two racing verifications of one
+ * code cannot both win. The refusals are told apart in `code` for the UI, but none says
+ * whether the phone belongs to anyone.
  */
 export async function verifySignin(db: DbOrTx, keys: ProcessKeys, input: VerifySigninInput): Promise<User> {
   if (!PHONE_E164.test(input.phoneE164)) throw new EmbedError('invalid_input', 'phoneE164 must be E.164, +14155550123', { field: 'phoneE164' });
   if (!/^\d{6}$/.test(input.code)) throw new EmbedError('invalid_code', 'The code is not valid');
   const now = input.now ?? new Date();
+  const [live] = await db
+    .select()
+    .from(embedSigninCodes)
+    .where(and(eq(embedSigninCodes.tenantId, input.tenantId), eq(embedSigninCodes.phoneE164, input.phoneE164), isNull(embedSigninCodes.consumedAt)))
+    .orderBy(desc(embedSigninCodes.createdAt))
+    .limit(1);
+  if (live === undefined) throw new EmbedError('invalid_code', 'The code is not valid');
+  if (live.expiresAt.getTime() <= now.getTime()) throw new EmbedError('code_expired', 'The code has expired; request a new one');
+  if (live.attempts >= CODE_MAX_ATTEMPTS) throw new EmbedError('too_many_attempts', 'Too many wrong guesses; request a new code');
+  if (!codeMatches(live.codeHash, hashCode(keys, input.tenantId, input.phoneE164, input.code))) {
+    const [counted] = await db
+      .update(embedSigninCodes)
+      .set({ attempts: sql`least(${embedSigninCodes.attempts} + 1, ${CODE_MAX_ATTEMPTS})` })
+      .where(eq(embedSigninCodes.id, live.id))
+      .returning({ attempts: embedSigninCodes.attempts });
+    throw new EmbedError('invalid_code', 'The code is not valid', { attemptsLeft: Math.max(0, CODE_MAX_ATTEMPTS - (counted?.attempts ?? CODE_MAX_ATTEMPTS)) });
+  }
   return db.transaction(async (tx) => {
-    const [live] = await tx
-      .select()
-      .from(embedSigninCodes)
-      .where(and(eq(embedSigninCodes.tenantId, input.tenantId), eq(embedSigninCodes.phoneE164, input.phoneE164), isNull(embedSigninCodes.consumedAt)))
-      .orderBy(desc(embedSigninCodes.createdAt))
-      .limit(1)
-      .for('update');
-    if (live === undefined) throw new EmbedError('invalid_code', 'The code is not valid');
-    if (live.expiresAt.getTime() <= now.getTime()) throw new EmbedError('code_expired', 'The code has expired; request a new one');
-    if (live.attempts >= CODE_MAX_ATTEMPTS) throw new EmbedError('too_many_attempts', 'Too many wrong guesses; request a new code');
-    if (!codeMatches(live.codeHash, hashCode(keys, input.tenantId, input.phoneE164, input.code))) {
-      await tx.update(embedSigninCodes).set({ attempts: live.attempts + 1 }).where(eq(embedSigninCodes.id, live.id));
-      throw new EmbedError('invalid_code', 'The code is not valid', { attemptsLeft: CODE_MAX_ATTEMPTS - live.attempts - 1 });
-    }
-    await tx.update(embedSigninCodes).set({ consumedAt: sql`clock_timestamp()` }).where(eq(embedSigninCodes.id, live.id));
+    const [consumed] = await tx
+      .update(embedSigninCodes)
+      .set({ consumedAt: sql`clock_timestamp()` })
+      .where(and(eq(embedSigninCodes.id, live.id), isNull(embedSigninCodes.consumedAt), sql`${embedSigninCodes.attempts} < ${CODE_MAX_ATTEMPTS}`))
+      .returning({ id: embedSigninCodes.id });
+    if (consumed === undefined) throw new EmbedError('invalid_code', 'The code is not valid');
     const user = await userByPhone(tx, input.tenantId, input.phoneE164);
     if (user === undefined) throw new EmbedError('invalid_code', 'The code is not valid');
     await recordAudit(tx, {
