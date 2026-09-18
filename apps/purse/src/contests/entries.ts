@@ -19,8 +19,9 @@ import { findParticipant, getContest, getParticipant, lockContest } from './load
  * typed flows in the same transaction as the participant row, keyed by the request's own
  * idempotency key, and `entry_journal_entry_id` records the escrow entry that holds it,
  * which is what invariant I7 checks. A withdrawn entrant may enter again while the contest
- * is open and before `locks_at`: the same row is reactivated with a fresh escrow entry,
- * keeping its first entry's `team_ref` and `seed` (docs/decisions.md).
+ * is open and before `locks_at`: the same row is reactivated with a fresh escrow entry and
+ * the `team_ref` and `seed` of the new request, since a player who lost a partner comes
+ * back with another (docs/decisions.md).
  */
 export type EnterContestInput = {
   tenantId: Id<'tnt'>;
@@ -92,15 +93,6 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
               participantState: existing.state,
             });
           }
-          if (existing !== undefined && (existing.teamRef !== teamRef || existing.seed !== seed)) {
-            throw new ContestError('invalid_input', `User ${input.userId} re-enters contest ${contest.id} with the teamRef and seed of their first entry`, {
-              contestId: contest.id,
-              userId: input.userId,
-              participantId: existing.id,
-              teamRef: existing.teamRef,
-              seed: existing.seed,
-            });
-          }
 
           if (contest.maxParticipants !== null) {
             const [held] = await tx
@@ -165,7 +157,7 @@ export async function enterContest(db: DbOrTx, input: EnterContestInput): Promis
                   .returning()
               : await tx
                   .update(contestParticipants)
-                  .set({ state: 'entered', entryJournalEntryId: entry.entry.id, updatedAt: sql`now()` })
+                  .set({ state: 'entered', entryJournalEntryId: entry.entry.id, teamRef, seed, updatedAt: sql`now()` })
                   .where(eq(contestParticipants.id, existing.id))
                   .returning();
           if (participant === undefined) throw new Error('contest_participants write returned no row');

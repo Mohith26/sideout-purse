@@ -268,12 +268,14 @@ entry** (capacity, eligibility, funds). `enterContest` reactivates the withdrawn
 than inserting a second one: the state returns to `entered` and `entry_journal_entry_id`
 is pointed at a fresh escrow entry keyed by the new request, so the row always names the
 entry that currently holds the stake, which is what I7 checks and what a void reverses.
-`team_ref` and `seed` are set at the first entry and never change; a re-entry that carries
-different values is refused (`invalid_input`) rather than silently kept, since the seed
-feeds the tie-break. The database admits exactly this and nothing more: `purse_app` may
-update `state`, `entry_journal_entry_id` and `updated_at`, and the
-`contest_participants_guard` trigger lets the entry link change only on `withdrawn ->
-entered` and requires it to change then. The audit row for a re-entry is
+The re-entry carries the new request's `team_ref` and `seed`: a player who withdrew because
+a partner dropped out comes back with another, and a re-seeding at that point is the
+tenant's call. Those two columns change on that move and on no other; there is no
+separate "edit my entry" operation. The database admits exactly this and nothing more:
+`purse_app` may update `state`, `entry_journal_entry_id`, `team_ref`, `seed` and
+`updated_at`, and the `contest_participants_guard` trigger lets the entry link change only
+on `withdrawn -> entered` (and requires it to change then) and lets `team_ref` and `seed`
+change only on that same move, for every role. The audit row for a re-entry is
 `contest.entry.reentered`, with the withdrawn row as `before`.
 
 The lock time is the same for leaving as for joining: `withdrawEntry` refuses once

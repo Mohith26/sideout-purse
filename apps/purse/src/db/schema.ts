@@ -402,9 +402,9 @@ export type NewContest = typeof contests.$inferInsert;
  * contest's escrow for the contest's asset and amount) and is unique: one stake, one entry.
  * A withdrawal marks the row `withdrawn` and refunds through a separate `refund` entry; a
  * withdrawn user may enter again while the contest is open, which reactivates this same
- * row with a fresh escrow entry (docs/decisions.md). `seed` and `team_ref` are set at the
- * first entry and never change; `seed` feeds the `higher_seed_wins` tie-break (lower is
- * better).
+ * row with a fresh escrow entry and the new request's `team_ref` and `seed`, the only
+ * move on which those two may change (docs/decisions.md). `seed` feeds the
+ * `higher_seed_wins` tie-break (lower is better).
  */
 export const contestParticipants = pgTable(
   'contest_participants',

@@ -32,8 +32,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   table (journal, audit log, `contest_results`, `idempotency_keys`) gets `SELECT, INSERT`
   only, and a table with columns that legitimately change gets column-level `UPDATE`
   (`accounts`, `tenants`: `status, updated_at`; `contests`: `state`, `settled_at`,
-  `locks_at` and the draft-editable fields; `contest_participants`: `state` and
-  `entry_journal_entry_id`, the latter only when a withdrawn entrant re-enters;
+  `locks_at` and the draft-editable fields; `contest_participants`: `state`, and
+  `entry_journal_entry_id`, `team_ref`, `seed` only when a withdrawn entrant re-enters;
   `contest_scores`: `superseded_by`). `test/ledger/roles.test.ts` fails on a table with
   no grant and pins the updatable columns of every contest table. Tests take the runtime
   connection from `test/helpers.ts` (`connectRuntime`) and the owner connection only for

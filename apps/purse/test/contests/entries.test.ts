@@ -110,7 +110,7 @@ describe('enterContest()', () => {
     expect((await reconcile(runtime.db)).ok).toBe(true);
   });
 
-  it('a withdrawn entrant re-enters: the same row is reactivated with a fresh escrow entry, and a void refunds that one', async () => {
+  it('a withdrawn entrant re-enters with a new partner and seed: the same row is reactivated with a fresh escrow entry, and a void refunds that one', async () => {
     const contest = await makeContest(runtime.db, arena, { entryAmount: 100n });
     await advance(runtime.db, arena, contest.id, 'open');
     const first = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-a', seed: 2, idempotencyKey: key() });
@@ -118,17 +118,11 @@ describe('enterContest()', () => {
     expect(withdrawn.participant.state).toBe('withdrawn');
     expect(await walletBalance(runtime.db, arena, user(0))).toBe(250n);
 
-    // Back in, but only with the team and seed of the first entry.
-    const changed = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-b', seed: 2, idempotencyKey: key() }));
-    expect(changed.code).toBe('invalid_input');
-    expect(changed.detail).toMatchObject({ participantId: first.participant.id, teamRef: 'team-a', seed: 2 });
-    expect(await walletBalance(runtime.db, arena, user(0))).toBe(250n);
-
     const k = key('reenter');
-    const again = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-a', seed: 2, idempotencyKey: k, actor: TENANT_ACTOR });
+    const again = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-b', seed: 5, idempotencyKey: k, actor: TENANT_ACTOR });
     expect(again.replayed).toBe(false);
     expect(again.participant.id).toBe(first.participant.id);
-    expect(again.participant).toMatchObject({ state: 'entered', teamRef: 'team-a', seed: 2, joinedAt: first.participant.joinedAt, entryJournalEntryId: again.entry.entry.id });
+    expect(again.participant).toMatchObject({ state: 'entered', teamRef: 'team-b', seed: 5, joinedAt: first.participant.joinedAt, entryJournalEntryId: again.entry.entry.id });
     expect(again.entry.entry.id).not.toBe(first.entry.entry.id);
     expect(again.entry.entry).toMatchObject({ kind: 'escrow', contestId: contest.id, idempotencyKey: `contest-entry:${k}` });
     expect(await walletBalance(runtime.db, arena, user(0))).toBe(150n);
@@ -139,26 +133,28 @@ describe('enterContest()', () => {
     expect(original?.kind).toBe('escrow');
     expect(await runtime.db.select().from(journalEntries).where(eq(journalEntries.reversesEntryId, first.entry.entry.id))).toEqual([]);
 
-    const replay = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-a', seed: 2, idempotencyKey: k });
+    const replay = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-b', seed: 5, idempotencyKey: k });
     expect(replay.replayed).toBe(true);
     expect(replay.entry.entry.id).toBe(again.entry.entry.id);
-    const third = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-a', seed: 2, idempotencyKey: key() }));
+    const third = await contestError(enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-c', idempotencyKey: key() }));
     expect(third.code).toBe('already_entered');
     expect(third.detail).toMatchObject({ participantState: 'entered' });
+    expect((await listParticipants(runtime.db, contest.id))[0]).toMatchObject({ teamRef: 'team-b', seed: 5 });
 
     const audit = await runtime.db.select().from(auditLog).where(eq(auditLog.subject, first.participant.id)).orderBy(auditLog.createdAt, auditLog.id);
     expect(audit.map((row) => row.action)).toEqual(['contest.entry.created', 'contest.entry.withdrawn', 'contest.entry.reentered']);
     expect(audit[2]).toMatchObject({ actorKind: 'tenant' });
-    expect(audit[2]?.before).toMatchObject({ state: 'withdrawn', entryJournalEntryId: first.entry.entry.id });
-    expect(audit[2]?.after).toMatchObject({ state: 'entered', entryJournalEntryId: again.entry.entry.id });
+    expect(audit[2]?.before).toMatchObject({ state: 'withdrawn', entryJournalEntryId: first.entry.entry.id, teamRef: 'team-a', seed: 2 });
+    expect(audit[2]?.after).toMatchObject({ state: 'entered', entryJournalEntryId: again.entry.entry.id, teamRef: 'team-b', seed: 5 });
 
     let report = await reconcile(runtime.db);
     expect(report.invariants.find((r) => r.id === 'I7')).toMatchObject({ ok: true, detail: 'every one of 1 participants links to a matching escrow entry' });
 
-    // Leaving and coming back again works the same way; the void then reverses the entry that holds the stake now.
+    // Leaving and coming back again works the same way, this time alone and unseeded; the void then reverses the entry that holds the stake now.
     await withdrawEntry(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), idempotencyKey: key() });
-    const back = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-a', seed: 2, idempotencyKey: key() });
+    const back = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), idempotencyKey: key() });
     expect(back.participant.id).toBe(first.participant.id);
+    expect(back.participant).toMatchObject({ state: 'entered', teamRef: null, seed: null });
     const voided = await voidContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, actor: OPERATOR, idempotencyKey: key() });
     expect(voided.refunds.map((refund) => refund.entry.reversesEntryId)).toEqual([back.entry.entry.id]);
     expect(await walletBalance(runtime.db, arena, user(0))).toBe(250n);
@@ -304,27 +300,50 @@ describe('withdrawEntry()', () => {
     expect((await reconcile(runtime.db)).ok).toBe(true);
   });
 
-  it('the participant row’s identity cannot change, and its state and entry link move only as the guard allows', async () => {
+  it('the participant row’s identity cannot change, and its state, entry link, team and seed move only as the guard allows', async () => {
     const contest = await makeContest(runtime.db, arena);
     await advance(runtime.db, arena, contest.id, 'open');
-    const { participant, entry } = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), idempotencyKey: key() });
+    const { participant, entry } = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), teamRef: 'team-a', seed: 2, idempotencyKey: key() });
     const other = await enterContest(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(1), idempotencyKey: key() });
+    const unchanged = async () => {
+      const [row] = await runtime.db.select().from(contestParticipants).where(eq(contestParticipants.id, participant.id));
+      expect(row).toMatchObject({ entryJournalEntryId: entry.entry.id, teamRef: 'team-a', seed: 2 });
+      return row?.state;
+    };
 
-    // The entry link moves only with a withdrawn -> entered reactivation, for every role.
+    // The entry link, team and seed move only with a withdrawn -> entered reactivation, for every role.
     const link = await rejection(runtime.sql`update contest_participants set entry_journal_entry_id = ${other.entry.entry.id} where id = ${participant.id}`);
     expect(String(link)).toMatch(/entry link changes exactly when a withdrawn entrant re-enters/);
-    const seed = await rejection(runtime.sql`update contest_participants set seed = 1 where id = ${participant.id}`);
-    expect(String(seed)).toMatch(/permission denied for table contest_participants/);
+    for (const sql of [runtime.sql, migrator.sql]) {
+      const seed = await rejection(sql`update contest_participants set seed = 1 where id = ${participant.id}`);
+      expect(String(seed)).toMatch(/team_ref and seed change only when a withdrawn entrant re-enters/);
+      const team = await rejection(sql`update contest_participants set team_ref = 'team-b' where id = ${participant.id}`);
+      expect(String(team)).toMatch(/team_ref and seed change only when a withdrawn entrant re-enters/);
+    }
     const owner = await rejection(migrator.sql`update contest_participants set user_id = ${newId('usr')} where id = ${participant.id}`);
     expect(String(owner)).toMatch(/identity fields cannot change/);
+    expect(await unchanged()).toBe('entered');
+
+    // Not on the way to disqualified, not while disqualified, and not on the way back from it.
+    const dqTeam = await rejection(migrator.sql`update contest_participants set state = 'disqualified', team_ref = 'team-b' where id = ${participant.id}`);
+    expect(String(dqTeam)).toMatch(/team_ref and seed change only when a withdrawn entrant re-enters/);
+    await migrator.sql`update contest_participants set state = 'disqualified' where id = ${participant.id}`;
+    const dqSeed = await rejection(migrator.sql`update contest_participants set seed = 1 where id = ${participant.id}`);
+    expect(String(dqSeed)).toMatch(/team_ref and seed change only when a withdrawn entrant re-enters/);
+    const reinstated = await rejection(migrator.sql`update contest_participants set state = 'entered', seed = 1 where id = ${participant.id}`);
+    expect(String(reinstated)).toMatch(/team_ref and seed change only when a withdrawn entrant re-enters/);
+    expect(await unchanged()).toBe('disqualified');
+    await migrator.sql`update contest_participants set state = 'entered' where id = ${participant.id}`;
 
     await withdrawEntry(runtime.db, { tenantId: arena.tenantId, contestId: contest.id, userId: user(0), idempotencyKey: key() });
-    // Back to entered without a new stake is refused; with one it is admitted, so the row always names the entry holding the stake.
-    const noStake = await rejection(migrator.sql`update contest_participants set state = 'entered' where id = ${participant.id}`);
+    // While withdrawn the team and seed are still frozen; back to entered without a new stake
+    // is refused, and with one it is admitted (the re-entry test), so the row always names the entry holding the stake.
+    const parked = await rejection(migrator.sql`update contest_participants set team_ref = 'team-b' where id = ${participant.id}`);
+    expect(String(parked)).toMatch(/team_ref and seed change only when a withdrawn entrant re-enters/);
+    const noStake = await rejection(migrator.sql`update contest_participants set state = 'entered', team_ref = 'team-b' where id = ${participant.id}`);
     expect(String(noStake)).toMatch(/entry link changes exactly when a withdrawn entrant re-enters/);
     const dq = await rejection(migrator.sql`update contest_participants set state = 'disqualified' where id = ${participant.id}`);
     expect(String(dq)).toMatch(/cannot move from withdrawn to disqualified/);
-    const [row] = await runtime.db.select().from(contestParticipants).where(eq(contestParticipants.id, participant.id));
-    expect(row).toMatchObject({ state: 'withdrawn', entryJournalEntryId: entry.entry.id });
+    expect(await unchanged()).toBe('withdrawn');
   });
 });
