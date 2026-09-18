@@ -258,6 +258,32 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   then mirrors the seeded events to Purse through the app's services (`src/db/seed/purse.ts`:
   links, entries, pushes, the settled event closed); otherwise it logs that the walk was
   skipped and `purse_contest_id` stays null. Rerunning replays under the same keys.
+- UI (phase 8): cross-app primitives are `@sideout/ui` (`packages/ui/src/components/`:
+  `phase8.tsx` server-safe, `interactive.tsx` the client ones such as `Sheet`, `ConfirmDialog`,
+  `ToastProvider`; `icons.tsx` wraps lucide at 1.5px, the only icon set), product components
+  are `apps/sideout/src/components/<area>/` (`bracket/`, `consensus/`, `tournament/`,
+  `registration/`, `purse/`, `organizer/`, `offline/`, `shell/`, `ui/`), motion is
+  `components/motion/` (`flip.ts`, `ScoreDisplay`, `LiveRefresh` polling every 5s per D11)
+  with the keyframes in `packages/ui/src/styles/motion.css` and their opacity-only
+  reduced-motion twins pinned by `packages/ui/test/motion.test.ts`. Pages under `src/app`
+  compose components and Tailwind utilities from `theme.css` (`type-*`, `surface-*`,
+  `target`); breakpoints are the spec's widths (`sm` 390, `md` 768, `lg` 1280, so two
+  columns start at `md:`). Every route has a shape-matched `loading.tsx` and an `error.tsx`.
+- `@purse/sdk` is imported in the browser by `components/purse/PurseGate.tsx` only (the
+  `sideoutSdkGate` ESLint block and `test/purse/sdk-gate.test.ts`); screens reach Purse through
+  `usePurse()` (link, open a flow into the gate's sheet or a registered slot, the profile) and
+  the pure `mapPurseError` in `components/purse/eligibility.ts` maps sealed variants to UI states.
+- PWA: `public/sw.js` (versioned by `?v=<build sha>`, registered by production builds only,
+  `components/offline/ServiceWorkerRegistration.tsx`), `src/app/manifest.ts`, icons rendered by
+  `scripts/render-icons.ts`; the score outbox is `src/lib/offline/` (IndexedDB, replayed through
+  `POST /api/matches/:id/scores`). To run it locally: `pnpm --filter @sideout/web build && pnpm
+  --filter @sideout/web start` (`next dev` unregisters the worker).
+- `pnpm --filter @sideout/web e2e` is the Playwright run (`playwright.config.ts`: the built app
+  on :3010 against a Purse API on :4020, both seeded databases; needs
+  `SIDEOUT_PURSE_SECRET_KEY` and `NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY` in `apps/sideout/.env` or
+  the environment). Sessions are minted by `e2e/session.ts`, screens are listed once in
+  `e2e/helpers.ts`, and the smoke writes `docs/screenshots/<screen>-<width>.png`. Component
+  tests under `test/ui/` run in jsdom via a `@vitest-environment jsdom` docblock.
 - Route tests call handlers directly with `Request` objects (`test/helpers.ts`), truncate
   the test database per file, and override seams with `resetAppContext({...})`; Purse is
   `test/purse/fake-purse.ts` behind `resetAppContext({ purse: new PurseClient({ fetch }) })`.

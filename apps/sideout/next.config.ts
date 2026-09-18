@@ -21,6 +21,8 @@ const nextConfig: NextConfig = {
   transpilePackages: ['@sideout/ui', '@purse/sdk', '@purse/types', '@repo/ids', '@repo/db', '@repo/logger'],
   // postgres.js opens sockets; keep it a runtime dependency rather than a bundled one.
   serverExternalPackages: ['postgres'],
+  // The service worker is versioned by its query string, never by the browser's cache: a new build must reach every open tab.
+  headers: () => Promise.resolve([{ source: '/sw.js', headers: [{ key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' }] }]),
 };
 
 export default nextConfig;

@@ -10,11 +10,12 @@
     "start": "next start --port 3000",
     "typecheck": "tsc -b",
     "test": "vitest run",
+    "e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
     "db:generate:custom": "drizzle-kit generate --custom",
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts",
-    "clean": "rm -rf .next dist",
+    "clean": "rm -rf .next dist test-results",
     "check:bundle": "tsx scripts/check-bundle.ts"
   },
   "dependencies": {
@@ -24,6 +25,8 @@
     "@repo/ids": "workspace:*",
     "@repo/logger": "workspace:*",
     "@sideout/ui": "workspace:*",
+    "@stripe/react-stripe-js": "^6.10.0",
+    "@stripe/stripe-js": "^9.16.0",
     "drizzle-orm": "^0.45.2",
     "next": "~15.5.25",
     "postgres": "^3.4.9",
@@ -33,13 +36,19 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.63.0",
     "@repo/config": "workspace:*",
     "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^22.20.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "drizzle-kit": "^0.31.10",
+    "fake-indexeddb": "^6.2.5",
     "fast-check": "^4.10.1",
+    "jsdom": "^30.1.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.13",
     "vitest": "^5.0.1"

@@ -50,6 +50,10 @@ const stripeLike: DonationProvider = {
     await Promise.resolve();
     cancelled.push(providerRef);
   },
+  retrievePayment: async (providerRef) => {
+    await Promise.resolve();
+    return { providerRef, clientSecret: `${providerRef}_secret`, status: 'pending' };
+  },
 };
 
 const succeededEvent = (paymentIntentId: string) =>
@@ -309,6 +313,7 @@ describe('teams and registration', () => {
         return { providerRef: `pi_${req.donationId}`, clientSecret: 'pi_secret_test', status: 'pending' };
       },
       cancelPayment: () => Promise.resolve(),
+      retrievePayment: (providerRef) => Promise.resolve({ providerRef, clientSecret: null, status: 'pending' as const }),
     };
     resetAppContext({ donationProvider: flaky });
     const { team } = await data<TeamResponse>(await newTeam(captain, { tournamentSlug: slug, name: 'Test Pair', partnerPhone: partner.phoneE164 }));

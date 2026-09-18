@@ -20,3 +20,27 @@ export {
   type NoticeTone,
   type Column,
 } from './components/primitives';
+export { Icons, type IconComponent, type IconName, type IconProps } from './components/icons';
+export {
+  ActionButton,
+  LinkButton,
+  IconButton,
+  LiveDot,
+  StatusPill,
+  EmptyState,
+  SectionHeading,
+  Skeleton,
+  TabBar,
+  NavRail,
+  type ActionButtonProps,
+  type ActionButtonVariant,
+  type LinkButtonProps,
+  type LinkLike,
+  type LinkLikeProps,
+  type IconButtonProps,
+  type PillSpec,
+  type PillTone,
+  type EmptyStateProps,
+  type NavItem,
+} from './components/phase8';
+export { ToastProvider, useToast, ConfirmDialog, Sheet, SheetCloseButton, useSheetClose, type ToastInput, type ToastTone, type ConfirmDialogProps, type SheetProps } from './components/interactive';

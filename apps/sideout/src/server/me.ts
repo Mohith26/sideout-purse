@@ -1,6 +1,10 @@
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { z } from 'zod';
 
+import type { Db } from '../db/client';
 import { donations, teamMembers, teams, tournaments, users, type User } from '../db/schema';
+import { actorFor } from './actor';
+import { writeAudit } from './audit';
 import type { DbOrTx } from './db';
 import { holdsPlace, placeHoldingDonation, reservationExpiresAt, type ReservationClock } from './field';
 import { centsToJson } from './money';
@@ -91,4 +95,18 @@ export async function meSnapshot(db: DbOrTx, user: User, clock: ReservationClock
       reservationExpiresAt: donation.status === 'pending' ? reservationExpiresAt(donation, clock).toISOString() : null,
     })),
   };
+}
+
+export const updateProfileSchema = z.strictObject({ displayName: z.string().trim().min(2).max(60) });
+
+/** Rename the signed-in user. Names are public (rosters, standings, the donor wall), so the change is audited. */
+export async function updateProfile(db: Db, user: User, input: z.infer<typeof updateProfileSchema>, now: Date): Promise<User> {
+  return db.transaction(async (tx) => {
+    const [updated] = await tx.update(users).set({ displayName: input.displayName, updatedAt: now }).where(eq(users.id, user.id)).returning();
+    if (updated === undefined) throw new Error('user update returned no row');
+    if (updated.displayName !== user.displayName) {
+      await writeAudit(tx, { actor: actorFor(user), action: 'user.renamed', subjectType: 'user', subjectId: user.id, detail: { from: user.displayName, to: updated.displayName }, at: now });
+    }
+    return updated;
+  });
 }

@@ -11,9 +11,22 @@ describe('AppShell', () => {
       </AppShell>,
     );
     expect(html).toContain('<header class="so-shell__header">');
-    expect(html).toContain('<main class="so-shell__main"><p>content</p></main>');
+    expect(html).toContain('<main id="main" class="so-shell__main"><p>content</p></main>');
     expect(html).toContain('<footer class="so-shell__footer">');
     expect(renderToStaticMarkup(<AppShell brand="B">x</AppShell>)).not.toContain('<footer');
+  });
+
+  it('adds the skip link, the rail and the tab bar when given them, and the classes the stylesheet keys on', () => {
+    const html = renderToStaticMarkup(
+      <AppShell brand="B" rail={<aside>rail</aside>} tabBar={<nav>tabs</nav>} status={<p>offline</p>}>
+        x
+      </AppShell>,
+    );
+    expect(html).toContain('class="so-shell so-shell--rail so-shell--tabs"');
+    expect(html).toContain('<a href="#main" class="so-skip-link">Skip to content</a>');
+    expect(html).toContain('<div class="so-shell__status"><p>offline</p></div>');
+    expect(html.indexOf('<aside>rail</aside>')).toBeLessThan(html.indexOf('<header'));
+    expect(html.indexOf('<nav>tabs</nav>')).toBeGreaterThan(html.indexOf('</main>'));
   });
 });
 

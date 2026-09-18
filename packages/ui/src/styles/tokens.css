@@ -83,35 +83,51 @@
   --focus-ring-offset: 2px;
   --target-min: 44px;
 
-  /* 6.3 Motion. Durations and the one easing; the six named transitions are phase 8. */
+  /*
+   * 6.3 Motion. Durations and the easings; the six named transitions are keyframes in
+   * motion.css on these tokens. `--ease-in-out-quart` is the exit and draw curve.
+   */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
   --d-micro: 120ms;
   --d-base: 220ms;
   --d-enter: 420ms;
   --d-draw: 700ms;
 
-  /* Layout */
+  /* Layout: 16px gutters at 390px growing to 32px at 1280px; the bottom tab bar and the desktop rail. */
   --gutter: 16px;
   --content-max: 1280px;
+  --tabbar-height: 56px;
+  --navrail-width: 232px;
+}
+
+@media (min-width: 1280px) {
+  :root {
+    --gutter: 32px;
+  }
 }
 
 /*
  * Reduced motion. Spec 6.3: every transition is wrapped in this query and reduced to
- * opacity. The token layer does the reducing so a component author cannot forget:
- * movement and drawing durations collapse, and any transition is limited to opacity.
- * Phase 8's transitions keep their opacity part and lose their movement automatically.
+ * opacity. The token layer does part of the reducing so a component author cannot forget:
+ * the durations shorten so anything that still animates is a quick fade, transitions are
+ * limited to opacity, and no animation may loop. Each of the six named transitions in
+ * motion.css redefines its own keyframes under the same query as opacity-only, so nothing
+ * moves, scales or draws; `packages/ui/test/motion.test.ts` parses both files for it.
  */
 @media (prefers-reduced-motion: reduce) {
   :root {
-    --d-enter: var(--d-base);
-    --d-draw: 0ms;
+    --d-micro: 1ms;
+    --d-base: 160ms;
+    --d-enter: 160ms;
+    --d-draw: 160ms;
   }
 
   *,
   *::before,
   *::after {
     transition-property: opacity !important;
-    animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
 }

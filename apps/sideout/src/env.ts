@@ -18,7 +18,9 @@ import { z } from 'zod';
  * the `log` SMS sender is refused, with no Stripe key configured registration refuses
  * rather than faking a donation (see `server/donations/provider.ts`), and every Purse
  * variable is required; outside production a missing secret key simply means the Purse
- * integration answers `purse_unavailable` until one is set.
+ * integration answers `purse_unavailable` until one is set. `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+ * is what the browser mounts Stripe's Payment Element with; it is public by design and
+ * optional, and the register screen says plainly when it is missing.
  */
 
 const postgresUrl = z
@@ -61,6 +63,7 @@ const schema = z.object({
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   STRIPE_SECRET_KEY: z.string().trim().min(1).optional(),
   STRIPE_WEBHOOK_SECRET: z.string().trim().min(1).optional(),
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().regex(/^pk_(test|live)_[A-Za-z0-9]+$/, 'must be a Stripe publishable key (pk_test_... or pk_live_...)').optional(),
   RESERVATION_TTL_MINUTES: z.coerce.number().int().min(1).max(24 * 60).default(DEFAULT_RESERVATION_TTL_MINUTES),
   AUTH_CODE_GLOBAL_CAP: z.coerce.number().int().min(1).max(1_000_000).default(DEFAULT_AUTH_CODE_GLOBAL_CAP),
   PURSE_API_URL: httpUrl.optional(),
@@ -104,6 +107,8 @@ export type Env = {
   /** Which donation provider is configured; `none` means registration refuses (production only). */
   donationProvider: DonationProviderSelection;
   stripe: { secretKey: string; webhookSecret: string } | undefined;
+  /** `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`: what the Payment Element mounts with; without it the register screen says the card form is unavailable. */
+  stripePublishableKey: string | undefined;
   /** `RESERVATION_TTL_MINUTES` in milliseconds: how long an unpaid registration holds a place. */
   reservationTtlMs: number;
   /** `AUTH_CODE_GLOBAL_CAP`: sign-in codes this instance sends per ten minutes across every number. */
@@ -173,6 +178,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     trustedProxyHops: raw.TRUSTED_PROXY_HOPS,
     donationProvider,
     stripe,
+    stripePublishableKey: raw.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
     reservationTtlMs: raw.RESERVATION_TTL_MINUTES * 60_000,
     authCodeGlobalCap: raw.AUTH_CODE_GLOBAL_CAP,
     purse,

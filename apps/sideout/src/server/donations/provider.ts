@@ -35,6 +35,8 @@ export type DonationProvider = {
   createPayment(request: PaymentRequest, options: { requestId: string }): Promise<PaymentCreated>;
   /** Cancel a payment that was never completed; a payment already taken is left alone (the caller refunds instead). */
   cancelPayment(providerRef: string, options: { requestId: string }): Promise<void>;
+  /** What the browser needs to resume a payment it started (a reload mid-checkout); null when nothing is needed or the payment is over. */
+  retrievePayment(providerRef: string, options: { requestId: string }): Promise<PaymentCreated>;
 };
 
 /** The provider answered with an error; the message is for the log, never the client. */
