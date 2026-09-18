@@ -77,7 +77,7 @@ test.describe('Player flow', () => {
       const frame = page.frameLocator('[data-testid="entry-slot"] iframe');
       await expect(frame.getByRole('button', { name: 'Confirm entry' })).toBeEnabled({ timeout: 30_000 });
       await frame.getByRole('button', { name: 'Confirm entry' }).click();
-      await expect(frame.getByText('You are in')).toBeVisible({ timeout: 30_000 });
+      // The frame reports the entry to the page, which reads the contest back from Purse; the frame may be gone by then.
       await expect(entryStep.getByTestId('entry-done')).toBeVisible({ timeout: 30_000 });
     }
     await expect(entryStep).toContainText('Entered');
