@@ -1,0 +1,1 @@
+ALTER TABLE "donations" ADD COLUMN "last_payment_error" text;

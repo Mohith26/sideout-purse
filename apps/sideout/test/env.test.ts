@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { EnvError, loadEnv } from '../src/env';
+import { DEVELOPMENT_SESSION_SECRET, EnvError, loadEnv } from '../src/env';
 
 const DEV_URL = 'postgres://sideout_app:secret@localhost:5432/sideout';
 const TEST_URL = 'postgres://sideout_app:secret@localhost:5432/sideout_test';
+const PRODUCTION = { NODE_ENV: 'production', SIDEOUT_DATABASE_URL: DEV_URL, SESSION_SECRET: 's'.repeat(32) };
 
 describe('env', () => {
   it('uses only the _TEST URL under NODE_ENV=test', () => {
@@ -19,5 +20,42 @@ describe('env', () => {
 
   it('rejects non-postgres URLs', () => {
     expect(() => loadEnv({ SIDEOUT_DATABASE_URL: 'https://example.com' })).toThrow(EnvError);
+  });
+
+  it('defaults the session secret and log SMS sender outside production, and refuses both in production', () => {
+    const dev = loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL });
+    expect(dev.sessionSecret).toBe(DEVELOPMENT_SESSION_SECRET);
+    expect(dev.smsProvider).toBe('log');
+    expect(dev.trustedProxyHops).toBe(0);
+    expect(() => loadEnv({ NODE_ENV: 'production', SIDEOUT_DATABASE_URL: DEV_URL })).toThrow(/SESSION_SECRET/);
+    expect(() => loadEnv({ ...PRODUCTION, SESSION_SECRET: 'short' })).toThrow(EnvError);
+    expect(() => loadEnv({ ...PRODUCTION, SMS_PROVIDER: 'log' })).toThrow(/SMS_PROVIDER=log/);
+    const production = loadEnv({ ...PRODUCTION, TRUSTED_PROXY_HOPS: '1' });
+    expect(production.smsProvider).toBe('none');
+    expect(production.trustedProxyHops).toBe(1);
+    expect(production.sessionSecret).toBe('s'.repeat(32));
+  });
+
+  it('reads the reservation TTL in minutes, defaulting to 30, and refuses nonsense', () => {
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).reservationTtlMs).toBe(30 * 60_000);
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, RESERVATION_TTL_MINUTES: '5' }).reservationTtlMs).toBe(5 * 60_000);
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, RESERVATION_TTL_MINUTES: '0' })).toThrow(EnvError);
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, RESERVATION_TTL_MINUTES: 'soon' })).toThrow(EnvError);
+  });
+
+  it('reads the sign-in code budget, defaulting to 600 per ten minutes, and refuses nonsense', () => {
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).authCodeGlobalCap).toBe(600);
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, AUTH_CODE_GLOBAL_CAP: '50' }).authCodeGlobalCap).toBe(50);
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, AUTH_CODE_GLOBAL_CAP: '0' })).toThrow(EnvError);
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, AUTH_CODE_GLOBAL_CAP: 'lots' })).toThrow(EnvError);
+  });
+
+  it('requires the two Stripe variables together and selects the provider accordingly', () => {
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).stripe).toBeUndefined();
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, STRIPE_WEBHOOK_SECRET: 'whsec' })).toThrow(/set together/);
+    const configured = loadEnv({ ...PRODUCTION, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: 'whsec_x' });
+    expect(configured.stripe).toEqual({ secretKey: 'sk_test_x', webhookSecret: 'whsec_x' });
+    expect(configured.donationProvider).toBe('stripe');
+    expect(loadEnv(PRODUCTION).donationProvider).toBe('none');
   });
 });

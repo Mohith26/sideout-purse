@@ -323,3 +323,279 @@ entry without it. `contest_participants.user_id` is a typed id with no foreign k
 public routes, `GET /contests/:id/preview` included, are phase 3's and mount on
 `previewSettlement` and `closeContest`, which already exercise the preview-hash mechanism
 end to end at the service level; phase 2 adds no HTTP surface for it.
+
+## Phase 6 decisions (Sideout domain)
+
+Two of these need the captain before the public deploy, one is a follow-up, and the rest record how phase 6
+answered questions the spec leaves to the builder.
+
+### SMS provider — needs the captain's choice before public deploy
+
+Phone sign-in (`POST /api/auth/request-code`, `POST /api/auth/verify`) sends its one-time
+code through the `SmsSender` seam in `apps/sideout/src/server/auth/sms.ts`. Two
+implementations exist: `log`, which writes the code to the structured log and is refused by
+the env loader in production, and `unavailable`, which is what production gets with no
+provider configured: request-code answers `sms_unavailable` (503) and issues no code. No real
+provider is wired. **Before the public deploy the captain chooses one (Twilio, Telnyx, ...)**
+and phase 9 adds the implementation behind the same interface plus its credentials to the
+Railway variables. Until then, production sign-in does not work by design rather than
+pretending to.
+
+### Stripe account — needs the captain's account before public deploy
+
+Donations go through `DonationProvider` (`apps/sideout/src/server/donations/`). The `stripe`
+implementation talks to Stripe's REST API with test-mode keys from `STRIPE_SECRET_KEY` and
+`STRIPE_WEBHOOK_SECRET`, one PaymentIntent per registration with the donation id as the
+idempotency key, and `POST /api/webhooks/stripe` verifies the signature over the raw body and
+applies events idempotently on their id. The `dev` implementation is selected automatically
+outside production when no key is set and marks a donation succeeded after a short
+clock-driven delay. In production with no key, registration refuses with
+`donation_provider_unavailable` (503). **The public deploy needs the captain's Stripe
+account**: its test-mode (then live-mode) keys and a webhook endpoint pointed at
+`/api/webhooks/stripe`. Tests never reach Stripe's network; the provider takes an injected
+`fetch` and the webhook tests use recorded fixtures.
+
+### Double elimination — follow-up, not built
+
+`double_elim` stays in the `tournament_format` enum, but the organizer API does not offer it:
+`createTournamentSchema` and `updateTournamentSchema` accept only `DRAWABLE_FORMATS`, so an
+event that the engine cannot draw can never be created, opened and paid into. The engine
+itself still refuses the value at draw time with `double_elim_unsupported` (409) and writes
+nothing (`assertDrawableFormat` in `apps/sideout/src/domain/draw.ts`), which is what any row
+that reaches it by another route gets. A losers bracket with its crossover rounds and
+grand-final reset is a separate piece of engine work with its own property tests; it is a
+follow-up after phase 8, at which point the schemas widen to the enum.
+
+### The `forming` team status
+
+The brief's team enum was `registered | checked_in | withdrawn`. A team exists before it is
+registered: the captain creates it and names a partner by phone, the partner joins, and only
+then does the captain register (make the donation). That gap needed a state, so `forming` was
+added ahead of `registered`. Only `registered` and `checked_in` teams count toward capacity,
+appear in public responses, or enter a draw. A donation that fails with no other live payment
+returns the team to `forming`; a full refund withdraws it.
+
+A captain who mistyped the partner's number, or whose partner never came, is not locked out:
+`POST /api/teams` supersedes the caller's own still-`forming` team in that tournament (its
+invite is revoked and it is withdrawn, both audited) and creates the new one. A team that has
+registered is final for that captain: a second team gets `already_on_team`.
+
+### Partial refunds, and refunds that arrive out of order
+
+Stripe sends `charge.refunded` for partial refunds too. The receiver reads `refunded` and
+`amount_refunded` from the charge: only `refunded: true` moves the donation to `refunded`. A
+partial refund leaves the donation `succeeded` and the team in place, and records the running
+total in `donations.refunded_cents`; the impact figures sum `amount_cents - refunded_cents`
+over succeeded donations, so a $5 goodwill refund lowers the total by $5 rather than removing
+the entry.
+
+Stripe does not order deliveries, and a refund proves a charge existed, so `refunded` is
+reachable from `pending` and `failed` as well as from `succeeded`, and it is terminal: a
+`payment_intent.succeeded` that lands after the refund is recorded as
+`donation.succeeded_after_refund` in the audit log and changes nothing. A full refund
+withdraws the team on every path, unless another succeeded donation still pays for the same
+entry (the duplicate-payment case below), in which case the team keeps its place.
+
+### Registration reserves the spot, the provider confirms it
+
+`POST /api/tournaments/:slug/register` runs two transactions: the first validates and marks
+the team `registered` with a `pending` donation, the second records the provider's
+reference. No database lock is held across the provider's network call. A provider failure
+marks the donation `failed`, which releases the spot, and the captain can register again. A
+declined attempt (`payment_intent.payment_failed`) is not a failure: Stripe keeps the intent
+open for a retry, so the donation stays `pending`, the reservation keeps holding the place
+until it lapses, and the decline is recorded as a `donation.payment_failed` audit row and in
+`donations.last_payment_error` (shown on `/api/me` while the payment is pending). Only
+`payment_intent.canceled` maps to `failed`. The Purse contest entry is not part of this route yet: `PurseContestEntry` in
+`apps/sideout/src/server/registration.ts` is the documented hook phase 7 fills, its default
+does nothing, and the response says `purseEntry: { status: 'not_wired' }`.
+
+### Unpaid reservations lapse
+
+A `pending` donation is a reservation, not a place. It holds the place for
+`RESERVATION_TTL_MINUTES` (env, default 30; the response carries `reservationExpiresAt`),
+judged lazily whenever capacity is read (`apps/sideout/src/server/field.ts`); there is no
+background job and the donation row is never touched by the clock, so a late Stripe event is
+still recognised. Capacity, the public team list and the "every team is in the draw" guard
+before `live` count teams whose donation succeeded (or whose entry was free) plus reservations
+that have not lapsed; a draw includes only teams whose donation succeeded. Once a reservation
+has lapsed the captain may register again for a fresh payment.
+
+A payment that succeeds late is honoured only if there is still a place for the team. There
+is none when the event is full (`event_full`), when the field is already fixed because the
+tournament has gone live or beyond (`registration_closed`), when the team has already
+withdrawn (`team_withdrawn`), or when another succeeded donation already pays for the same
+entry (`duplicate_payment`). In every such case the donation stays `succeeded` (the money was
+taken), the team is withdrawn or left as it was, and an audit row `donation.refund_due` names
+the reason, amount, currency and provider reference the organizer must refund; the webhook
+response and the dev provider's audit row carry `registration` and `refundDue`, never a silent
+success. Refunding through Stripe then flows back through `charge.refunded` as usual.
+
+Once one payment pays for an entry, the team's other unfinished payments are cancelled at the
+provider (`DonationProvider.cancelPayment`; Stripe cancels the PaymentIntent, the dev provider
+marks its row `failed` at once, since it has no webhook to do so later): when a captain
+registers again after a lapse and when a replacement payment succeeds through the webhook. It is best effort and runs outside any transaction; a
+cancellation the provider refuses is logged and the local row is left for the provider's own
+`payment_intent.canceled` event to settle. `/api/me` reports each team's and donation's
+`holdsPlace` and `reservationExpiresAt` under the same rule, so a captain can see that a place
+was released without attempting to register.
+
+### Reopening registration discards the draw; going live needs everyone drawn
+
+`registration_closed → registration_open` deletes the pools, pool memberships and matches of
+any draw (nothing can have been played while registration was closed; the transition refuses
+if anything has) and clears `draw_config`, with a `tournament.draw_discarded` audit row. The
+`live` transition additionally requires the draw to cover exactly the teams holding a place,
+and says which remedy applies: `teams_not_drawn` lists confirmed teams the draw missed
+(redraw), `teams_withdrawn_from_draw` lists drawn teams that no longer hold a place, such as an
+entry refunded after the draw (redraw), and `teams_unpaid` lists teams whose reservation has
+not lapsed but whose payment has not landed, each with its `reservationExpiresAt` (wait for the
+payment and redraw, or for the lapse). A team that paid after the draw means a redraw, not a
+silent exclusion, and a team that left after the draw means a redraw, not a walkover.
+
+Forfeits are recorded only while the tournament is `live` (`tournament_not_live` otherwise):
+before that the draw stays replaceable, and a team that pulls out is handled by a redraw rather
+than by a result.
+
+### Pools never hold a single team
+
+A pool size of 2 with an odd field would leave one team alone in its pool, playing nothing and
+topping its standings by default. The draw refuses any configuration whose balanced pools would
+hold fewer than two teams (`invalid_pool_size`), naming a pool size that works.
+
+### The advancement rule is checked when the pools are drawn
+
+A pool-to-bracket event cannot redraw its pools once it is live, and the bracket stage is
+only reachable while live, so an advancement rule the pools cannot satisfy would leave the
+event with no exit but `cancelled`. The pools stage (preview included) therefore checks the
+rule against the partition it just produced before anything is persisted: every wildcard
+must have a team left to take (`advancement_exceeds_field`), and what advances must fit a
+bracket of two to sixty-four (`too_few_teams`, `too_many_teams`). Each refusal names the
+nearest rule that fits (`checkAdvancement` in `apps/sideout/src/domain/draw.ts`; the bracket
+stage runs the same check, which then cannot fail). Pinned by "refuses at the pools stage,
+preview included, an advancement rule the bracket could not draw" in
+`apps/sideout/test/api/draw.test.ts`.
+
+### Ties at a cut line are drawn by lot
+
+The standings tiebreak order (`apps/sideout/src/domain/standings.ts`: wins, head-to-head, set
+ratio, point differential, points for) leaves teams that are level on all of it sharing a
+rank, and the id order that follows only fixes how they are displayed. When such a tie
+straddles a place that advances, the last of a pool's top `perPool` or the last wildcard across
+pools, the classic rock-paper-scissors pool, the draw breaks it by a drawing of lots: the tied
+teams are shuffled with the draw's `Rng` seeded from the persisted `rngSeed`
+(`resolveCutLineTies` in `apps/sideout/src/domain/draw.ts`), so the outcome is reproducible
+and never falls to the team id. Once every pool match is complete (the same precondition the
+bracket draw enforces), the public standings apply the same lots under the same seed, so the
+rows a lot ordered show distinct ranks and `tiebreak: 'lot'` and the standings show exactly
+what the bracket will take; while pool play is still going, level teams simply share a rank,
+since a lot drawn over an unfinished pool would change with every result. The bracket draw
+result and its `tournament.drawn` audit row record every lot with the tied teams and the order
+drawn. Ties that touch no cut line stay shared.
+
+### The bracket of a pool-to-bracket event takes no configuration
+
+Its courts, best-of, rng seed and advancement rule were fixed at the pools stage and its
+seeding comes from the standings, so `POST .../draw` with `stage: 'bracket'` on such an event
+accepts nothing but `stage`: any other field is a validation error rather than a knob that
+is silently ignored. The bracket of a single elimination, which is that event's first stage,
+takes the first-stage knobs (courts, rng seed, best-of, entry seeds); pools-stage-only knobs
+(`poolSize`, `advancement`, `bestOf.pool`) are validation errors at any bracket stage.
+
+### The public detail keeps every team the draw refers to
+
+`GET /api/tournaments/:slug` lists in `teams[]` every team holding a place plus every team the
+persisted draw still refers to (a pool member, a match side or a winner), each with its
+`status`, so a team withdrawn after the event went live can still be rendered in its pool,
+its matches and its opponents' results without a second request. `teamCount` remains the
+counted set.
+
+### Default display names never derive from the phone
+
+A first sign-in without a name gets `Player` plus the last four characters of the opaque user
+id, never any part of the phone number, since display names are public (rosters, match views,
+donors). `/api/me` reports `displayNameIsDefault` so the profile screen can prompt for a
+real one.
+
+### Moving `startsAt` moves the schedule
+
+Every match's `scheduled_at` is derived from the tournament's `startsAt` at draw time. When
+`startsAt` changes and matches exist, every scheduled match shifts by the same delta in the
+same transaction (`matchesRescheduled` is recorded on the `tournament.updated` audit row);
+once any match has started, the change is refused with `schedule_in_play`.
+
+### Settlement needs the bracket
+
+For `pool_to_bracket` and `single_elim`, `awaiting_settlement` requires the bracket to have
+been drawn (and, like every format, every match complete); a tournament whose pools finished
+but whose bracket was never drawn is refused with `bracket_not_drawn`, since there is no
+champion to settle. Round robin has no bracket and settles on its pool.
+
+### Cents are decimal strings on the wire
+
+Every `*Cents` field in Sideout's API is a decimal string (`"5000"`), in both directions: a
+request body that sends a JSON number is refused with a validation error rather than parsed
+through a double. Inside the server every amount is a `bigint`; the JSON encoder
+(`server/http/respond.ts`) renders any stray `bigint` as a string so no response can fail on
+one. This keeps floating point out of the money path on both sides of the boundary.
+
+### The dev-only login route is absent from production builds
+
+`POST /api/dev/login` signs in as a seeded user without a code. Its file is
+`route.dev.ts`, and `next.config.ts` lists the `dev.ts` page extension only when
+`NODE_ENV !== 'production'`, so a production build has no such route rather than a disabled
+one. `test/auth/dev-login.test.ts` executes `pageExtensionsFor` and proves that half; the
+file naming is not asserted from the source tree, because a listing of `src/app/api` proves
+nothing about what Next builds. The proof of runtime behaviour, a check that the production
+build's route manifest has no `/api/dev/login`, is phase 9's, alongside the deploy it guards.
+
+### Client address behind proxies
+
+Route handlers never see the socket. Next's server sets `X-Forwarded-For` from the socket
+when the header is absent; each trusted proxy appends the address it saw. `TRUSTED_PROXY_HOPS`
+says how many entries to count back (Railway: 1). With no proxy the last entry is used, which
+a direct client could supply themselves, so the per-address limit is backed by a per-phone
+limit and a global limit in `server/context.ts`.
+
+### Sign-in codes: any live code verifies, and the SMS budget is a variable
+
+Requesting a code is unauthenticated, so a stranger who knows a number can ask for codes in
+its name, and `POST /api/auth/verify` is unauthenticated by nature. What is guaranteed:
+
+- A new request never touches the codes already out for a number. Every unexpired,
+  unconsumed code verifies (the set is bounded by the ten-minute expiry, not by any
+  limiter, so a restart or a second instance changes nothing), and a successful sign-in
+  consumes every code out for the number.
+- `request-code` returns the code's id and `verify` names it, so wrong guesses count against
+  that one code (five, then `code_locked`). A stranger holds only the ids of the codes they
+  asked for, so their guesses can lock only those; the owner's own code stays usable.
+- Verify attempts are limited to five per client address per ten minutes, and a code request
+  is charged to a cap only after every cap (phone, address, instance) has allowed it, so a
+  refused request never spends the number's window or the SMS budget.
+
+The contract this puts on the sign-in screen (phase 8), confirmed: `verify` checks only the
+code whose id it names, so a screen that lets the player request again must keep the latest
+`codeId` and tell them to use the most recent message; a code from an earlier message is live
+but answers only to its own id, and a guess against the wrong id costs one of that code's
+five. Outside production the `request-code` response echoes the code together with a `hint`
+that states this. The verify limit is a separate counter from the request limit, sharing the
+same five-per-address setting, also confirmed: one sign-in is one request and one verify, and
+sharing a single counter would have halved the sign-ins possible behind one address.
+
+What a stranger can still do is spend the number's three requests per ten minutes, which the
+owner sees as `too_many_requests` when asking for another code; the code they already have
+keeps working.
+
+The global cap is the instance's SMS budget and lives in `AUTH_CODE_GLOBAL_CAP` (default 600
+codes per ten minutes, so 3,600 messages an hour at most: roughly a hundred dollars an hour at
+a few cents a message, and more for international destinations). Lower it if that is more
+than the SMS account should be able to spend in the worst hour once phase 9 wires the
+provider; the per-address and per-phone caps are fixed in code.
+
+### Dev donations settle when their status is read
+
+The `dev` provider has no webhook. Instead, the endpoints that report donation status
+(`/api/tournaments/:slug/impact`, `/api/me`) first settle any pending dev donation older than
+`DEV_SETTLE_DELAY_MS` as of the request's clock. This is the same "reconcile against the
+provider before reporting" step a production deploy performs against Stripe's records, and it
+never runs in production because the dev provider is never selected there.

@@ -27,12 +27,25 @@ export const ID_PREFIXES = {
   // Purse ledger and plumbing (system spec 4.1, 4.2)
   journalEntry: 'je',
   journalLine: 'jl',
-  audit: 'aud',
+  audit: 'aud', // both services' audit logs: Sideout's `audit_log` mints `aud_` too
   // Purse contests (system spec 4.1). A participant row is the spec's "entry" (`ent`, above).
   contestScore: 'sco',
   contestResult: 'res',
-  // Sideout (system spec 5.1)
+  // Sideout (system spec 5.1). Sideout's local account is `sou`, never `usr`: the two
+  // identities are linked by an opaque external id (decision D8), not by sharing a prefix.
   charity: 'chr',
+  sideoutUser: 'sou',
+  sponsor: 'spn',
+  donation: 'don',
+  donationProviderEvent: 'dpe',
+  tournament: 'trn',
+  team: 'tm',
+  teamMember: 'tmm',
+  pool: 'pol',
+  poolTeam: 'plt',
+  match: 'mch',
+  set: 'set',
+  authCode: 'otp',
 } as const;
 
 export type IdEntity = keyof typeof ID_PREFIXES;

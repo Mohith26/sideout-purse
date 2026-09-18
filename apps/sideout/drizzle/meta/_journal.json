@@ -8,6 +8,27 @@
       "when": 1789685250030,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789693235891,
+      "tag": "0001_sideout_domain",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789697550597,
+      "tag": "0002_donations_refunded_cents",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789702771243,
+      "tag": "0003_donations_last_payment_error",
+      "breakpoints": true
     }
   ]
 }

@@ -17,7 +17,9 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `test/setup-env.ts` falls back to `db:setup`'s default URLs (CI's or a `.env`'s values
   win). A compose volume from before phase 1 lacks `purse_migrator`;
   `pnpm db:setup --admin-url ...` upgrades it in place.
-- `pnpm dev` starts Purse on :4000 and Sideout on :3000; both expose `/health`.
+- `pnpm dev` starts Purse on :4000 and Sideout on :3000; both expose `/health`. Sideout's
+  seeded events are under `/api/tournaments`; `POST /api/dev/login` with a seeded phone
+  (`+14155550100` is an organizer) gives a session outside production.
 - CI also migrates and seeds Purse's `purse` database and runs
   `pnpm --filter @purse/api reconcile`; a failing invariant fails the build.
 
@@ -89,6 +91,31 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - Tokens live only in `packages/ui/src/styles/tokens.css`; the Tailwind mapping is
   `theme.css`, primitives are plain CSS in `components.css`. The contrast test parses
   `tokens.css`, so a colour change that fails AA fails the build.
+
+## Sideout conventions (apps/sideout)
+
+- Layers: `src/domain/*` is pure (inject `Rng` and clocks; no db, no network); `src/server/*`
+  owns transactions, audit rows and domain calls; `src/app/api/**/route.ts` only parses
+  (Zod), calls a service and renders the `{ data } | { error }` envelope through
+  `server/http/respond.ts`. Throw `failure.<type>(code, message)` from services; never build
+  a response there. Cents are `bigint` in the server and decimal strings on the wire.
+- Status changes go through `transitionTournament` / `forfeitMatch` (validated by
+  `domain/state.ts`) and write `audit_log` in the same transaction. `final` and `disputed`
+  are phase 7's consensus (system actor); no route sets them.
+- Who holds a place is `server/field.ts` (confirmed vs. an unlapsed reservation, judged
+  against a `ReservationClock`); capacity, public team lists, the live guard and the draw
+  go through it rather than filtering `teams.status` by hand.
+- Session: signed HttpOnly SameSite=Lax cookie (`server/auth/session.ts`); `requireUser` /
+  `requireOrganizer` in handlers. `/api/admin/*` is organizer-only. `/api/dev/login` exists
+  only outside production (`route.dev.ts` + `pageExtensions`).
+- Seams: `SmsSender` (`server/auth/sms.ts`) and `DonationProvider`
+  (`server/donations/provider.ts`); `env.ts` selects the implementation and refuses
+  `log`/`dev` in production. Donations never touch anything Purse-shaped; public responses go
+  through `server/public-shape.ts`, which lists fields by hand and omits every `purse_*`.
+- Seed: `src/db/seed/build.ts` is pure and uses the draw engine and scoreline rules;
+  `write.ts` upserts by id. `pnpm db:seed` at the root seeds both apps.
+- Route tests call handlers directly with `Request` objects (`test/helpers.ts`), truncate
+  the test database per file, and override seams with `resetAppContext({...})`.
 
 ## Sharp edges
 

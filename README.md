@@ -40,10 +40,11 @@ test/               repository-level tests: the boundary lint rule, env isolatio
 
 Each app owns its Drizzle config and migration folder (`apps/*/drizzle`). Migrations are
 forward-only and applied by `pnpm db:migrate`, which runs each app's migrator in its own
-process. Reference rows never live in migration history: `pnpm db:seed` upserts them (the
-Sideout tenant in Purse, its platform ledger accounts, and three seed contests: a draft, an
-open one with entrants holding promo points, and a settled one whose results reconcile)
-and can be re-run against any environment.
+process. Reference rows never live in migration history: `pnpm db:seed` upserts them in
+both apps (in Purse, the Sideout tenant, its platform ledger accounts, and three seed
+contests: a draft, an open one with entrants holding promo points, and a settled one whose
+results reconcile; in Sideout, the demo events described under "Quickstart") and can be
+re-run against any environment.
 
 Purse connects as two roles. `purse_migrator` owns its databases and runs migrations and
 seeds; `purse_app`, the API's runtime role, owns nothing and cannot `UPDATE` or `DELETE`
@@ -66,7 +67,8 @@ pnpm db:setup               # or: provision an existing Postgres (defaults to lo
                             #     and write apps/purse/.env and apps/sideout/.env with local defaults
 
 pnpm db:migrate             # applies both apps' migrations, each in its own process
-pnpm db:seed                # upserts the Sideout tenant, its platform accounts and the seed contests in Purse; safe to re-run
+pnpm db:seed                # Purse: the Sideout tenant, its platform accounts and the seed contests.
+                            # Sideout: the demo events. Both safe to re-run
 pnpm dev                    # Purse on :4000, Sideout on :3000
 ```
 
@@ -75,12 +77,49 @@ Then:
 ```sh
 curl localhost:4000/health   # { data: { sha, migrations, rulesetVersion, sdkVersion } }
 curl localhost:3000/health   # { data: { sha, migrations, purseSdkVersion } }
-open http://localhost:3000   # the Sideout shell: "No events yet", plus a beneficiary count read from its database
+curl localhost:3000/api/tournaments                              # the three seeded events
+curl localhost:3000/api/tournaments/sandbar-classic-2026         # live: pools, standings, bracket, sponsors
+curl localhost:3000/api/tournaments/sandbar-classic-2026/impact  # raised vs goal, from donation rows
+open http://localhost:3000   # the Sideout shell
 pnpm --filter @purse/api reconcile   # the seven ledger invariants against the dev database; exits 1 on any failure
 ```
 
 `GET /internal/reconcile` returns the same report over HTTP behind `INTERNAL_API_TOKEN`
 (`Authorization: Bearer ...`); with no token configured it is closed outside tests.
+
+`pnpm db:seed` gives Sideout a charity, two organizers, 48 players, three sponsors and one
+tournament in each of `registration_open`, `live` (24 teams, six pools played out, a
+16-bracket with one bye and the quarterfinals in progress) and `settled`. The pools and
+brackets are produced by the same draw engine the organizer endpoint uses and every set is
+checked by the scoreline rules, so nothing on screen is typed. Re-running the seed is a
+no-op; `SEED_ANCHOR=<iso>` pins the live event's start.
+
+## Sideout API (phase 6)
+
+Every response is `{ data }` or `{ error: { type, code, message, detail? } }`; cents are
+decimal strings. Public reads omit every Purse identifier and never show a draft.
+
+```
+GET   /api/tournaments[?status=]              GET  /api/tournaments/:slug (pools, bracket, standings, sponsors)
+GET   /api/tournaments/:slug/standings         GET  /api/tournaments/:slug/impact
+GET   /api/matches/:id                         GET  /api/me                          (session)
+POST  /api/auth/request-code  /api/auth/verify  /api/auth/logout
+POST  /api/teams (invite partner by phone)     POST /api/teams/:id/join              (session)
+POST  /api/tournaments/:slug/register          (session, captain; takes the entry donation)
+POST  /api/admin/tournaments                   PATCH /api/admin/tournaments/:id       (organizer; fields + status)
+POST  /api/admin/tournaments/:id/draw[?preview=1]   POST /api/admin/matches/:id/forfeit
+POST  /api/webhooks/stripe                     POST /api/dev/login                   (outside production only)
+```
+
+Sideout's environment, beyond the database URLs (`apps/sideout/.env.example`):
+`SESSION_SECRET` (32+ chars, required in production), `SMS_PROVIDER=log` (outside production
+only; production without a provider refuses sign-in), `TRUSTED_PROXY_HOPS` (Railway: 1),
+`STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (together or not at all; unset outside
+production selects the dev donation provider, unset in production refuses registration), and
+`RESERVATION_TTL_MINUTES` (default 30: how long a registration whose donation is still
+pending holds its place), and `AUTH_CODE_GLOBAL_CAP` (default 600: sign-in codes one instance
+sends per ten minutes, the SMS budget). The SMS provider and the Stripe account are the
+captain's calls before public deploy ([`docs/decisions.md`](docs/decisions.md)).
 
 Send `X-Request-Id: anything-you-like` to either and it comes back on the response and in
 that service's JSON log line, which is how a Sideout request will be traced into the Purse
