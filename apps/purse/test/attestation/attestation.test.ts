@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { attestationBytes, ES256_KEY, exportPublicJwk, generateAttestationKeyPair, jwkThumbprint, signAttestation, type AttestationPayload, type EcPublicJwk, type ScoreAttestationInput } from '@purse/types';
 import { newId } from '@repo/ids';
@@ -75,9 +75,9 @@ describe('devices', () => {
     const other = await registerDevice(runtime.db, { tenantId: arena.tenantId, userId: user(1), publicKey: publicJwk, actor: TENANT_ACTOR });
     expect(other.created).toBe(true);
     expect(other.device.keyId).toBe(vectors.keyId);
-    const audits = await runtime.db.select().from(auditLog).where(eq(auditLog.action, 'user.device.registered'));
+    const audits = await runtime.db.select().from(auditLog).where(eq(auditLog.action, 'user.device.registered')).orderBy(asc(auditLog.id));
     expect(audits).toHaveLength(2);
-    expect(audits[0]?.requestId).toBe('req-dev-1');
+    expect(audits.map((row) => row.requestId)).toEqual(['req-dev-1', null]);
     expect((await listDevices(runtime.db, arena.tenantId, user(0))).map((d) => d.id)).toEqual([first.device.id]);
   });
 
