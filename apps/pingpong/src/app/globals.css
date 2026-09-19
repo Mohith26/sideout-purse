@@ -1,0 +1,18 @@
+@import 'tailwindcss';
+@import '@sideout/ui/styles.css';
+
+/* The ladder's few own rules: the table row that is you, and the Purse frame slot. */
+.pp-you {
+  background: color-mix(in oklab, var(--color-surf, #1b1f24) 55%, transparent);
+}
+.pp-slot {
+  min-height: 240px;
+  border: 1px solid var(--color-hairline, #2a2e34);
+  border-radius: var(--radius-md, 10px);
+  overflow: hidden;
+}
+.pp-slot iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+}

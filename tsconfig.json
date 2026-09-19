@@ -33,6 +33,9 @@
       "path": "apps/sideout"
     },
     {
+      "path": "apps/pingpong"
+    },
+    {
       "path": "scripts"
     },
     {

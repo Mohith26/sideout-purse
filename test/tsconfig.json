@@ -1,4 +1,4 @@
 {
   "extends": "../packages/config/tsconfig/node-service.json",
-  "include": ["*.ts", "../apps/purse/src/env.ts", "../apps/sideout/src/env.ts", "../apps/sideout/src/lib/switch.ts", "../apps/sideout/src/globals.d.ts"]
+  "include": ["*.ts", "../apps/purse/src/env.ts", "../apps/sideout/src/env.ts", "../apps/sideout/src/lib/switch.ts", "../apps/sideout/src/globals.d.ts", "../apps/pingpong/src/env.ts"]
 }

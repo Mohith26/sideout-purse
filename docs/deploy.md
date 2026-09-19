@@ -246,6 +246,12 @@ demo reset first). Last run against the deployment: both flows passed at the com
 - **Custom domains, a CDN, or more than one replica of anything** (the rate limiter and the
   webhook dispatcher are in-process).
 
+## The fourth service
+
+The second tenant (`apps/pingpong`, stretch item 4) has its own image, entrypoint, health
+check and variables, following the pattern above; `docs/second-tenant.md` lists them and
+the `PURSE_PINGPONG_ORIGINS` variable the `purse` service needs for it.
+
 ## Running it anywhere else
 
 Any host that runs three containers and a Postgres will do: build the three images from the

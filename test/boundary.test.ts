@@ -5,10 +5,12 @@ import tseslint from 'typescript-eslint';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 /**
- * Acceptance criterion 12: Sideout imports nothing from Purse but `@purse/sdk` and
- * `@purse/types`, enforced by lint. The fixtures below are linted as if they lived inside
- * each app (the file path decides which boundary config applies) and the specific rule
- * that must fire is asserted by id, so a loosened config cannot pass by accident.
+ * Acceptance criterion 12: a tenant imports nothing from Purse but `@purse/sdk` and
+ * `@purse/types`, enforced by lint, and since stretch item 4 the same rule protects two
+ * consumers (Sideout and the ping-pong ladder). The fixtures below are linted as if they
+ * lived inside each app (the file path decides which boundary config applies) and the
+ * specific rule that must fire is asserted by id, so a loosened config cannot pass by
+ * accident.
  */
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -82,6 +84,45 @@ describe('Sideout → Purse', () => {
   });
 });
 
+describe('Ping-pong → Purse (the second consumer, under the same rule)', () => {
+  const file = 'apps/pingpong/src/boundary-fixture.ts';
+
+  it('lets only PurseFrame mount the SDK in the browser; server modules may use its helpers', async () => {
+    const component = await lint('apps/pingpong/src/components/x-fixture.ts', "import { Purse } from '@purse/sdk';\nPurse;\n");
+    expect(ruleIds(component)).toContain('no-restricted-imports');
+    expect(component.find((v) => v.ruleId === 'no-restricted-imports')?.message).toMatch(/PurseFrame/);
+    const gate = await lint('apps/pingpong/src/components/PurseFrame-fixture.ts', "import { Purse } from '@purse/sdk';\nPurse;\n");
+    expect(ruleIds(gate)).toContain('no-restricted-imports');
+    const server = await lint('apps/pingpong/src/server/x-fixture.ts', "import { verifyWebhook } from '@purse/sdk';\nverifyWebhook;\n");
+    expect(ruleIds(server)).not.toContain('no-restricted-imports');
+  });
+
+  it('rejects the API by package and by resolved path, and the packages’ internals', async () => {
+    const byPackage = await lint(file, "import { env } from '@purse/api';\nenv;\n");
+    expect(ruleIds(byPackage)).toContain('no-restricted-imports');
+    expect(byPackage.find((v) => v.ruleId === 'no-restricted-imports')?.message).toMatch(/Ping-pong may import from Purse only through/);
+    const byPath = await lint(file, "import { createApp } from '../../purse/src/app';\ncreateApp;\n");
+    expect(ruleIds(byPath)).toContain('import-x/no-restricted-paths');
+    const deep = await lint(file, "import { SDK_VERSION } from '@purse/sdk/src/version';\nSDK_VERSION;\n");
+    expect(ruleIds(deep)).toContain('no-restricted-imports');
+    const relative = await lint(file, "import { SDK_VERSION } from '../../../packages/purse-sdk/src/version';\nSDK_VERSION;\n");
+    expect(ruleIds(relative)).toContain('import-x/no-restricted-paths');
+  });
+
+  it('rejects the other tenant’s code: products know each other only through Purse', async () => {
+    const sideout = await lint(file, "import { middleware } from '../../sideout/src/middleware';\nmiddleware;\n");
+    expect(ruleIds(sideout)).toContain('import-x/no-restricted-paths');
+    expect(sideout.find((v) => v.ruleId === 'import-x/no-restricted-paths')?.message).toMatch(/another tenant/);
+    const other = await lint('apps/sideout/src/boundary-fixture.ts', "import { x } from '../../pingpong/src/env';\nx;\n");
+    expect(ruleIds(other)).toContain('import-x/no-restricted-paths');
+  });
+
+  it('allows the public entries of @purse/sdk and @purse/types and the shared design system', async () => {
+    const violations = await lint(file, "import { SDK_VERSION } from '@purse/sdk';\nimport { REQUEST_ID_HEADER } from '@purse/types';\nimport { Button } from '@sideout/ui';\nSDK_VERSION;\nREQUEST_ID_HEADER;\nButton;\n");
+    expect(ruleIds(violations).filter((id) => id === 'no-restricted-imports' || id === 'import-x/no-restricted-paths')).toEqual([]);
+  });
+});
+
 describe('Purse → Sideout', () => {
   const file = 'apps/purse/src/boundary-fixture.ts';
 
@@ -100,6 +141,17 @@ describe('Purse → Sideout', () => {
     const violations = await lint(file, "import { middleware } from '../../sideout/src/middleware';\nmiddleware;\n");
     expect(ruleIds(violations)).toContain('import-x/no-restricted-paths');
     expect(violations.find((v) => v.ruleId === 'import-x/no-restricted-paths')?.message).toMatch(/Purse must not import from Sideout/);
+  });
+
+  it('rejects the second tenant the same way, by package and by resolved path', async () => {
+    const byPackage = await lint(file, "import { x } from '@pingpong/web';\nx;\n");
+    expect(ruleIds(byPackage)).toContain('no-restricted-imports');
+    const byPath = await lint(file, "import { loadEnv } from '../../pingpong/src/env';\nloadEnv;\n");
+    expect(ruleIds(byPath)).toContain('import-x/no-restricted-paths');
+    for (const app of ['apps/purse-embed', 'apps/purse-console']) {
+      const embed = await lint(`${app}/src/boundary-fixture.ts`, "import { loadEnv } from '../../pingpong/src/env';\nloadEnv;\n");
+      expect(ruleIds(embed), app).toContain('import-x/no-restricted-paths');
+    }
   });
 
   it('allows Purse to import its own shared packages', async () => {

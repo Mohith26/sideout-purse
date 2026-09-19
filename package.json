@@ -18,9 +18,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:setup": "tsx scripts/db-setup.ts",
-    "db:migrate": "pnpm --filter @purse/api run db:migrate && pnpm --filter @sideout/web run db:migrate",
-    "db:seed": "pnpm --filter @purse/api run db:seed && pnpm --filter @sideout/web run db:seed",
-    "db:generate": "pnpm --filter @purse/api run db:generate && pnpm --filter @sideout/web run db:generate",
+    "db:migrate": "pnpm --filter @purse/api run db:migrate && pnpm --filter @sideout/web run db:migrate && pnpm --filter @pingpong/web run db:migrate",
+    "db:seed": "pnpm --filter @purse/api run db:seed && pnpm --filter @sideout/web run db:seed && pnpm --filter @pingpong/web run db:seed",
+    "db:generate": "pnpm --filter @purse/api run db:generate && pnpm --filter @sideout/web run db:generate && pnpm --filter @pingpong/web run db:generate",
     "clean": "pnpm --recursive run clean && rm -rf node_modules/.cache"
   },
   "devDependencies": {

@@ -4,7 +4,7 @@ import type { Id } from '@repo/ids';
 import { createLogger, errorFields } from '@repo/logger';
 
 import { connect } from '../src/db/client';
-import { seedApiKeys, seedContests, seedOperatorAdmin, seedPlatformAccounts, seedRuleset, seedSideoutTenant, seedTenantOrigins, seedUsers } from '../src/db/seed';
+import { originsFromEnv, PINGPONG_TENANT, seedApiKeys, seedContests, seedOperatorAdmin, seedPlatformAccounts, seedRuleset, seedSecondTenant, seedSideoutTenant, seedTenantOrigins, seedUsers, SIDEOUT_TENANT } from '../src/db/seed';
 import { env, requireMigratorUrl } from '../src/env';
 
 /**
@@ -12,7 +12,9 @@ import { env, requireMigratorUrl } from '../src/env';
  * exits non-zero on any failure so a deploy step never continues with the tenant, its
  * platform accounts, the active ruleset or its users missing. The seed contests (a draft,
  * an open one with entrants, a settled one with results) go through the same services the
- * API uses and reconcile clean; CI runs `reconcile` right after this.
+ * API uses and reconcile clean; CI runs `reconcile` right after this. The second tenant
+ * (the ping-pong ladder, docs/second-tenant.md) gets its row, platform accounts, keys and
+ * origins the same way; `--print-keys` prints both tenants' keys, each labelled.
  *
  *   pnpm --filter @purse/api db:seed -- --print-keys     print the plaintext of any API key
  *                                                        this run created (the only time it
@@ -88,15 +90,25 @@ try {
     logger.info('api keys were created; rerun with --print-keys --rotate-keys to obtain plaintexts', { created: minted.map((each) => each.key.label) });
   }
 
-  const origins = await seedTenantOrigins(
-    database.db,
-    tenantId,
-    (process.env['PURSE_TENANT_ORIGINS'] ?? '')
-      .split(',')
-      .map((each) => each.trim())
-      .filter((each) => each !== ''),
-  );
+  const origins = await seedTenantOrigins(database.db, tenantId, originsFromEnv(SIDEOUT_TENANT));
   logger.info('tenant origins present', { tenant: tenant.id, created: origins.created, origins: origins.origins });
+
+  const second = await seedSecondTenant(database.db, { rotateKeys: args['rotate-keys'], extraOrigins: originsFromEnv(PINGPONG_TENANT) });
+  logger.info(second.created ? 'second tenant created' : 'second tenant present', {
+    id: second.tenant.id,
+    name: second.tenant.name,
+    platformAccounts: second.platform.accounts.length,
+    keys: second.keys.keys.map((each) => `${each.key.label ?? each.key.id}=${each.key.keyPrefix}...`),
+    origins: second.origins.origins,
+  });
+  for (const each of second.keys.keys.filter((each) => each.plaintext !== null)) {
+    if (args['print-keys']) {
+      // As above: the one time a plaintext is written out, and only when asked for.
+      logger.info('api key plaintext', { tenant: second.tenant.id, label: each.key.label, kind: each.key.kind, environment: each.key.environment, scopes: each.key.scopes, key: each.plaintext });
+    } else {
+      logger.info('second tenant api key was created; rerun with --print-keys --rotate-keys to obtain plaintexts', { label: each.key.label });
+    }
+  }
 
   const seeded = await seedContests(database.db, tenantId);
   logger.info('seed contests present', {

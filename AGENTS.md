@@ -335,6 +335,17 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `PURSE_*` so the rest of the suite keeps to the in-memory Purse. CI does exactly this
   (`.github/workflows/ci.yml`), then seeds Sideout against the same Purse and reconciles.
 
+## The second tenant (apps/pingpong)
+
+- `apps/pingpong` (`@pingpong/web`, :3100) is stretch item 4: an office ping-pong ladder on
+  the same Purse, one season per contest. `docs/second-tenant.md` is the map (rules in
+  `src/domain/ladder.ts`, services in `src/server/`, its own `src/purse/` client and
+  `purse_calls`, `PurseFrame.tsx` the one SDK import); `docs/decisions.md` ("Stretch: second
+  tenant") is what it proved and exposed. Its database is `pingpong` (`pingpong_app`; `pnpm
+  db:setup`), its Purse tenant is seeded by `seedSecondTenant` with `seed:pingpong:*` keys
+  and `PURSE_PINGPONG_ORIGINS`, and the boundary rule is now `tenantBoundary` over
+  `TENANTS` in `packages/config/eslint/boundary.js`: a new tenant is a row there.
+
 ## Sharp edges
 
 - tsconfig `extends` must be relative paths (not `@repo/config/...`): Vite and the import

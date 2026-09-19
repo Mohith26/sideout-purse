@@ -69,6 +69,13 @@ export const ID_PREFIXES = {
   purseCall: 'pcl',
   purseWebhookEvent: 'pwe',
   purseEntry: 'pen',
+  // Ping-pong, the second tenant (system spec section 12, stretch 4). Its own local
+  // account prefix (`ppl`), like Sideout's `sou`, and its own Purse call audit (`ppc`).
+  pingpongPlayer: 'ppl',
+  season: 'ssn',
+  seasonEntry: 'sne',
+  ladderMatch: 'lmt',
+  pingpongPurseCall: 'ppc',
 } as const;
 
 export type IdEntity = keyof typeof ID_PREFIXES;
