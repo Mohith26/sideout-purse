@@ -40,8 +40,9 @@ test.describe('signed score attestation', () => {
     }
     await expect(checkIn).toHaveAttribute('data-status', 'checked_in', { timeout: 20_000 });
     await expect(checkIn.getByTestId('device-list').locator('li[data-revoked="false"]').filter({ hasText: 'this phone' })).toHaveCount(1);
-    const devices = await request.get(`/api/teams/${us.id}/devices`);
-    expect(devices.ok()).toBe(true);
+    // `page.request` carries the browser context's session cookie; the bare `request` fixture is anonymous.
+    const devices = await page.request.get(`/api/teams/${us.id}/devices`);
+    expect(devices.ok(), await devices.text()).toBe(true);
     const registered = ((await devices.json()) as { data: { devices: Array<{ keyId: string; revokedAt: string | null; mirrored: boolean }> } }).data.devices.filter((d) => d.revokedAt === null);
     expect(registered.length).toBeGreaterThan(0);
     expect(registered.some((d) => d.mirrored)).toBe(true);
