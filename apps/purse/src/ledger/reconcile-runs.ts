@@ -53,6 +53,11 @@ export async function lastReconcileRun(db: DbOrTx): Promise<ReconcileSummary | n
   return summarise(row);
 }
 
+/** The newest `limit` runs, newest first, each with its stored report: the public status feed reads the last one's invariants from it. */
+export async function recentReconcileRuns(db: DbOrTx, limit: number): Promise<ReconcileRun[]> {
+  return db.select().from(reconcileRuns).orderBy(desc(reconcileRuns.ranAt), desc(reconcileRuns.id)).limit(limit);
+}
+
 export function summarise(run: ReconcileRun): ReconcileSummary {
   return { ok: run.ok, source: run.source, ranAt: run.ranAt.toISOString(), durationMs: run.durationMs, failed: run.failed };
 }

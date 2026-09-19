@@ -15,6 +15,9 @@ const schema = z.object({
   BUILD_SHA: z.string().trim().min(1).optional(),
   // Where the Purse API answers `/console/*`; the console calls it server-to-server only.
   PURSE_API_ORIGIN: z.string().url().default('http://localhost:4000'),
+  // The Sideout origin the public `/status` page probes (`/health`, server side, short
+  // timeout). Optional: unset, the page says Sideout is not configured and probes nothing.
+  SIDEOUT_ORIGIN: z.preprocess((value) => (typeof value === 'string' && value.trim() === '' ? undefined : value), z.string().trim().url().optional()),
 });
 
 export type Env = {
@@ -22,6 +25,8 @@ export type Env = {
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   buildSha: string | undefined;
   apiOrigin: string;
+  /** The Sideout origin `/status` probes, or `undefined` when none is configured. */
+  sideoutOrigin: string | undefined;
   /** Whether the session cookie carries `Secure`: always in production. */
   secureCookies: boolean;
 };
@@ -41,7 +46,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
   if (production && !apiOrigin.startsWith('https://') && !LOOPBACK.test(apiOrigin)) {
     throw new EnvError('Invalid environment: PURSE_API_ORIGIN must be https:// (or loopback) when NODE_ENV=production; the session token travels on it');
   }
-  return { nodeEnv: raw.NODE_ENV, logLevel: raw.LOG_LEVEL, buildSha: raw.BUILD_SHA, apiOrigin, secureCookies: production };
+  return { nodeEnv: raw.NODE_ENV, logLevel: raw.LOG_LEVEL, buildSha: raw.BUILD_SHA, apiOrigin, sideoutOrigin: raw.SIDEOUT_ORIGIN?.replace(/\/+$/, ''), secureCookies: production };
 }
 
 let cached: Env | undefined;

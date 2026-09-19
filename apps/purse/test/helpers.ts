@@ -41,6 +41,7 @@ export type HarnessOptions = {
   trustedProxyHops?: number;
   clock?: () => number;
   inProgressWaitMs?: number;
+  statusTtlMs?: number;
   devIdentity?: DevIdentityLists;
   /** Replace one or more seams, for a test that needs a provider to misbehave. */
   providers?: Partial<Providers>;
@@ -87,6 +88,7 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     ...(overrides.trustedProxyHops === undefined ? {} : { trustedProxyHops: overrides.trustedProxyHops }),
     ...(overrides.clock === undefined ? {} : { clock: overrides.clock }),
     ...(overrides.inProgressWaitMs === undefined ? {} : { inProgressWaitMs: overrides.inProgressWaitMs }),
+    ...(overrides.statusTtlMs === undefined ? {} : { statusTtlMs: overrides.statusTtlMs }),
   });
   return { app, buckets, providers, keys: TEST_KEYS, sms, database, logger, lines, close: () => database.close() };
 }

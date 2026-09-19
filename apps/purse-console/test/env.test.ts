@@ -16,5 +16,12 @@ describe('console env', () => {
 
   it('refuses a malformed origin', () => {
     expect(() => loadEnv({ PURSE_API_ORIGIN: 'purse' })).toThrow(/Invalid environment/);
+    expect(() => loadEnv({ SIDEOUT_ORIGIN: 'sideout' })).toThrow(/Invalid environment/);
+  });
+
+  it('takes the Sideout origin for the status page when one is set; exported but empty counts as unset', () => {
+    expect(loadEnv({}).sideoutOrigin).toBeUndefined();
+    expect(loadEnv({ SIDEOUT_ORIGIN: '' }).sideoutOrigin).toBeUndefined();
+    expect(loadEnv({ SIDEOUT_ORIGIN: 'https://sideout.example/' }).sideoutOrigin).toBe('https://sideout.example');
   });
 });

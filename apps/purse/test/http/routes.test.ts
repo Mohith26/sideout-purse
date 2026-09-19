@@ -85,7 +85,7 @@ describe('every v1 route', () => {
       (route) => `${route.method} ${route.path.replace(userId, ':userId').replace(contestId, ':id').replace(endpointId, ':id').replace(deliveryId, ':id').replace('/users/:userId', '/users/:id')}`,
     );
     for (const each of new Set(mounted)) {
-      if (each.includes('/health') || each.includes('/internal/')) continue;
+      if (each.includes('/health') || each.includes('/status') || each.includes('/internal/')) continue;
       expect(expected, `${each} is covered by this table`).toContain(each);
     }
   });

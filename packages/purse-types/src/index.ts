@@ -6,3 +6,4 @@ export * from './embed';
 export * from './protocol';
 export * from './webhooks';
 export * from './console';
+export * from './status';
