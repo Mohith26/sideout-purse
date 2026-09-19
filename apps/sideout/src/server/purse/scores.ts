@@ -13,6 +13,7 @@ import { writeAudit } from '../audit';
 import { moveConsensus } from '../consensus';
 import type { DbOrTx } from '../db';
 import { failure } from '../http/errors';
+import { liveTransaction } from '../live/outbox';
 import { loadPoolStage, publicStandings } from '../standings';
 import { contestSubject, ensurePurseContest, mirrorContestState, readBackEntries } from './contests';
 import { idempotencyKey, type PurseDeps } from './deps';
@@ -163,10 +164,10 @@ export async function pushMatchScores(deps: PurseDeps, input: { matchId: string;
   const batch = await matchScoreBatch(deps.db, loaded);
   if (batch === null) {
     // Nobody in this match holds a Purse entry: there is nothing to push and nothing to confirm.
-    const consensus = await deps.db.transaction(async (tx) => {
+    const consensus = await liveTransaction(deps.db, async (tx) => {
       let current = loaded.consensus;
-      if (current.state === 'agreed') current = await moveConsensus(tx, current, 'pushed_to_purse', actor, now, { pushedAt: now, lastPushError: null }, { nothingToPush: true, contestId: contest.id });
-      if (current.state === 'pushed_to_purse') current = await moveConsensus(tx, current, 'confirmed', actor, now, { confirmedAt: now }, { nothingToPush: true, contestId: contest.id });
+      if (current.state === 'agreed') current = await moveConsensus(tx, { consensus: current, tournamentId: loaded.tournament.id }, 'pushed_to_purse', actor, now, { pushedAt: now, lastPushError: null }, { nothingToPush: true, contestId: contest.id });
+      if (current.state === 'pushed_to_purse') current = await moveConsensus(tx, { consensus: current, tournamentId: loaded.tournament.id }, 'confirmed', actor, now, { confirmedAt: now }, { nothingToPush: true, contestId: contest.id });
       return current;
     });
     return { consensus, purse: 'confirmed' };
@@ -199,7 +200,7 @@ export async function pushMatchScores(deps: PurseDeps, input: { matchId: string;
     }
   }
   if (loaded.consensus.state === 'agreed') {
-    const moved = await moveConsensus(deps.db, loaded.consensus, 'pushed_to_purse', actor, now, { pushedAt: now, lastPushError: null }, {
+    const moved = await moveConsensus(deps.db, { consensus: loaded.consensus, tournamentId: loaded.tournament.id }, 'pushed_to_purse', actor, now, { pushedAt: now, lastPushError: null }, {
       contestId: contest.id,
       idempotencyKey: key,
       scores: first.scores.map((s) => ({ id: s.id, userId: s.userId, score: s.score })),
@@ -222,7 +223,7 @@ export async function pushMatchScores(deps: PurseDeps, input: { matchId: string;
     const consensus = await recordPushFailure(deps.db, loaded, actor, new Error(replay.replayed ? 'the replay named different score rows' : 'Purse performed the request again instead of replaying it'), now, 'confirm');
     return { consensus, purse: 'pushed_to_purse', error: describeFailure(new Error('confirmation did not match the push'), now) };
   }
-  const confirmed = await moveConsensus(deps.db, loaded.consensus, 'confirmed', actor, now, { confirmedAt: now, lastPushError: null }, {
+  const confirmed = await moveConsensus(deps.db, { consensus: loaded.consensus, tournamentId: loaded.tournament.id }, 'confirmed', actor, now, { confirmedAt: now, lastPushError: null }, {
     contestId: contest.id,
     idempotencyKey: key,
     scores: replay.data.scores.map((s) => ({ id: s.id, userId: s.userId, score: s.score })),

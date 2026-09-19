@@ -45,7 +45,7 @@ export default async function BracketPage({ params }: { params: Promise<{ slug: 
 
   return (
     <div className="space-y-10">
-      {t.status === 'live' ? <LiveRefresh /> : null}
+      {t.status === 'live' ? <LiveRefresh source={{ kind: 'tournament', id: t.id }} /> : null}
 
       {bracketSeeded && detail?.bracket ? (
         <section aria-labelledby="bracket-heading">

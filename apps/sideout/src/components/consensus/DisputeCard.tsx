@@ -9,6 +9,7 @@ import type { BestOf } from '../../db/schema';
 import type { SetScore } from '../../domain/scoreline';
 import { api, type ApiResult } from '../../lib/api-client';
 import { formatTime } from '../../lib/format';
+import { useLiveHold } from '../motion/live-hold';
 import { MATCH_STATUS_PILL } from '../status/pills';
 import { ScorelineCompare, ScorelineTable } from './ScorelineCompare';
 import { enteredRows, judgeRows, ScorelineEditor, toSetScores, visibleRows, type EditorSet } from './ScorelineEditor';
@@ -54,6 +55,9 @@ export function DisputeCard({ dispute, resolve }: DisputeCardProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settled, setSettled] = useState<ResolveResponse | null>(null);
+  // From the moment the resolution is sent until the organizer moves on: the event lands before the
+  // answer does, and "Settled by" belongs to a match that has already left the queue on the server.
+  useLiveHold(busy || settled !== null);
 
   const visible = visibleRows(rows, match.bestOf);
   const verdict = judgeRows(visible, match.bestOf);

@@ -118,7 +118,7 @@ export default async function LiveBoardPage({ params }: { params: Promise<{ id: 
 
   return (
     <div className="space-y-6">
-      {live ? <LiveRefresh /> : null}
+      {live ? <LiveRefresh source={{ kind: 'tournament', id: t.id }} /> : null}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <Link href={`/organizer/events/${t.id}`} className="target inline-flex items-center gap-1 rounded-input type-label text-text-secondary hover:text-text-primary">

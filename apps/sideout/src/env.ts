@@ -31,6 +31,12 @@ import { switchFrom } from './lib/switch';
  * the `dev` donation provider so registration completes without Stripe (a configured Stripe
  * key still wins). `next.config.ts` derives `NEXT_PUBLIC_DEMO_ACCOUNTS` from it at build time
  * and a build made for the other setting refuses to boot (`BUILT_DEMO_ACCOUNTS`, below).
+ *
+ * The four `LIVE_*` variables bound the live-score streams (`docs/live.md`): how many
+ * `GET /api/live/*` connections one process and one address may hold open, the heartbeat
+ * cadence that keeps a proxy from closing an idle stream, and how long a stream lives
+ * before the server closes it and the browser reconnects. Every one has a default that is
+ * safe outside production and in it.
  */
 
 const postgresUrl = z
@@ -53,6 +59,15 @@ export const DEFAULT_AUTH_CODE_GLOBAL_CAP = 600;
 export const DEVELOPMENT_PURSE_API_URL = 'http://localhost:4000';
 /** The tenant `pnpm --filter @purse/api db:seed` creates; a hosted deploy sets the real one. */
 export const DEVELOPMENT_PURSE_TENANT_ID = 'tnt_01a0b16a-b475-74d4-b1cb-2dbdc08845a9';
+
+/** Open live streams one process serves before it answers 429 (`server/live/stream.ts`). */
+export const DEFAULT_LIVE_MAX_STREAMS = 500;
+/** Open live streams one client address may hold: a few tabs, not a fan-out. */
+export const DEFAULT_LIVE_MAX_STREAMS_PER_ADDRESS = 8;
+/** A comment line on every open stream at this cadence, inside the 15-25 second window proxies tolerate. */
+export const DEFAULT_LIVE_HEARTBEAT_MS = 20_000;
+/** A stream is closed cleanly after this long and the browser reconnects; connections never live forever. */
+export const DEFAULT_LIVE_STREAM_TTL_SECONDS = 15 * 60;
 
 const SECRET_KEY_SHAPE = /^sk_(sandbox|live)_[A-Za-z0-9]{32}$/;
 const PUBLISHABLE_KEY_SHAPE = /^pk_(sandbox|live)_[A-Za-z0-9]{32}$/;
@@ -88,6 +103,10 @@ const schema = z.object({
   NEXT_PUBLIC_PURSE_TENANT_ID: z.string().regex(TENANT_ID_SHAPE, 'must be a Purse tenant id (tnt_...)').optional(),
   DEMO_ACCOUNTS: z.string().optional(),
   NEXT_PUBLIC_DEMO_ACCOUNTS: z.string().optional(),
+  LIVE_MAX_STREAMS: z.coerce.number().int().min(1).max(100_000).default(DEFAULT_LIVE_MAX_STREAMS),
+  LIVE_MAX_STREAMS_PER_ADDRESS: z.coerce.number().int().min(1).max(10_000).default(DEFAULT_LIVE_MAX_STREAMS_PER_ADDRESS),
+  LIVE_HEARTBEAT_MS: z.coerce.number().int().min(5_000).max(25_000).default(DEFAULT_LIVE_HEARTBEAT_MS),
+  LIVE_STREAM_TTL_SECONDS: z.coerce.number().int().min(30).max(24 * 3600).default(DEFAULT_LIVE_STREAM_TTL_SECONDS),
 });
 
 export type SmsProviderName = 'log' | 'none';
@@ -105,6 +124,18 @@ export type PurseEnv = {
   /** The origin the iframe is served from, as the browser reaches it. */
   browserOrigin: string;
   tenantId: string;
+};
+
+/** Bounds on the live-score streams (`GET /api/live/*`, `docs/live.md`). */
+export type LiveEnv = {
+  /** `LIVE_MAX_STREAMS`: open streams per process before the route answers 429. */
+  maxStreams: number;
+  /** `LIVE_MAX_STREAMS_PER_ADDRESS`: open streams one client address may hold. */
+  maxStreamsPerAddress: number;
+  /** `LIVE_HEARTBEAT_MS`: the comment-line cadence that keeps proxies from closing a quiet stream. */
+  heartbeatMs: number;
+  /** `LIVE_STREAM_TTL_SECONDS` in milliseconds: a stream is closed after this long and the browser reconnects. */
+  streamTtlMs: number;
 };
 
 export type Env = {
@@ -132,6 +163,7 @@ export type Env = {
   purse: PurseEnv;
   /** `DEMO_ACCOUNTS`: the sign-in picker and `POST /api/auth/demo` exist in this process. */
   demoAccounts: boolean;
+  live: LiveEnv;
 };
 
 export class EnvError extends Error {
@@ -233,6 +265,12 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     authCodeGlobalCap: raw.AUTH_CODE_GLOBAL_CAP,
     purse,
     demoAccounts,
+    live: {
+      maxStreams: raw.LIVE_MAX_STREAMS,
+      maxStreamsPerAddress: raw.LIVE_MAX_STREAMS_PER_ADDRESS,
+      heartbeatMs: raw.LIVE_HEARTBEAT_MS,
+      streamTtlMs: raw.LIVE_STREAM_TTL_SECONDS * 1000,
+    },
   };
 }
 

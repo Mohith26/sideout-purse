@@ -40,7 +40,7 @@ export default async function StandingsPage({ params }: { params: Promise<{ slug
 
   return (
     <div>
-      {t.status === 'live' ? <LiveRefresh /> : null}
+      {t.status === 'live' ? <LiveRefresh source={{ kind: 'tournament', id: t.id }} /> : null}
       <SectionHeading id="standings-heading" aside={<span className="tabular">{`${played} of ${total} pool matches played`}</span>}>
         Standings
       </SectionHeading>

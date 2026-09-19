@@ -27,6 +27,7 @@ import type { DbOrTx } from './db';
 import { deleteDraw } from './draw';
 import { COUNTED_TEAM_STATUSES, confirmedTeam, countedTeams, countedTeamsFilter, placeHoldingTeam, reservationExpiresAt, type ReservationClock } from './field';
 import { failure } from './http/errors';
+import { emitLive, liveTransaction } from './live/outbox';
 import { centsSchema } from './money';
 import {
   toPublicMatch,
@@ -155,7 +156,7 @@ export type UpdateResult = { tournament: Tournament; changedFields: string[]; tr
  */
 export async function updateTournament(db: Db, id: string, input: UpdateTournamentInput, actor: Actor, clock: ReservationClock): Promise<UpdateResult> {
   const now = clock.now;
-  return db.transaction(async (tx) => {
+  return liveTransaction(db, async (tx) => {
     const [current] = await tx.select().from(tournaments).where(eq(tournaments.id, id)).for('update');
     if (current === undefined) throw failure.notFound('tournament_not_found', 'No such tournament.');
 
@@ -255,6 +256,9 @@ export async function updateTournament(db: Db, id: string, input: UpdateTourname
  *   means waiting for the payment or the lapse;
  * - `awaiting_settlement` needs every match complete, and for the formats that end in a
  *   bracket, the bracket drawn.
+ *
+ * Emits the `state` live event, so the caller's transaction must be a `liveTransaction`
+ * (`server/live/outbox.ts`): the event goes out after that commit.
  */
 export async function transitionTournament(
   tx: DbOrTx,
@@ -343,6 +347,7 @@ export async function transitionTournament(
     detail: { from, to: input.to },
     at: now,
   });
+  await emitLive(tx, { tournamentId: tournament.id, kind: 'state' });
   return { from, to: input.to };
 }
 

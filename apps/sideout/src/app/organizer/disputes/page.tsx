@@ -39,7 +39,7 @@ export default async function DisputesPage() {
   });
   return (
     <div className="space-y-6">
-      <LiveRefresh intervalMs={15_000} />
+      <LiveRefresh source={{ kind: 'all' }} intervalMs={15_000} />
       <div>
         <h1 className="type-display-l">Disputes</h1>
         <p className="mt-1 text-text-secondary">

@@ -11,6 +11,7 @@ import { webhookEventEnvelopeSchema } from '../../purse/schemas';
 import { SYSTEM_ACTOR } from '../actor';
 import { writeAudit } from '../audit';
 import type { Tx } from '../db';
+import { liveTransaction } from '../live/outbox';
 import { transitionTournament } from '../tournaments';
 
 /**
@@ -80,7 +81,7 @@ export async function receivePurseWebhook(deps: WebhookDeps, input: { rawBody: s
   const event = envelope.data;
   const now = input.now;
 
-  return deps.db.transaction(async (tx) => {
+  return liveTransaction(deps.db, async (tx) => {
     // Dedupe on the event id: the insert claims it, and a claim that fails is a redelivery.
     const claimed = await tx
       .insert(purseWebhookEvents)

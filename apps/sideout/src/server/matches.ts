@@ -9,6 +9,7 @@ import type { Actor } from './actor';
 import { writeAudit } from './audit';
 import type { DbOrTx } from './db';
 import { failure } from './http/errors';
+import { emitLive, liveTransaction } from './live/outbox';
 import { toPublicMatch, toPublicTeam, type PublicMatch, type PublicTeam } from './public-shape';
 import { teamMembersWithUsers } from './teams';
 
@@ -61,11 +62,12 @@ export type ForfeitResult = { match: Match; winnerTeamId: string; advancedTo: { 
  * uses when a match becomes final. Only a live tournament has results; before that the
  * draw stays replaceable, and a team that pulls out is handled by a redraw. Locks the
  * tournament before the match, the order every other writer takes, so a redraw cannot
- * replace the bracket while a forfeit is being recorded on it.
+ * replace the bracket while a forfeit is being recorded on it. The live events (the match,
+ * the standings, the next match the winner moves into) are published after the commit.
  */
 export async function forfeitMatch(db: Db, input: { matchId: string; forfeitingTeamId: string; actor: Actor; now: Date }): Promise<ForfeitResult> {
   if (input.actor.kind !== 'organizer') throw failure.permission('organizer_required', 'Only an organizer can record a forfeit.');
-  return db.transaction(async (tx) => {
+  return liveTransaction(db, async (tx) => {
     const [located] = await tx.select({ tournamentId: matches.tournamentId }).from(matches).where(eq(matches.id, input.matchId));
     if (located === undefined) throw failure.notFound('match_not_found', 'No such match.');
     const [tournament] = await tx.select({ status: tournaments.status }).from(tournaments).where(eq(tournaments.id, located.tournamentId)).for('update');
@@ -108,7 +110,10 @@ export async function forfeitMatch(db: Db, input: { matchId: string; forfeitingT
         )
         .where(eq(matches.id, advancement.nextMatchId));
       advancedTo = { matchId: advancement.nextMatchId, slot: advancement.slot };
+      await emitLive(tx, { tournamentId: match.tournamentId, kind: 'match', matchId: advancement.nextMatchId });
     }
+    await emitLive(tx, { tournamentId: match.tournamentId, kind: 'match', matchId: match.id });
+    await emitLive(tx, { tournamentId: match.tournamentId, kind: 'standings', matchId: match.id });
 
     await writeAudit(tx, {
       actor: input.actor,
