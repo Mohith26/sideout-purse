@@ -1,6 +1,8 @@
 import {
   API_ERROR_TYPES,
   ASSETS,
+  ATTESTATION_ALGORITHMS,
+  ATTESTATION_STATES,
   CONTEST_KINDS,
   CONTEST_STATES,
   EMBED_FLOWS,
@@ -11,6 +13,7 @@ import {
   TIE_BREAK_RULES,
   VERIFICATION_STATES,
   type ApiError,
+  type CanonicalValue,
   type ContestResource,
   type CreditResource,
   type EmbedTokenResource,
@@ -159,6 +162,23 @@ export const entrySchema = z.looseObject({
   journalEntryId: z.string(),
 }) satisfies Shape<Omit<EntryResource, 'eligibility'> & { eligibility: unknown }>;
 
+/** The canonical value grammar of a signed score payload (`@purse/types` `attestation.ts`): JSON with integers only. */
+const canonicalValueSchema: z.ZodType<CanonicalValue> = z.lazy(() => z.union([z.string(), z.int(), z.boolean(), z.null(), z.array(canonicalValueSchema), z.record(z.string(), canonicalValueSchema)]));
+
+/** What Purse recorded about a score's device signature; the ladder submits none, and reads it for the record only. */
+export const scoreAttestationSchema = z.looseObject({
+  state: z.enum(['verified', 'unverified']),
+  deviceId: z.string().nullable(),
+  userId: id('usr'),
+  keyId: z.string(),
+  algorithm: z.enum(ATTESTATION_ALGORITHMS),
+  signature: z.string(),
+  timestamp: instant,
+  refs: z.record(z.string(), z.string()),
+  content: canonicalValueSchema,
+  checkedAt: instant,
+});
+
 export const scoreSchema = z.looseObject({
   id: z.string(),
   contestId: id('cnt'),
@@ -167,6 +187,8 @@ export const scoreSchema = z.looseObject({
   attemptFinished: z.boolean(),
   submittedAt: instant,
   sourceRef: z.string().nullable(),
+  attestationState: z.enum(ATTESTATION_STATES),
+  attestation: scoreAttestationSchema.nullable(),
 });
 
 export const resultSchema = z.looseObject({

@@ -324,7 +324,7 @@ export class FakePurse {
     }
     const entered = c.participants.filter((p) => p.state === 'entered');
     if (c.state === 'in_progress' && entered.every((p) => c.scores.some((s) => s.userId === p.userId && !s.superseded && s.attemptFinished))) c.state = 'awaiting_settlement';
-    return this.ok({ contest: this.contestResource(c), scores: written.map((s) => ({ id: s.id, contestId: c.id, userId: s.userId, score: s.score, attemptFinished: s.attemptFinished, submittedAt: s.submittedAt, sourceRef: s.sourceRef })), settlement: null }, 201);
+    return this.ok({ contest: this.contestResource(c), scores: written.map((s) => ({ id: s.id, contestId: c.id, userId: s.userId, score: s.score, attemptFinished: s.attemptFinished, submittedAt: s.submittedAt, sourceRef: s.sourceRef, attestationState: 'none', attestation: null })), settlement: null }, 201);
   }
 
   /** A settlement in the spirit of Purse's: rank by score (unscored last, ties shared), weights over the pool, floor division, remainder to the best placement. */
