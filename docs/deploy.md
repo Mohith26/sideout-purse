@@ -105,6 +105,17 @@ commands) live on the service, set once through Railway's GraphQL API
 (`serviceInstanceUpdate`), because the config-as-code file would apply to every service
 built from the root.
 
+### Public demo
+
+Deployed commit: `c5082c4` (2026-09-19), all five services, with `DEMO_ACCOUNTS=true` on
+the `sideout` service: `/sign-in` offers the six demo accounts (`docs/demo-accounts.md`),
+`/health` on Sideout reports `demoAccounts: true`, and the demo reset was run once after
+the deploy so the roster's two Purse states are set (the nightly reset keeps them).
+Verified on the live origin: a full demo sign-in as Captain A lands on the awaiting
+quarterfinal with the "Demo · Farah El-Amin" pill, and the console's public `/status` page
+answers. To turn the picker off, unset `DEMO_ACCOUNTS` on `sideout` and redeploy it (the
+build argument follows the variable).
+
 How it was deployed, with the Railway CLI (`railway`, signed in) from the repository root:
 
 ```sh
