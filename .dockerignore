@@ -3,6 +3,12 @@
 # What is left out: dependencies and build output (installed and built inside the image),
 # every environment file but the template, the tests and their output, tooling caches,
 # the docs and screenshots, and the git history.
+#
+# One exception: `apps/purse/src/routes/docs.ts` bundles the contract fixtures into the
+# public `/docs` page, so `apps/purse/test/contract/fixtures.json` must reach the build
+# even though `**/test` does not. Without it `pnpm --filter @purse/api build` fails inside
+# the image with "Could not resolve ../../test/contract/fixtures.json" while succeeding on
+# a full checkout, which is how it reached a deploy (docs/decisions.md).
 .git
 .github
 node_modules
@@ -12,6 +18,7 @@ node_modules
 **/out
 **/*.tsbuildinfo
 **/test
+!apps/purse/test/contract/fixtures.json
 **/e2e
 **/test-results
 **/playwright-report

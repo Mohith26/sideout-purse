@@ -1931,3 +1931,15 @@ address — an egress and reputation surface with no product value, since the `/
 sandbox runs its examples in the visitor's own browser and has no receiver to point at.
 The refusal is therefore no longer a stopgap for missing validation; it is a deliberate
 abuse-surface choice. Managed tenants, which an operator provisions, are unaffected.
+
+## The public docs page reads a test fixture
+
+`apps/purse/src/routes/docs.ts` bundles `apps/purse/test/contract/fixtures.json` into the
+public `/docs` page, so shipped source imports test material. `.dockerignore` drops
+`**/test`, which made the Purse image fail to build (`Could not resolve
+../../test/contract/fixtures.json`) while `pnpm build` on a full checkout succeeded — no
+job builds the images, so it reached a deploy. The file is now named as a `!` exception
+there, the Dockerfile's header says the build depends on it, and `test/docker.test.ts`
+fails if shipped source imports an excluded path that is not excepted. Moving the fixtures
+out of `test/` so shipped source never imports test material, and building the images in
+CI, are the durable fixes and are tracked separately.

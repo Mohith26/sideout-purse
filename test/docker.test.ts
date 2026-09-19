@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { glob } from 'node:fs/promises';
 import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -78,5 +79,38 @@ describe('container images', () => {
     for (const entry of ['.git', 'node_modules', '**/node_modules', '.env', '.env.*', '**/.env', '**/.env.*', '!.env.example', '!**/.env.example', '**/dist', '**/.next', '**/test', '**/e2e', 'docs']) {
       expect(lines, entry).toContain(entry);
     }
+  });
+
+  /**
+   * A shipped source file that imports something `.dockerignore` drops builds on a full
+   * checkout and fails inside the image, which is how the public `/docs` page's contract
+   * fixtures reached a deploy (docs/decisions.md). Only the excluded directories a source
+   * file can plausibly reach into are checked, which is cheap and is the case that bit:
+   * every such import must be named as a `!` exception.
+   */
+  it('every excluded path the shipped source imports is named as a .dockerignore exception', async () => {
+    const lines = read('.dockerignore')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('#'));
+    const exceptions = new Set(lines.filter((line) => line.startsWith('!')).map((line) => line.slice(1)));
+    const reached: string[] = [];
+    for await (const file of glob('apps/*/src/**/*.{ts,tsx}', { cwd: ROOT })) {
+      const source = readFileSync(path.join(ROOT, file), 'utf8');
+      for (const match of source.matchAll(/from\s+'(\.[^']+)'/g)) {
+        const specifier = match[1];
+        if (specifier === undefined) continue;
+        const resolved = path.relative(ROOT, path.resolve(path.dirname(path.join(ROOT, file)), specifier));
+        // Only the directories `.dockerignore` drops wholesale, matched as directories:
+        // `src/routes/docs.ts` is a module named docs, not the excluded `docs/` tree.
+        const directories = resolved.split('/').slice(0, -1);
+        if (directories.includes('test') || directories.includes('e2e') || directories[0] === 'docs') reached.push(resolved);
+      }
+    }
+    for (const each of reached) {
+      expect(exceptions, `${each} is imported by shipped source but dropped from the build context`).toContain(each);
+    }
+    // The one that exists today, so a silent drop of the exception fails here too.
+    expect(reached).toContain('apps/purse/test/contract/fixtures.json');
   });
 });
