@@ -1,11 +1,20 @@
 import { Hono } from 'hono';
 
-import fixtures from '../../test/contract/fixtures.json';
 import { docsClient } from '../docs/client';
+import fixtures from '../docs/contract-fixtures.json';
 import { providerSeamTable } from '../docs/providers';
 import type { RateLimitConfig } from '../http/rate-limit';
 import type { RequestScope } from '../http/request-id';
 
+/**
+ * The request and response examples the public page renders are the API contract
+ * fixtures themselves (`src/docs/contract-fixtures.json`), so the page cannot drift from
+ * the API: `test/contract/contract.test.ts` records them from live requests and fails when
+ * the file differs, and `UPDATE_CONTRACT_FIXTURES=1 pnpm --filter @purse/api test
+ * test/contract` rewrites it after a deliberate contract change. It lives under `src/`
+ * because it ships: shipped source never imports from `test/`, which `.dockerignore`
+ * drops from every image's build context (docs/decisions.md).
+ */
 export const documentedExamples = fixtures;
 export function escapeHtml(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');

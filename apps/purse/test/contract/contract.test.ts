@@ -36,10 +36,11 @@ import { Recorder, verifyFixtures } from './recorder';
 /**
  * The contract (spec section 8): every v1 endpoint and every sealed error type, driven
  * over HTTP in one story, recorded as fixtures, and checked against the committed
- * `fixtures.json`. The story is the end-to-end flow: create users, issue credits, create
- * and open a contest, enter (eligible and not), lock, start, score, preview, close with the
- * hash, read the results, and reconcile clean. Every documented error type is reached and
- * carries a code no other type uses.
+ * `src/docs/contract-fixtures.json`, which the public `/docs` page renders. The story is
+ * the end-to-end flow: create users, issue credits, create and open a contest, enter
+ * (eligible and not), lock, start, score, preview, close with the hash, read the results,
+ * and reconcile clean. Every documented error type is reached and carries a code no other
+ * type uses.
  */
 describe('v1 contract', () => {
   let migrator: Database;
@@ -470,7 +471,7 @@ describe('v1 contract', () => {
       }
 
       const differing = verifyFixtures(all.flatMap((recorder) => recorder.fixtures));
-      expect(differing, 'contract fixtures match test/contract/fixtures.json (UPDATE_CONTRACT_FIXTURES=1 to rewrite after a deliberate change)').toEqual([]);
+      expect(differing, 'contract fixtures match src/docs/contract-fixtures.json (UPDATE_CONTRACT_FIXTURES=1 to rewrite after a deliberate change)').toEqual([]);
     } finally {
       await limitedHarness.close();
       await brokenHarness.close();

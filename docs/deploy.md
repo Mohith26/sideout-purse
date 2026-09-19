@@ -16,7 +16,9 @@ where this deploy departs from its defaults.
 Every image is multi-stage (build, a clean production install, runtime), runs as the
 unprivileged `node` user, carries a Docker `HEALTHCHECK` on its `/health`, and is built
 from the repository root (`docker build -f apps/purse/Dockerfile .`), because the
-workspace is one pnpm install. `test/docker.test.ts` pins that shape. The Purse and Sideout
+workspace is one pnpm install. `test/docker.test.ts` pins that shape and pins that CI's
+`images` job names every Dockerfile in the repository, which builds each of them (and the
+`demo-reset` job's) on every pull request. The Purse and Sideout
 start commands (`apps/*/docker-entrypoint.sh`) run the forward-only migrations first and
 exit non-zero on a migration failure, so a deploy whose migration fails never starts a
 server on a half-migrated schema; the Purse entrypoint then drops the owner role's
@@ -118,13 +120,14 @@ self-serve sandbox and the public API docs page (`docs/sandbox.md`) and webhook 
 validation (`docs/webhooks-security.md`); Purse's migrations went to 21. Two things this
 deploy established, both worth knowing before the next one:
 
-- **The image build is not covered by CI.** The first `railway up` of the merged `main`
-  failed because the public `/docs` page bundles `apps/purse/test/contract/fixtures.json`
-  while `.dockerignore` drops `**/test`; `pnpm build` on a checkout had never seen it. The
-  `!` exception in `.dockerignore` and the assertion in `test/docker.test.ts` close that
-  one case (`docs/decisions.md`), but nothing builds the images before a deploy, so build
-  the Purse image locally (`docker build -f apps/purse/Dockerfile .`) when a change touches
-  what the bundle imports.
+- **The image build was not covered by CI.** The first `railway up` of the merged `main`
+  failed because the public `/docs` page bundled `apps/purse/test/contract/fixtures.json`
+  while `.dockerignore` drops `**/test`; `pnpm build` on a checkout had never seen it. That
+  deploy was unblocked with a `!` exception in `.dockerignore`. Both halves are now fixed
+  (`docs/decisions.md`): the fixtures moved to `apps/purse/src/docs/contract-fixtures.json`
+  so no shipped file lives under a test directory and the exception is gone, and CI's
+  `images` job builds every image in the repository on every pull request, so an image that
+  only fails inside the build context fails the pull request instead of the deploy.
 - **`SANDBOX_SELF_SERVE` must be set on `purse` explicitly.** It defaults to `false` in
   production, so the docs page serves but minting is refused until it is `true`.
 

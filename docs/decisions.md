@@ -1932,14 +1932,42 @@ sandbox runs its examples in the visitor's own browser and has no receiver to po
 The refusal is therefore no longer a stopgap for missing validation; it is a deliberate
 abuse-surface choice. Managed tenants, which an operator provisions, are unaffected.
 
-## The public docs page reads a test fixture
+## The docs page's contract fixtures, and the image build nothing ran
 
-`apps/purse/src/routes/docs.ts` bundles `apps/purse/test/contract/fixtures.json` into the
-public `/docs` page, so shipped source imports test material. `.dockerignore` drops
-`**/test`, which made the Purse image fail to build (`Could not resolve
-../../test/contract/fixtures.json`) while `pnpm build` on a full checkout succeeded — no
-job builds the images, so it reached a deploy. The file is now named as a `!` exception
-there, the Dockerfile's header says the build depends on it, and `test/docker.test.ts`
-fails if shipped source imports an excluded path that is not excepted. Moving the fixtures
-out of `test/` so shipped source never imports test material, and building the images in
-CI, are the durable fixes and are tracked separately.
+`apps/purse/src/routes/docs.ts` bundles the API contract fixtures into the public `/docs`
+page. They were `apps/purse/test/contract/fixtures.json`, so shipped source imported test
+material; `.dockerignore` drops `**/test`, which made the Purse image fail to build
+(`Could not resolve ../../test/contract/fixtures.json`) while `pnpm build` on a full
+checkout succeeded — no job built the images, so it reached a deploy. That deploy was
+unblocked with a `!` exception naming the one file. Both halves are now closed properly.
+
+**The fixtures live in `apps/purse/src/docs/contract-fixtures.json`, and the `!` exception
+is gone.** The page renders the contract fixtures themselves and must keep doing so — that
+is the whole reason it cannot drift from the API — so the file had to move to where shipped
+source may legitimately read it rather than the reader being given a copy. `src/docs/` is
+already where the page's shipped material lives (`client.ts`, `providers.ts`, the last a
+generated copy of `docs/providers.md`, also excluded from the build context). Nothing else
+changed: `test/contract/contract.test.ts` still records the fixtures from live requests and
+fails when the committed file differs, `recorder.ts` still writes that one file, and
+`UPDATE_CONTRACT_FIXTURES=1 pnpm --filter @purse/api test test/contract` is still the one
+command that regenerates it. A package of its own was considered and rejected: only Purse
+reads the fixtures, and a package would add a build seam between the test that writes them
+and the page that renders them for no gain. With the move done, `**/test` is excluded
+wholesale again and no shipped file lives under a test directory, so `test/docker.test.ts`
+now asserts the stronger rule — shipped source imports nothing the build context drops —
+instead of keeping a list of exceptions in step with a list of imports.
+
+**CI builds every image.** `.github/workflows/ci.yml` gained an `images` job: one matrix
+leg per Dockerfile in the repository (Purse, the console, Sideout, the ping-pong ladder and
+the demo-reset job), built from the repository root against the real `.dockerignore`
+context, with a per-image GitHub Actions layer cache and `fail-fast: false` so one broken
+image does not hide the others. Nothing is pushed or run — building is the gate, because
+the failure this closes is a build failure. The legs run in parallel with `build-test`, so
+they cost wall clock only when they are the slowest thing in the run. `test/docker.test.ts`
+asserts the matrix names every Dockerfile, so a new service cannot quietly skip it.
+
+**`.no-mistakes.yaml` deliberately does not mirror it.** That file is the local pipeline's
+four commands, and CI already runs steps beyond them (seeds, the API, the Playwright
+smokes). An image build needs a Docker daemon and minutes per image, which is the wrong
+cost for every local run; the divergence is recorded in that file's header, which points at
+building one image by hand when a change touches what it bundles.

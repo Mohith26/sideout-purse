@@ -8,9 +8,14 @@ import type { ApiResponse, Client, RequestOptions } from '../http/client';
 /**
  * Contract fixtures (spec section 8, "Contract"): one recorded request and response per
  * endpoint and per error type, normalised so ids, instants, hashes and secrets do not churn
- * the file, and compared against `fixtures.json`. Phase 4's SDK asserts against the same
- * file. `UPDATE_CONTRACT_FIXTURES=1 pnpm --filter @purse/api test test/contract` rewrites
- * it after a deliberate change to the contract.
+ * the file, and compared against `src/docs/contract-fixtures.json`.
+ * `UPDATE_CONTRACT_FIXTURES=1 pnpm --filter @purse/api test test/contract` rewrites it
+ * after a deliberate change to the contract.
+ *
+ * The file lives under `src/` because the public `/docs` page renders it
+ * (`src/routes/docs.ts`) and therefore ships: shipped source never imports from `test/`,
+ * which `.dockerignore` drops from every image's build context (docs/decisions.md). It is
+ * still written only from here, so the fixtures stay a single source of truth.
  */
 export type Fixture = {
   name: string;
@@ -18,7 +23,7 @@ export type Fixture = {
   response: { status: number; body: unknown };
 };
 
-export const FIXTURES_FILE = path.resolve(import.meta.dirname, 'fixtures.json');
+export const FIXTURES_FILE = path.resolve(import.meta.dirname, '../../src/docs/contract-fixtures.json');
 
 export function normalise(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalise);

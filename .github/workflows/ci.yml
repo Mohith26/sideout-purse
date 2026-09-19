@@ -10,6 +10,12 @@
 # the API on that same seeded database (spec section 8), then Sideout's, then the second
 # tenant's (the ping-pong ladder, docs/second-tenant.md), and the ledger is reconciled once
 # more with both tenants' settlements in it.
+#
+# The second job, `images`, builds every container image the deployment runs, one matrix
+# leg per image and in parallel with the gates above. `pnpm build` runs on a full checkout
+# and so never sees what `.dockerignore` drops from the build context; an image that only
+# fails there used to reach a deploy (docs/decisions.md). Building is the whole gate: the
+# images are neither run nor pushed.
 name: CI
 
 on:
@@ -200,3 +206,47 @@ jobs:
           name: sideout-screenshots
           path: docs/screenshots
           if-no-files-found: ignore
+
+  # Every image `docs/deploy.md` deploys, built from the repository root against the real
+  # `.dockerignore` build context. `test/docker.test.ts` asserts this matrix names every
+  # Dockerfile in the repository, so a new service cannot skip the gate. The layer cache is
+  # per image (`scope`), so an unrelated change reuses the installs and the builds.
+  images:
+    name: Build the ${{ matrix.service }} image
+    runs-on: ubuntu-latest
+
+    strategy:
+      # One failing image must not cancel the others: the point is to see every one.
+      fail-fast: false
+      matrix:
+        include:
+          - service: purse
+            dockerfile: apps/purse/Dockerfile
+          - service: purse-console
+            dockerfile: apps/purse-console/Dockerfile
+          - service: sideout
+            dockerfile: apps/sideout/Dockerfile
+            # The deployed Sideout build carries the demo-accounts switch (docs/demo-accounts.md).
+            args: DEMO_ACCOUNTS=true
+          - service: pingpong
+            dockerfile: apps/pingpong/Dockerfile
+          - service: demo-reset
+            dockerfile: docker/demo-reset/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          # Nothing is pushed and nothing is loaded into the daemon: the build is the gate.
+          push: false
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
+            ${{ matrix.args }}
+          cache-from: type=gha,scope=image-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=image-${{ matrix.service }}
