@@ -1,5 +1,10 @@
 # no-mistakes pipeline configuration. `no-mistakes ci-workflow` mirrors these commands into
 # .github/workflows/ci.yml; keep the two in step.
+#
+# CI has one gate this file deliberately does not: its `images` job builds every container
+# image (docs/decisions.md). That needs a Docker daemon and several minutes per image, so
+# it stays a CI job rather than a local pipeline command; build an image by hand
+# (`docker build -f apps/purse/Dockerfile .`) when a change touches what one bundles.
 commands:
   typecheck: 'pnpm typecheck'
   lint: 'pnpm lint'

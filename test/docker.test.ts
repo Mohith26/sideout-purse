@@ -82,18 +82,33 @@ describe('container images', () => {
   });
 
   /**
+   * Building the images is the gate that catches what `pnpm build` on a checkout cannot
+   * (below), so every image in the repository has to be in CI's matrix: a new service that
+   * adds a Dockerfile and forgets the leg fails here rather than at the next deploy.
+   */
+  it('CI builds every image in the repository', async () => {
+    const workflow = read('.github/workflows/ci.yml');
+    const named = new Set([...workflow.matchAll(/^\s+dockerfile: (\S+)$/gm)].map((m) => m[1]));
+    const dockerfiles: string[] = [];
+    for await (const file of glob('{apps,docker}/*/Dockerfile', { cwd: ROOT })) dockerfiles.push(file);
+    expect(dockerfiles.length).toBeGreaterThanOrEqual(5);
+    for (const file of dockerfiles) {
+      expect(named, `${file} is not built by the images job in .github/workflows/ci.yml`).toContain(file);
+    }
+    expect([...named].every((file) => dockerfiles.includes(file ?? ''))).toBe(true);
+  });
+
+  /**
    * A shipped source file that imports something `.dockerignore` drops builds on a full
    * checkout and fails inside the image, which is how the public `/docs` page's contract
-   * fixtures reached a deploy (docs/decisions.md). Only the excluded directories a source
-   * file can plausibly reach into are checked, which is cheap and is the case that bit:
-   * every such import must be named as a `!` exception.
+   * fixtures reached a deploy (docs/decisions.md). The rule is now that shipped source
+   * reaches into none of them at all — the fixtures live in
+   * `apps/purse/src/docs/contract-fixtures.json` — so no `!` exception has to be kept in
+   * step with an import. Only the excluded directories a source file can plausibly reach
+   * into are checked, which is cheap and is the case that bit. CI builds every image
+   * (`.github/workflows/ci.yml`), which catches the rest of the class.
    */
-  it('every excluded path the shipped source imports is named as a .dockerignore exception', async () => {
-    const lines = read('.dockerignore')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== '' && !line.startsWith('#'));
-    const exceptions = new Set(lines.filter((line) => line.startsWith('!')).map((line) => line.slice(1)));
+  it('the shipped source imports nothing the build context drops', async () => {
     const reached: string[] = [];
     for await (const file of glob('apps/*/src/**/*.{ts,tsx}', { cwd: ROOT })) {
       const source = readFileSync(path.join(ROOT, file), 'utf8');
@@ -104,13 +119,9 @@ describe('container images', () => {
         // Only the directories `.dockerignore` drops wholesale, matched as directories:
         // `src/routes/docs.ts` is a module named docs, not the excluded `docs/` tree.
         const directories = resolved.split('/').slice(0, -1);
-        if (directories.includes('test') || directories.includes('e2e') || directories[0] === 'docs') reached.push(resolved);
+        if (directories.includes('test') || directories.includes('e2e') || directories[0] === 'docs') reached.push(`${file} -> ${resolved}`);
       }
     }
-    for (const each of reached) {
-      expect(exceptions, `${each} is imported by shipped source but dropped from the build context`).toContain(each);
-    }
-    // The one that exists today, so a silent drop of the exception fails here too.
-    expect(reached).toContain('apps/purse/test/contract/fixtures.json');
+    expect(reached, 'shipped source imports a path .dockerignore drops from every image build context').toEqual([]);
   });
 });

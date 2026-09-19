@@ -82,7 +82,11 @@ original 24-hour expiry; the switch controls new minting. `/health` and `/v1/hea
 report `sandboxSelfServe`. No new service or required variable is needed.
 
 The docs HTML is rendered by `src/routes/docs.ts`; its request/response examples import
-`test/contract/fixtures.json` and are bundled into the service. The coverage test checks
+`src/docs/contract-fixtures.json` and are bundled into the service. That file is the API
+contract fixtures themselves, so the page cannot drift from the API; it lives under `src/`
+because it ships, and shipped source never imports from `test/`, which `.dockerignore`
+drops from every image's build context (`docs/decisions.md`). The coverage test checks
 every registered v1 endpoint against these fixtures, and pins the provider seam table to
 `docs/providers.md`. After an intentional contract change, regenerate fixtures with
-`UPDATE_CONTRACT_FIXTURES=1 pnpm --filter @purse/api test test/contract`.
+`UPDATE_CONTRACT_FIXTURES=1 pnpm --filter @purse/api test test/contract`, which is still
+the one command that writes the file.

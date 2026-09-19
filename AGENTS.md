@@ -9,8 +9,11 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 ## Working here
 
 - Gates: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`. `.no-mistakes.yaml` and
-  `.github/workflows/ci.yml` run the same four; keep them in step. The public demo and how it
-  is deployed (Railway, three services, one Postgres, two cron jobs) is `docs/deploy.md`.
+  `.github/workflows/ci.yml` run the same four; keep them in step. CI's other job, `images`,
+  builds every Dockerfile in the repository, the one gate that sees the `.dockerignore`
+  build context: shipped source must import nothing under `test/`, `e2e/` or `docs/`
+  (`test/docker.test.ts` pins both rules). The public demo and how it is deployed (Railway,
+  three services, one Postgres, two cron jobs) is `docs/deploy.md`.
 - `apps/purse/src/env.ts` is the authoritative list of Purse's variables (`.env.example` is
   the template); the provider seams and the dev identity lists are explained in
   `docs/providers.md`, the rate limit is `RATE_LIMIT_BURST` / `RATE_LIMIT_PER_SECOND`, and
@@ -209,9 +212,11 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   money and ids); `/health` and `/internal/reconcile` are mounted at the root and under
   `/v1` outside that stack. Response shapes are the `@purse/types` resources.
 - Contract: `test/contract/contract.test.ts` drives every endpoint and error type and
-  compares with `test/contract/fixtures.json`; after a deliberate contract change rerun it
-  with `UPDATE_CONTRACT_FIXTURES=1` and commit the file. `/responsible-play` and `/support`
-  (`routes/pages.ts`) are the two public HTML pages on the Purse origin.
+  compares with `apps/purse/src/docs/contract-fixtures.json` (under `src/` because the
+  `/docs` page ships it; nothing shipped may import from `test/`, which `.dockerignore`
+  drops); after a deliberate contract change rerun it with `UPDATE_CONTRACT_FIXTURES=1` and
+  commit the file. `/responsible-play` and `/support` (`routes/pages.ts`) are the two
+  public HTML pages on the Purse origin.
 - A sandbox key locally: `pnpm --filter @purse/api db:seed -- --print-keys` prints the seed
   keys' plaintext the one time they are created; `-- --print-keys --rotate-keys` revokes
   and reissues them. Then `curl -H "Authorization: Bearer sk_sandbox_..." -H

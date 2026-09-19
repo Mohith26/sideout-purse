@@ -4,11 +4,11 @@
 # every environment file but the template, the tests and their output, tooling caches,
 # the docs and screenshots, and the git history.
 #
-# One exception: `apps/purse/src/routes/docs.ts` bundles the contract fixtures into the
-# public `/docs` page, so `apps/purse/test/contract/fixtures.json` must reach the build
-# even though `**/test` does not. Without it `pnpm --filter @purse/api build` fails inside
-# the image with "Could not resolve ../../test/contract/fixtures.json" while succeeding on
-# a full checkout, which is how it reached a deploy (docs/decisions.md).
+# Nothing shipped may import an excluded path: a source file that does builds on a full
+# checkout and fails inside the image, which is how the public `/docs` page's contract
+# fixtures once reached a deploy (docs/decisions.md). They now live in
+# `apps/purse/src/docs/contract-fixtures.json`. `test/docker.test.ts` fails if shipped
+# source reaches into `test/`, `e2e/` or `docs/` again, and CI builds every image.
 .git
 .github
 node_modules
@@ -18,7 +18,6 @@ node_modules
 **/out
 **/*.tsbuildinfo
 **/test
-!apps/purse/test/contract/fixtures.json
 **/e2e
 **/test-results
 **/playwright-report
