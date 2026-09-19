@@ -14,7 +14,12 @@ import {
   SEED_USERS,
   SIDEOUT_TENANT_ID,
   SIDEOUT_TENANT_NAME,
+  PINGPONG_TENANT_ID,
+  PINGPONG_TENANT_NAME,
   DEFAULT_OPERATOR_ADMIN_EMAIL,
+  originsFromEnv,
+  PINGPONG_TENANT,
+  seedSecondTenant,
   seedApiKeys,
   seedContests,
   seedOperatorAdmin,
@@ -294,5 +299,41 @@ describe('db:seed', () => {
     const audit = await runtime.db.select().from(auditLog).where(eq(auditLog.action, 'operator.created'));
     expect(audit).toHaveLength(2);
     expect(audit.every((row) => row.actorKind === 'operator' && row.actorRef === 'seed' && JSON.stringify(row.after).includes('passwordHash') === false)).toBe(true);
+  });
+
+  it('seeds the second tenant with its own id, platform accounts, keys and origins, idempotently, and keeps the tenants apart', async () => {
+    const { tenant: sideout } = await seedSideoutTenant(database.db);
+    await seedPlatformAccounts(database.db, sideout.id);
+    resetAuthCaches();
+    const sideoutKeys = await seedApiKeys(database.db, sideout.id as Id<'tnt'>);
+
+    const first = await seedSecondTenant(database.db, { extraOrigins: ['https://pingpong.example'] });
+    expect(first.created).toBe(true);
+    expect(first.tenant).toMatchObject({ id: PINGPONG_TENANT_ID, name: PINGPONG_TENANT_NAME, status: 'active' });
+    expect(first.platform.created).toBe(PLATFORM_ACCOUNT_KINDS.length * 2);
+    expect(first.keys.keys.map((each) => [each.key.label, each.key.kind, each.created])).toEqual([
+      ['seed:pingpong:secret:sandbox', 'secret', true],
+      ['seed:pingpong:publishable:sandbox', 'publishable', true],
+    ]);
+    expect(first.origins.origins).toEqual(expect.arrayContaining([...PINGPONG_TENANT.devOrigins, 'https://pingpong.example']));
+    expect(await runtime.db.select().from(tenants)).toHaveLength(2);
+
+    // Each secret key authenticates to its own tenant and no other.
+    const secondSecret = first.keys.keys[0]?.plaintext ?? '';
+    await expect(authenticateApiKey(runtime.db, secondSecret)).resolves.toMatchObject({ tenant: { id: PINGPONG_TENANT_ID }, key: { label: 'seed:pingpong:secret:sandbox' } });
+    await expect(authenticateApiKey(runtime.db, sideoutKeys.keys[0]?.plaintext ?? '')).resolves.toMatchObject({ tenant: { id: SIDEOUT_TENANT_ID } });
+    // The Sideout seed contests and users are not the second tenant's.
+    expect(await runtime.db.select().from(users).where(eq(users.tenantId, PINGPONG_TENANT_ID))).toHaveLength(0);
+    expect(await runtime.db.select().from(accounts).where(eq(accounts.tenantId, PINGPONG_TENANT_ID))).toHaveLength(PLATFORM_ACCOUNT_KINDS.length * 2);
+
+    // A rerun creates nothing and has no plaintext to print.
+    const second = await seedSecondTenant(database.db);
+    expect(second.created).toBe(false);
+    expect(second.platform.created).toBe(0);
+    expect(second.keys.keys.map((each) => [each.key.id, each.plaintext, each.created])).toEqual(first.keys.keys.map((each) => [each.key.id, null, false]));
+    expect(await runtime.db.select().from(apiKeys)).toHaveLength(4);
+
+    // The deployed origin comes from the tenant's own variable, never Sideout's.
+    expect(originsFromEnv(PINGPONG_TENANT, { PURSE_TENANT_ORIGINS: 'https://sideout.example', PURSE_PINGPONG_ORIGINS: ' https://a.example, https://b.example ,' })).toEqual(['https://a.example', 'https://b.example']);
   });
 });

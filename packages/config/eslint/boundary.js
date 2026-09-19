@@ -1,9 +1,11 @@
 // @ts-check
 /**
- * The Sideout/Purse import boundary (system spec section 2, "the four rules", and
- * decision D1). The two apps live in one repository for velocity, so the boundary is
- * enforced by tooling: Sideout may reach Purse only through the published packages
- * `@purse/sdk` and `@purse/types`, and Purse may never reach into Sideout.
+ * The tenant/Purse import boundary (system spec section 2, "the four rules", and
+ * decision D1). The apps live in one repository for velocity, so the boundary is
+ * enforced by tooling: a tenant (Sideout, and since stretch item 4 the ping-pong ladder)
+ * may reach Purse only through the published packages `@purse/sdk` and `@purse/types`,
+ * and Purse may never reach into a tenant. The same rule, parameterised by the tenant's
+ * directory, protects both consumers (`tenantBoundary`, `tenantSdkGate`).
  *
  * Two rules cooperate because they see different things:
  *
@@ -18,29 +20,43 @@
  * direction and asserts these exact rule ids fire.
  */
 
-const SIDEOUT_MESSAGE =
-  'Sideout may import from Purse only through @purse/sdk and @purse/types (system spec §2 rule 1, decision D1).';
+/** @param {string} tenant the product's name, for the message */
+const tenantMessage = (tenant) => `${tenant} may import from Purse only through @purse/sdk and @purse/types (system spec §2 rule 1, decision D1).`;
 
 const PURSE_MESSAGE =
-  'Purse must not import from Sideout; the platform knows nothing about its tenants’ code (system spec §2).';
+  'Purse must not import from Sideout or any other tenant; the platform knows nothing about its tenants’ code (system spec §2).';
 
 const INTERNALS_MESSAGE =
   'Import the public entry of @purse/sdk or @purse/types, never a path inside the package.';
 
-const SDK_GATE_MESSAGE =
-  'Only components/purse/PurseGate.tsx mounts @purse/sdk flows in the browser (spec 4.8, 5.3); everything else reaches Purse through usePurse().';
+/**
+ * @param {string} gate the one component, relative to the app, that mounts the SDK
+ * @param {string} hook what everything else reaches Purse through
+ */
+const sdkGateMessage = (gate, hook) => `Only ${gate} mounts @purse/sdk flows in the browser (spec 4.8, 5.3); everything else reaches Purse through ${hook}.`;
 
-/** File globs that count as "Sideout" and "Purse" for the boundary rule. */
-export const SIDEOUT_FILES = ['apps/sideout/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
-/** Sideout's browser-facing source: pages, components and browser helpers. Server modules may use the SDK's server helpers. */
-export const SIDEOUT_BROWSER_FILES = ['apps/sideout/src/app/**/*.{ts,tsx}', 'apps/sideout/src/components/**/*.{ts,tsx}', 'apps/sideout/src/lib/**/*.{ts,tsx}'];
-export const SIDEOUT_SDK_GATE = 'apps/sideout/src/components/purse/PurseGate.tsx';
+/**
+ * The tenants: every product built on Purse in this repository. Adding one is a row here
+ * plus its blocks in `index.js`; `test/boundary.test.ts` drives the rule for each.
+ *
+ * @typedef {{ name: string, dir: string, gate: string, hook: string }} Tenant
+ * @type {readonly Tenant[]}
+ */
+export const TENANTS = [
+  { name: 'Sideout', dir: 'apps/sideout', gate: 'src/components/purse/PurseGate.tsx', hook: 'usePurse()' },
+  { name: 'Ping-pong', dir: 'apps/pingpong', gate: 'src/components/PurseFrame.tsx', hook: '<PurseFrame>' },
+];
 
-/** The `no-restricted-imports` patterns every Sideout file gets; the SDK gate block below repeats them and adds its own. */
-const SIDEOUT_IMPORT_PATTERNS = [
+/**
+ * The `no-restricted-imports` patterns every tenant file gets; the SDK gate block repeats
+ * them and adds its own.
+ *
+ * @param {string} message the tenant's message
+ */
+const tenantImportPatterns = (message) => [
   {
     group: ['@purse/*', '!@purse/sdk', '!@purse/types'],
-    message: SIDEOUT_MESSAGE,
+    message,
   },
   {
     group: ['@purse/sdk/*', '@purse/types/*'],
@@ -48,46 +64,66 @@ const SIDEOUT_IMPORT_PATTERNS = [
   },
   {
     group: ['**/apps/purse', '**/apps/purse/**', '**/packages/purse-*', '**/packages/purse-*/**'],
-    message: SIDEOUT_MESSAGE,
+    message,
   },
 ];
+/** File globs that count as "Purse" for the boundary rule. */
 export const PURSE_FILES = ['apps/purse/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
+/** Every tenant's globs, for the Purse-side rules: Purse (and its embed and console) import nothing of any tenant. */
+const TENANT_GLOBS = TENANTS.flatMap((t) => [`**/${t.dir}`, `**/${t.dir}/**`]);
+/** A tenant's package by its `@<tenant>/*` scope: `@sideout/web`, `@pingpong/web`. `@sideout/ui` is the shared design system and is not a tenant's code. */
+const TENANT_PACKAGE_GLOBS = ['@sideout/*', '!@sideout/ui', '@pingpong/*'];
 /** The Purse embed app: Purse's, so it never reaches Sideout, but it renders on the shared design system. */
 export const EMBED_FILES = ['apps/purse-embed/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
 /** The Purse operator console: the same rule as the embed, and it speaks to the API over HTTP (`/console`) only. */
 export const CONSOLE_FILES = ['apps/purse-console/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
 
 /**
- * Rules applied to files under `apps/sideout`.
+ * Rules applied to files under a tenant's directory: nothing of Purse's but the two
+ * public packages, and nothing inside them. A tenant that also imports another tenant is
+ * refused too: the products know each other only through Purse.
  *
  * @param {string} repoRoot absolute path of the repository root, used as `basePath`
  *   for the path zones so the rule does not depend on the process cwd
+ * @param {Tenant} tenant
  * @returns {import('eslint').Linter.Config}
  */
-export function sideoutBoundary(repoRoot) {
+export function tenantBoundary(repoRoot, tenant) {
+  const message = tenantMessage(tenant.name);
+  const others = TENANTS.filter((t) => t.dir !== tenant.dir);
+  const otherMessage = `${tenant.name} must not import another tenant’s code; products on Purse know each other only through the platform.`;
   return {
-    name: 'boundary/sideout',
-    files: SIDEOUT_FILES,
+    name: `boundary/${tenant.dir.replace('apps/', '')}`,
+    files: [`${tenant.dir}/**/*.{ts,tsx,js,jsx,mjs,cjs}`],
     rules: {
-      'no-restricted-imports': ['error', { patterns: SIDEOUT_IMPORT_PATTERNS }],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            ...tenantImportPatterns(message),
+            ...(others.length === 0 ? [] : [{ group: others.flatMap((t) => [`**/${t.dir}`, `**/${t.dir}/**`]), message: otherMessage }]),
+          ],
+        },
+      ],
       'import-x/no-restricted-paths': [
         'error',
         {
           basePath: repoRoot,
           zones: [
-            { target: './apps/sideout', from: './apps/purse', message: SIDEOUT_MESSAGE },
+            { target: `./${tenant.dir}`, from: './apps/purse', message },
             {
-              target: './apps/sideout',
+              target: `./${tenant.dir}`,
               from: './packages/purse-sdk',
               except: ['./src/index.ts'],
               message: INTERNALS_MESSAGE,
             },
             {
-              target: './apps/sideout',
+              target: `./${tenant.dir}`,
               from: './packages/purse-types',
               except: ['./src/index.ts'],
               message: INTERNALS_MESSAGE,
             },
+            ...others.map((t) => ({ target: `./${tenant.dir}`, from: `./${t.dir}`, message: otherMessage })),
           ],
         },
       ],
@@ -96,27 +132,62 @@ export function sideoutBoundary(repoRoot) {
 }
 
 /**
- * Rules applied to Sideout's browser-facing files: `@purse/sdk` is mounted by one component,
- * `PurseGate`, and nowhere else (spec 4.8, 5.3). `test/boundary.test.ts` asserts the rule
+ * Rules applied to a tenant's browser-facing files (pages, components, browser helpers):
+ * `@purse/sdk` is mounted by one component and nowhere else (spec 4.8, 5.3). Server
+ * modules may use the SDK's server helpers. `test/boundary.test.ts` asserts the rule
  * fires for a component and stays quiet for the gate and for a server module.
  *
+ * @param {Tenant} tenant
  * @returns {import('eslint').Linter.Config}
  */
-export function sideoutSdkGate() {
+export function tenantSdkGate(tenant) {
   return {
-    name: 'boundary/sideout-sdk-gate',
-    files: SIDEOUT_BROWSER_FILES,
-    ignores: [SIDEOUT_SDK_GATE],
+    name: `boundary/${tenant.dir.replace('apps/', '')}-sdk-gate`,
+    files: [`${tenant.dir}/src/app/**/*.{ts,tsx}`, `${tenant.dir}/src/components/**/*.{ts,tsx}`, `${tenant.dir}/src/lib/**/*.{ts,tsx}`],
+    ignores: [`${tenant.dir}/${tenant.gate}`],
     rules: {
       'no-restricted-imports': [
         'error',
         {
-          paths: [{ name: '@purse/sdk', message: SDK_GATE_MESSAGE }],
-          patterns: SIDEOUT_IMPORT_PATTERNS,
+          paths: [{ name: '@purse/sdk', message: sdkGateMessage(tenant.gate.replace('src/', ''), tenant.hook) }],
+          patterns: tenantImportPatterns(tenantMessage(tenant.name)),
         },
       ],
     },
   };
+}
+
+const SIDEOUT = TENANTS[0];
+
+/**
+ * Rules applied to files under `apps/sideout`: `tenantBoundary` for the first tenant.
+ *
+ * @param {string} repoRoot absolute path of the repository root
+ * @returns {import('eslint').Linter.Config}
+ */
+export function sideoutBoundary(repoRoot) {
+  if (SIDEOUT === undefined) throw new Error('TENANTS is empty');
+  return tenantBoundary(repoRoot, SIDEOUT);
+}
+
+/**
+ * Rules applied to Sideout's browser-facing files: `tenantSdkGate` for the first tenant.
+ *
+ * @returns {import('eslint').Linter.Config}
+ */
+export function sideoutSdkGate() {
+  if (SIDEOUT === undefined) throw new Error('TENANTS is empty');
+  return tenantSdkGate(SIDEOUT);
+}
+
+/**
+ * The boundary blocks of every tenant, for the root config.
+ *
+ * @param {string} repoRoot absolute path of the repository root
+ * @returns {import('eslint').Linter.Config[]}
+ */
+export function tenantBoundaries(repoRoot) {
+  return TENANTS.flatMap((tenant) => [tenantBoundary(repoRoot, tenant), tenantSdkGate(tenant)]);
 }
 
 /**
@@ -134,8 +205,8 @@ export function purseBoundary(repoRoot) {
         'error',
         {
           patterns: [
-            { group: ['@sideout/*'], message: PURSE_MESSAGE },
-            { group: ['**/apps/sideout', '**/apps/sideout/**'], message: PURSE_MESSAGE },
+            { group: ['@sideout/*', '@pingpong/*'], message: PURSE_MESSAGE },
+            { group: TENANT_GLOBS, message: PURSE_MESSAGE },
           ],
         },
       ],
@@ -144,7 +215,7 @@ export function purseBoundary(repoRoot) {
         {
           basePath: repoRoot,
           zones: [
-            { target: './apps/purse', from: './apps/sideout', message: PURSE_MESSAGE },
+            ...TENANTS.map((t) => ({ target: './apps/purse', from: `./${t.dir}`, message: PURSE_MESSAGE })),
             { target: './apps/purse', from: './packages/ui', message: PURSE_MESSAGE },
           ],
         },
@@ -170,8 +241,9 @@ export function embedBoundary(repoRoot) {
         'error',
         {
           patterns: [
-            { group: ['@sideout/*', '!@sideout/ui'], message: PURSE_MESSAGE },
-            { group: ['**/apps/sideout', '**/apps/sideout/**', '**/apps/purse', '**/apps/purse/**', '@purse/api'], message: 'The embed app reaches the Purse API over HTTP (/v1/embed), never through its source.' },
+            { group: TENANT_PACKAGE_GLOBS, message: PURSE_MESSAGE },
+            { group: TENANT_GLOBS, message: PURSE_MESSAGE },
+            { group: ['**/apps/purse', '**/apps/purse/**', '@purse/api'], message: 'The embed app reaches the Purse API over HTTP (/v1/embed), never through its source.' },
           ],
         },
       ],
@@ -180,7 +252,7 @@ export function embedBoundary(repoRoot) {
         {
           basePath: repoRoot,
           zones: [
-            { target: './apps/purse-embed', from: './apps/sideout', message: PURSE_MESSAGE },
+            ...TENANTS.map((t) => ({ target: './apps/purse-embed', from: `./${t.dir}`, message: PURSE_MESSAGE })),
             { target: './apps/purse-embed', from: './apps/purse', message: 'The embed app reaches the Purse API over HTTP (/v1/embed), never through its source.' },
           ],
         },
@@ -207,8 +279,9 @@ export function consoleBoundary(repoRoot) {
         'error',
         {
           patterns: [
-            { group: ['@sideout/*', '!@sideout/ui'], message: PURSE_MESSAGE },
-            { group: ['**/apps/sideout', '**/apps/sideout/**', '**/apps/purse', '**/apps/purse/**', '@purse/api', '@purse/embed'], message },
+            { group: TENANT_PACKAGE_GLOBS, message: PURSE_MESSAGE },
+            { group: TENANT_GLOBS, message: PURSE_MESSAGE },
+            { group: ['**/apps/purse', '**/apps/purse/**', '@purse/api', '@purse/embed'], message },
           ],
         },
       ],
@@ -217,7 +290,7 @@ export function consoleBoundary(repoRoot) {
         {
           basePath: repoRoot,
           zones: [
-            { target: './apps/purse-console', from: './apps/sideout', message: PURSE_MESSAGE },
+            ...TENANTS.map((t) => ({ target: './apps/purse-console', from: `./${t.dir}`, message: PURSE_MESSAGE })),
             { target: './apps/purse-console', from: './apps/purse', message },
             { target: './apps/purse-console', from: './apps/purse-embed', message },
           ],

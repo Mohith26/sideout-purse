@@ -1,0 +1,49 @@
+{
+  "name": "@pingpong/web",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Ping-pong: an office table-tennis ladder, the second tenant on Purse (system spec section 12, stretch item 4).",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --port 3100",
+    "build": "next build && tsx scripts/check-bundle.ts && tsup",
+    "start": "next start --port 3100",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "db:generate": "drizzle-kit generate",
+    "db:generate:custom": "drizzle-kit generate --custom",
+    "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
+    "db:seed": "tsx --env-file-if-exists=.env scripts/seed.ts",
+    "demo:reset": "tsx --env-file-if-exists=.env scripts/reset.ts",
+    "clean": "rm -rf .next dist test-results",
+    "check:bundle": "tsx scripts/check-bundle.ts"
+  },
+  "dependencies": {
+    "@purse/sdk": "workspace:*",
+    "@purse/types": "workspace:*",
+    "@repo/db": "workspace:*",
+    "@repo/ids": "workspace:*",
+    "@repo/logger": "workspace:*",
+    "@sideout/ui": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "next": "~15.5.25",
+    "postgres": "^3.4.9",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@repo/config": "workspace:*",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22.20.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "drizzle-kit": "^0.31.10",
+    "tailwindcss": "^4.3.3",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.13",
+    "vitest": "^5.0.1"
+  }
+}

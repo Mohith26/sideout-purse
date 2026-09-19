@@ -17,8 +17,11 @@ import postgres from 'postgres';
  *                                                 grant it (no UPDATE or DELETE on the
  *                                                 journal, spec 4.2.2 rule 5)
  *              sideout_app                        Sideout's single role (owner and runtime)
+ *              pingpong_app                       the ping-pong ladder's single role (the second
+ *                                                 tenant, docs/second-tenant.md)
  *   databases  purse, purse_test                  owned by purse_migrator; purse_app may connect
  *              sideout, sideout_test              owned by sideout_app
+ *              pingpong, pingpong_test            owned by pingpong_app
  *
  * CONNECT is revoked from PUBLIC on every database, so each role reaches only its own.
  * Every role is LOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOINHERIT.
@@ -31,8 +34,8 @@ import postgres from 'postgres';
  *
  *   pnpm db:setup                                 # admin URL from DATABASE_ADMIN_URL or local default
  *   pnpm db:setup --admin-url postgres://postgres:postgres@localhost:5432/postgres
- *   pnpm db:setup --no-write-env                  # do not create apps/{purse,sideout}/.env
- *   pnpm db:setup --no-test-databases             # a hosted Postgres: purse and sideout only
+ *   pnpm db:setup --no-write-env                  # do not create apps/{purse,sideout,pingpong}/.env
+ *   pnpm db:setup --no-test-databases             # a hosted Postgres: purse, sideout and pingpong only
  */
 
 const { values: args } = parseArgs({
@@ -41,6 +44,7 @@ const { values: args } = parseArgs({
     'purse-password': { type: 'string' },
     'purse-migrator-password': { type: 'string' },
     'sideout-password': { type: 'string' },
+    'pingpong-password': { type: 'string' },
     'write-env': { type: 'boolean', default: true },
     'test-databases': { type: 'boolean', default: true },
     help: { type: 'boolean', short: 'h', default: false },
@@ -49,9 +53,9 @@ const { values: args } = parseArgs({
 });
 
 if (args.help) {
-  console.log(`Usage: pnpm db:setup [--admin-url <url>] [--purse-password <pw>] [--purse-migrator-password <pw>] [--sideout-password <pw>] [--no-write-env] [--no-test-databases]
+  console.log(`Usage: pnpm db:setup [--admin-url <url>] [--purse-password <pw>] [--purse-migrator-password <pw>] [--sideout-password <pw>] [--pingpong-password <pw>] [--no-write-env] [--no-test-databases]
 
-Environment: DATABASE_ADMIN_URL, PURSE_DB_PASSWORD, PURSE_MIGRATOR_DB_PASSWORD, SIDEOUT_DB_PASSWORD`);
+Environment: DATABASE_ADMIN_URL, PURSE_DB_PASSWORD, PURSE_MIGRATOR_DB_PASSWORD, SIDEOUT_DB_PASSWORD, PINGPONG_DB_PASSWORD`);
   process.exit(0);
 }
 
@@ -76,6 +80,13 @@ const sideoutRole: Role = {
   envVar: 'SIDEOUT_DATABASE_URL',
 };
 
+/** The ping-pong ladder, the second tenant: one role, like Sideout (its tables hold no ledger). */
+const pingpongRole: Role = {
+  name: 'pingpong_app',
+  password: args['pingpong-password'] ?? process.env['PINGPONG_DB_PASSWORD'] ?? 'pingpong_app',
+  envVar: 'PINGPONG_DATABASE_URL',
+};
+
 const apps: App[] = [
   {
     app: 'purse',
@@ -92,6 +103,7 @@ const apps: App[] = [
     },
   },
   { app: 'sideout', databases: ['sideout', 'sideout_test'], owner: sideoutRole, runtime: sideoutRole },
+  { app: 'pingpong', databases: ['pingpong', 'pingpong_test'], owner: pingpongRole, runtime: pingpongRole },
 ];
 
 const IDENT = /^[a-z_][a-z0-9_]*$/;

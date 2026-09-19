@@ -7,7 +7,9 @@
 # database is migrated and seeded, which mirrors the seeded events to that Purse, and
 # `reconcile` runs against Purse's ledger: a failing invariant fails the build (spec 4.2.4).
 # After the build, the operator console's Playwright smoke runs the built console against
-# the API on that same seeded database (spec section 8).
+# the API on that same seeded database (spec section 8), then Sideout's, then the second
+# tenant's (the ping-pong ladder, docs/second-tenant.md), and the ledger is reconciled once
+# more with both tenants' settlements in it.
 name: CI
 
 on:
@@ -54,6 +56,8 @@ jobs:
       PURSE_MIGRATOR_DATABASE_URL_TEST: postgres://purse_migrator:purse_migrator@localhost:5432/purse_test
       SIDEOUT_DATABASE_URL: postgres://sideout_app:sideout_app@localhost:5432/sideout
       SIDEOUT_DATABASE_URL_TEST: postgres://sideout_app:sideout_app@localhost:5432/sideout_test
+      PINGPONG_DATABASE_URL: postgres://pingpong_app:pingpong_app@localhost:5432/pingpong
+      PINGPONG_DATABASE_URL_TEST: postgres://pingpong_app:pingpong_app@localhost:5432/pingpong_test
       # Where the Purse API started below listens; Sideout's seed and integration walk reach it here.
       PURSE_API_URL: http://localhost:4000
       PURSE_INTEGRATION_API_URL: http://localhost:4000
@@ -86,21 +90,30 @@ jobs:
           pnpm lint
 
       - name: Migrate and seed Purse
-        # The seed prints the sandbox keys' plaintext the one time it creates them: the secret
-        # key is what Sideout's seed and integration walk call Purse with, and the publishable
-        # key is what the SDK would mount flows with.
+        # The seed prints the sandbox keys' plaintext the one time it creates them, one pair per
+        # tenant, each line labelled: the secret key is what the tenant's seed and integration
+        # walk call Purse with, and the publishable key is what the SDK mounts flows with.
         run: |
           pnpm --filter @purse/api db:migrate
           pnpm --filter @purse/api db:seed -- --print-keys | tee purse-seed.log
-          SECRET=$(grep -o '"kind":"secret"[^}]*"key":"sk_[A-Za-z0-9_]*"' purse-seed.log | grep -o 'sk_[A-Za-z0-9_]*' | head -1)
-          PUBLISHABLE=$(grep -o '"kind":"publishable"[^}]*"key":"pk_[A-Za-z0-9_]*"' purse-seed.log | grep -o 'pk_[A-Za-z0-9_]*' | head -1)
-          test -n "$SECRET" && test -n "$PUBLISHABLE"
+          key_of() { grep "\"label\":\"seed:$1:$2:sandbox\"" purse-seed.log | grep -o "\"key\":\"$3_[A-Za-z0-9_]*\"" | grep -o "$3_[A-Za-z0-9_]*" | head -1; }
+          SECRET=$(key_of sideout secret sk)
+          PUBLISHABLE=$(key_of sideout publishable pk)
+          PP_SECRET=$(key_of pingpong secret sk)
+          PP_PUBLISHABLE=$(key_of pingpong publishable pk)
+          test -n "$SECRET" && test -n "$PUBLISHABLE" && test -n "$PP_SECRET" && test -n "$PP_PUBLISHABLE"
           echo "::add-mask::$SECRET"
+          echo "::add-mask::$PP_SECRET"
           # Named apart from PURSE_SECRET_KEY, which is Purse's own process secret.
           echo "SIDEOUT_PURSE_SECRET_KEY=$SECRET" >> "$GITHUB_ENV"
           echo "PURSE_INTEGRATION_SECRET_KEY=$SECRET" >> "$GITHUB_ENV"
           echo "PURSE_INTEGRATION_PUBLISHABLE_KEY=$PUBLISHABLE" >> "$GITHUB_ENV"
           echo "NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY=$PUBLISHABLE" >> "$GITHUB_ENV"
+          # The second tenant's pair, for its seed, its integration walk and its smoke.
+          echo "PINGPONG_PURSE_SECRET_KEY=$PP_SECRET" >> "$GITHUB_ENV"
+          echo "PINGPONG_INTEGRATION_SECRET_KEY=$PP_SECRET" >> "$GITHUB_ENV"
+          echo "PINGPONG_INTEGRATION_PUBLISHABLE_KEY=$PP_PUBLISHABLE" >> "$GITHUB_ENV"
+          echo "PINGPONG_PURSE_PUBLISHABLE_KEY=$PP_PUBLISHABLE" >> "$GITHUB_ENV"
           rm purse-seed.log
 
       - name: Start the Purse API
@@ -114,10 +127,11 @@ jobs:
           done
 
       - name: Test
-        # SIDEOUT_PURSE_SECRET_KEY is unset here on purpose: the suites run against an in-memory Purse,
-        # and only the integration walk, gated on PURSE_INTEGRATION_*, reaches the real one.
+        # The tenants' secret keys are unset here on purpose: the suites run against an in-memory
+        # Purse, and only the integration walks, gated on *_INTEGRATION_*, reach the real one.
         env:
           SIDEOUT_PURSE_SECRET_KEY: ''
+          PINGPONG_PURSE_SECRET_KEY: ''
         run: |
           pnpm test
 
@@ -126,6 +140,11 @@ jobs:
           pnpm --filter @sideout/web db:migrate
           pnpm --filter @sideout/web db:seed
           pnpm --filter @sideout/web db:seed
+
+      - name: Migrate and seed Ping-pong (links the seeded players to Purse)
+        run: |
+          pnpm --filter @pingpong/web db:migrate
+          pnpm --filter @pingpong/web db:seed
 
       - name: Reconcile Purse ledger
         run: |
@@ -159,6 +178,16 @@ jobs:
         run: |
           pnpm --filter @sideout/web exec playwright install --with-deps chromium
           pnpm --filter @sideout/web e2e
+
+      - name: Ping-pong end-to-end smoke
+        # The second tenant's built app against a Purse API on the seeded databases: two players,
+        # one confirmed result, the ladder reorders, the season closes and the payouts land.
+        run: |
+          pnpm --filter @pingpong/web e2e
+
+      - name: Reconcile Purse ledger after both tenants settled
+        run: |
+          pnpm --filter @purse/api reconcile
 
       - name: Keep the screenshots
         if: always()

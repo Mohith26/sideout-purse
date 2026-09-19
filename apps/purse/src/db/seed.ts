@@ -23,6 +23,7 @@ import {
   type Account,
   type AccountKind,
   type ApiKey,
+  type ApiKeyScope,
   type Contest,
   type Operator,
   type RulesetRow,
@@ -35,33 +36,59 @@ import {
  * Seed data never lives in migration history: migrations are forward-only and describe
  * the schema, this describes rows, and it may be re-run against any environment.
  *
- * Sideout's tenant id is a UUID v7 minted once so every environment agrees on it; phase 4
- * configures Sideout with the same value through its own environment, not by importing
- * this file.
+ * Two tenants are seeded: Sideout, and the ping-pong ladder (system spec section 12,
+ * stretch item 4; docs/second-tenant.md). Each tenant id is a UUID v7 minted once so every
+ * environment agrees on it; each product is configured with its value through its own
+ * environment, not by importing this file. A tenant is a name, a stable id, the local dev
+ * origins its pages mount Purse flows from, and the label its seed keys carry.
  */
+export type SeedTenant = {
+  id: Id<'tnt'>;
+  name: string;
+  /** The label prefix of the tenant's seed keys: `seed:<slug>:secret:sandbox`. */
+  slug: string;
+  /** The origins the tenant's local dev server runs on (spec 4.8 rule 3). */
+  devOrigins: readonly string[];
+  /** The environment variable naming the tenant's deployed origin(s), comma-separated. */
+  originsVariable: string;
+};
+
 export const SIDEOUT_TENANT_ID: Id<'tnt'> = 'tnt_01a0b16a-b475-74d4-b1cb-2dbdc08845a9';
 export const SIDEOUT_TENANT_NAME = 'Sideout';
+export const PINGPONG_TENANT_ID: Id<'tnt'> = 'tnt_01a0c2f0-5e7a-7b4e-9d1a-4f2b8c6d0e11';
+export const PINGPONG_TENANT_NAME = 'Ping-pong';
+
+export const SIDEOUT_TENANT: SeedTenant = { id: SIDEOUT_TENANT_ID, name: SIDEOUT_TENANT_NAME, slug: 'sideout', devOrigins: ['http://localhost:3000', 'http://127.0.0.1:3000'], originsVariable: 'PURSE_TENANT_ORIGINS' };
+export const PINGPONG_TENANT: SeedTenant = { id: PINGPONG_TENANT_ID, name: PINGPONG_TENANT_NAME, slug: 'pingpong', devOrigins: ['http://localhost:3100', 'http://127.0.0.1:3100'], originsVariable: 'PURSE_PINGPONG_ORIGINS' };
+/** Every seeded tenant, Sideout first. */
+export const SEED_TENANTS: readonly SeedTenant[] = [SIDEOUT_TENANT, PINGPONG_TENANT];
 
 export type SeedResult = { tenant: Tenant; created: boolean };
 
 /**
- * Upsert the Sideout tenant, keyed on its unique name. A first run inserts the row with
- * the stable id; a later run leaves whatever is there alone (including an operator's
- * suspension) and reports it, so the script is safe to run on every deploy.
+ * Upsert a tenant, keyed on its unique name. A first run inserts the row with the stable
+ * id; a later run leaves whatever is there alone (including an operator's suspension) and
+ * reports it, so the script is safe to run on every deploy.
  */
-export async function seedSideoutTenant(db: Db): Promise<SeedResult> {
-  const [inserted] = await db
-    .insert(tenants)
-    .values({ id: SIDEOUT_TENANT_ID, name: SIDEOUT_TENANT_NAME })
-    .onConflictDoNothing({ target: tenants.name })
-    .returning();
+export async function seedTenant(db: Db, spec: Pick<SeedTenant, 'id' | 'name'>): Promise<SeedResult> {
+  const [inserted] = await db.insert(tenants).values({ id: spec.id, name: spec.name }).onConflictDoNothing({ target: tenants.name }).returning();
   if (inserted !== undefined) return { tenant: inserted, created: true };
 
-  const [existing] = await db.select().from(tenants).where(eq(tenants.name, SIDEOUT_TENANT_NAME));
+  const [existing] = await db.select().from(tenants).where(eq(tenants.name, spec.name));
   if (existing === undefined) {
-    throw new Error(`Tenant "${SIDEOUT_TENANT_NAME}" was neither inserted nor found`);
+    throw new Error(`Tenant "${spec.name}" was neither inserted nor found`);
   }
   return { tenant: existing, created: false };
+}
+
+/** The Sideout tenant (the first; the seed contests and users are its). */
+export function seedSideoutTenant(db: Db): Promise<SeedResult> {
+  return seedTenant(db, SIDEOUT_TENANT);
+}
+
+/** The ping-pong tenant: the second consumer, with its own keys, origins and platform accounts and nothing else seeded. */
+export function seedPingpongTenant(db: Db): Promise<SeedResult> {
+  return seedTenant(db, PINGPONG_TENANT);
 }
 
 /**
@@ -234,22 +261,29 @@ async function seedPlatformBlock(db: Db, tenantId: Id<'tnt'>, user: User): Promi
 // ---- API keys (phase 3) --------------------------------------------------------------
 
 /**
- * One sandbox secret key with the operator scope (Sideout's server issues credits and
- * closes tournaments with it) and one sandbox publishable key (the iframe bootstrap),
- * labelled so a rerun finds them. The plaintext exists only in the return value of the run
- * that created a key; `pnpm db:seed -- --print-keys` prints it then and never again, and
- * `--rotate-keys` revokes the seed keys and mints new ones.
+ * Per tenant, one sandbox secret key with the operator scope (the product's server issues
+ * credits and closes contests with it) and one sandbox publishable key (the iframe
+ * bootstrap), labelled `seed:<slug>:...` so a rerun finds them. The plaintext exists only
+ * in the return value of the run that created a key; `pnpm db:seed -- --print-keys` prints
+ * it then and never again, and `--rotate-keys` revokes the seed keys and mints new ones.
  */
-export const SEED_API_KEYS = [
-  { label: 'seed:sideout:secret:sandbox', kind: 'secret', environment: 'sandbox', scopes: ['operator'] },
-  { label: 'seed:sideout:publishable:sandbox', kind: 'publishable', environment: 'sandbox', scopes: [] },
-] as const;
+export type SeedApiKeySpec = { label: string; kind: 'secret' | 'publishable'; environment: 'sandbox'; scopes: readonly ApiKeyScope[] };
+
+export function seedApiKeySpecs(slug: string): readonly SeedApiKeySpec[] {
+  return [
+    { label: `seed:${slug}:secret:sandbox`, kind: 'secret', environment: 'sandbox', scopes: ['operator'] },
+    { label: `seed:${slug}:publishable:sandbox`, kind: 'publishable', environment: 'sandbox', scopes: [] },
+  ];
+}
+
+/** Sideout's two seed keys. */
+export const SEED_API_KEYS = seedApiKeySpecs(SIDEOUT_TENANT.slug);
 
 export type SeedApiKeysResult = { keys: Array<{ key: Omit<ApiKey, 'keyHash'>; plaintext: string | null; created: boolean }> };
 
-export async function seedApiKeys(db: Db, tenantId: Id<'tnt'>, options: { rotate?: boolean } = {}): Promise<SeedApiKeysResult> {
+export async function seedApiKeys(db: Db, tenantId: Id<'tnt'>, options: { rotate?: boolean; slug?: string } = {}): Promise<SeedApiKeysResult> {
   const keys: SeedApiKeysResult['keys'] = [];
-  for (const spec of SEED_API_KEYS) {
+  for (const spec of seedApiKeySpecs(options.slug ?? SIDEOUT_TENANT.slug)) {
     const created = await db.transaction(async (tx): Promise<{ key: ApiKey; plaintext: string | null; created: boolean }> => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`seed-api-key:${tenantId}:${spec.label}`}, 0))`);
       const [existing] = await tx
@@ -270,19 +304,28 @@ export async function seedApiKeys(db: Db, tenantId: Id<'tnt'>, options: { rotate
 // ---- Embed origins (phase 4) ---------------------------------------------------------
 
 /**
- * The origins Sideout's pages mount Purse flows from (spec 4.8 rule 3): the local dev
- * server by default, plus whatever `PURSE_TENANT_ORIGINS` (comma-separated) names for a
- * hosted environment, so a deploy registers `https://sideout.<domain>` by seeding rather
- * than by hand. Idempotent; a revoked origin that is still listed here is restored.
+ * The origins a tenant's pages mount Purse flows from (spec 4.8 rule 3): its local dev
+ * server by default, plus whatever its origins variable (`PURSE_TENANT_ORIGINS` for
+ * Sideout, `PURSE_PINGPONG_ORIGINS` for the ladder; comma-separated) names for a hosted
+ * environment, so a deploy registers `https://sideout.<domain>` by seeding rather than by
+ * hand. Idempotent; a revoked origin that is still listed here is restored.
  */
-export const SEED_TENANT_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'] as const;
+export const SEED_TENANT_ORIGINS = SIDEOUT_TENANT.devOrigins;
 
 export type SeedOriginsResult = { origins: string[]; created: number };
 
-export async function seedTenantOrigins(db: Db, tenantId: Id<'tnt'>, extra: readonly string[] = []): Promise<SeedOriginsResult> {
+/** The comma-separated origins a tenant's variable names in `source`, trimmed and emptied of blanks. */
+export function originsFromEnv(tenant: Pick<SeedTenant, 'originsVariable'>, source: Record<string, string | undefined> = process.env): string[] {
+  return (source[tenant.originsVariable] ?? '')
+    .split(',')
+    .map((each) => each.trim())
+    .filter((each) => each !== '');
+}
+
+export async function seedTenantOrigins(db: Db, tenantId: Id<'tnt'>, extra: readonly string[] = [], defaults: readonly string[] = SEED_TENANT_ORIGINS): Promise<SeedOriginsResult> {
   const before = new Set(await activeOrigins(db, tenantId));
   let created = 0;
-  for (const origin of [...SEED_TENANT_ORIGINS, ...extra]) {
+  for (const origin of [...defaults, ...extra]) {
     const added = await addOrigin(db, { tenantId, origin, actor: SEED_OPERATOR });
     if (!before.has(added.origin)) created += 1;
   }
@@ -611,4 +654,25 @@ export async function seedOperatorAdmin(db: Db, options: { email?: string; rotat
   });
   const { passwordHash: _hash, ...operator } = result.operator;
   return { operator, password: result.password, created: result.created };
+}
+
+// ---- The second tenant (stretch item 4) ---------------------------------------------------
+
+export type SeedSecondTenantResult = { tenant: Tenant; created: boolean; platform: PlatformAccountsResult; keys: SeedApiKeysResult; origins: SeedOriginsResult };
+
+/**
+ * Everything the ping-pong ladder needs on Purse and nothing more: its tenant row, the
+ * platform accounts its promo points are issued from, its two sandbox keys and its
+ * origins. Its users, contests and scores are the product's to make through the API; the
+ * seed contests and users above are Sideout's. Runs after the Sideout seed in
+ * `scripts/seed.ts` and `scripts/demo-reset.ts`, and is what the second consumer proved
+ * a tenant costs: one row, six accounts, two keys and an allowlist.
+ */
+export async function seedSecondTenant(db: Db, options: { rotateKeys?: boolean; extraOrigins?: readonly string[] } = {}): Promise<SeedSecondTenantResult> {
+  const { tenant, created } = await seedPingpongTenant(db);
+  const tenantId = tenant.id as Id<'tnt'>;
+  const platform = await seedPlatformAccounts(db, tenantId);
+  const keys = await seedApiKeys(db, tenantId, { slug: PINGPONG_TENANT.slug, ...(options.rotateKeys === undefined ? {} : { rotate: options.rotateKeys }) });
+  const origins = await seedTenantOrigins(db, tenantId, options.extraOrigins ?? [], PINGPONG_TENANT.devOrigins);
+  return { tenant, created, platform, keys, origins };
 }

@@ -1543,3 +1543,85 @@ sibling checkout holds the defaults.
   `docs/deploy.md` are the operator's step after this lands.
 - `apps/sideout/.env.example` could not be edited from the automated pipeline (writes to env
   files are denied by policy); `src/env.ts` and `docs/demo-accounts.md` document the variable.
+
+## Stretch: second tenant decisions
+
+Stretch item 4: a throwaway second product, an office ping-pong ladder (`apps/pingpong`,
+`docs/second-tenant.md`), on the same Purse instance. What was decided, what the second
+consumer proved, and what it exposed.
+
+### What it proved
+
+- **A tenant costs a row, six accounts, two keys and an allowlist.** `seedSecondTenant`
+  (`apps/purse/src/db/seed.ts`) is the whole of what Purse needed to learn about the ladder:
+  a `tenants` row with a stable id, the platform accounts per asset, a sandbox key pair
+  labelled `seed:pingpong:*`, and its origins. No migration, no code path in the API, no
+  mention of the product anywhere in Purse's source. The ladder imports nothing of Purse but
+  `@purse/sdk` and `@purse/types`, and the boundary lint now proves it for two consumers
+  (`packages/config/eslint/boundary.js`, `tenantBoundary` over `TENANTS`;
+  `test/boundary.test.ts`).
+- **The four rules held without being restated.** Its own database and role (`pingpong`,
+  `pingpong_app`); the secret key on the server only (`scripts/check-bundle.ts`); the ladder
+  owning the outcome (who won, who moved) and Purse owning what it pays (the 50/30 split, the
+  frozen preview, the hash the close must repeat); every mutation under an idempotency key
+  the ladder chose. The Playwright smoke and the integration walk close a real season with
+  real wallets, and the ledger reconciles with both tenants' settlements in it (CI).
+- **The embed is genuinely product-agnostic.** The `entry` flow mounted in the ladder's page
+  with the ladder's publishable key and tenant id, on Purse's origin, with no change to the
+  embed app; the eligibility check and the escrow ran there. A second design surface
+  (`@sideout/ui`, the shared design system) dressed it without a line of new CSS beyond two
+  rules.
+
+### What it exposed
+
+- **The server client is not published.** The typed `PurseClient` (schemas for every
+  resource, the sealed error shapes, redaction, the call recorder, the 429 retry) had to be
+  copied from Sideout, and so did the in-memory fake Purse the route tests run against. That
+  is ~900 lines a tenant should never write: the follow-up is a server entry in `@purse/sdk`
+  (the typed client and the resource schemas) and a published fake, the way payment
+  platforms ship a mock server. This is the single largest cost of the second consumer.
+- **The contest vocabulary is Sideout-shaped.** `CONTEST_KINDS` is `tournament`,
+  `head_to_head`, `pool`; a ladder season is filed as a `pool`. The kind is descriptive only
+  (nothing in settlement reads it), so a free-text or extensible kind would cost nothing.
+- **The demo reset is per platform, not per tenant.** Purse's nightly reset deletes every
+  tenant's users and contests and reseeds Sideout's; the ladder's own reset is a separate
+  job, and until it runs the ladder holds Purse ids that no longer exist. The app copes (a
+  forgotten user is offered the link again; a season whose contest is gone is closed by
+  opening the next), but a platform should reset one tenant's data at a time, or the demo
+  reset should be a per-tenant operation the console offers.
+- **The entrant read-back is the tenant's job.** A tenant learns that the entry flow
+  succeeded from the frame's `flow:complete` (untrusted) and then has to ask Purse who the
+  entrants are; Sideout and the ladder both wrote the same "read the preview, diff against
+  what we hold" loop. A `GET /contests/:id/entries` (the preview carries them, but as part of
+  a settlement view) and the `contest.entry.created` webhook are the two ways in, and neither
+  is as simple as a tenant would like.
+- **`NEXT_PUBLIC_` names travel further than they should.** The ladder never inlines the
+  publishable key (the server hands it to the browser with each embed token), but the
+  variables kept Sideout's names for the operator's sake, so the Dockerfile still declares
+  build arguments it does not need. A tenant template would settle the names once.
+
+### Decisions the spec left open
+
+- **One role, like Sideout.** The ladder's tables hold no ledger; nothing in them is
+  append-only by rule, so the two-role pattern (owner and runtime) that protects Purse's
+  journal has nothing to protect here. `pingpong_app` owns and runs, like `sideout_app`.
+- **The ladder's rules** (challenge reach 3, one open challenge, one game to 11 won by two,
+  the challenger takes the defender's place) are the classic office rules; they are constants
+  in `domain/ladder.ts` and nothing in Purse depends on them.
+- **What a score means.** Mid-season, a player's Purse score is their wins so far
+  (`attemptFinished: false`), so Purse's mid-season view is readable; at the close, the rank
+  turned upside down (`attemptFinished: true`), so Purse's ranking reproduces the ladder
+  exactly and the split follows it. The final scores supersede the running ones, so a running
+  score whose push failed is a gap in the mid-season view, never in the settlement.
+- **The season freezes before the preview.** `previewClose` moves the season to `closing`
+  in its first transaction, before any Purse call, so the rank set cannot change between the
+  final push and the close and the final push's key (`<external id>:final`) is stable across
+  retries. There is no reopen; the next season is the remedy.
+- **Sign-in is a name and the office code.** A shared secret is the right amount of
+  authentication for a throwaway office product and the wrong amount for anything else; the
+  production configuration requires a real code and a real session secret, and nothing about
+  it is reused by Sideout.
+- **Deploying the fourth service** is documented (`docs/second-tenant.md`, following
+  `docs/deploy.md`'s pattern) and left to the operator: the brief both asked for the deploy
+  and forbade a new service, so the PR ships deployable and the deploy itself is a decision
+  above the implementation.

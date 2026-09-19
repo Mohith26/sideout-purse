@@ -16,6 +16,7 @@ const SERVICES = [
   { name: 'purse', dockerfile: 'apps/purse/Dockerfile', entrypoint: 'apps/purse/docker-entrypoint.sh', port: 4000, migrates: true },
   { name: 'purse-console', dockerfile: 'apps/purse-console/Dockerfile', entrypoint: 'apps/purse-console/docker-entrypoint.sh', port: 4200, migrates: false },
   { name: 'sideout', dockerfile: 'apps/sideout/Dockerfile', entrypoint: 'apps/sideout/docker-entrypoint.sh', port: 3000, migrates: true },
+  { name: 'pingpong', dockerfile: 'apps/pingpong/Dockerfile', entrypoint: 'apps/pingpong/docker-entrypoint.sh', port: 3100, migrates: true },
 ] as const;
 
 describe('container images', () => {
@@ -30,8 +31,8 @@ describe('container images', () => {
     // Production dependencies come from a clean install, never from pruning the build stage in place.
     expect(text).toMatch(/pnpm install --frozen-lockfile --prod --filter/);
     expect(text).not.toMatch(/npm prune/);
-    // No secret is baked in: the only build arguments are the sha, for Sideout the NEXT_PUBLIC_
-    // values, and the demo-accounts switch (a boolean the build inlines; docs/demo-accounts.md).
+    // No secret is baked in: the only build arguments are the sha, for the tenants the NEXT_PUBLIC_
+    // values, and for Sideout the demo-accounts switch (a boolean the build inlines; docs/demo-accounts.md).
     const args = [...text.matchAll(/^ARG (\w+)/gm)].map((m) => m[1]);
     expect(args.every((arg) => arg === 'BUILD_SHA' || arg === 'DEMO_ACCOUNTS' || arg?.startsWith('NEXT_PUBLIC_'))).toBe(true);
   });
