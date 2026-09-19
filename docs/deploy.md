@@ -109,14 +109,39 @@ built from the root.
 
 ### Public demo
 
-Deployed commit: `c5082c4` (2026-09-19), all five services, with `DEMO_ACCOUNTS=true` on
-the `sideout` service: `/sign-in` offers the six demo accounts (`docs/demo-accounts.md`),
-`/health` on Sideout reports `demoAccounts: true`, and the demo reset was run once after
-the deploy so the roster's two Purse states are set (the nightly reset keeps them).
-Verified on the live origin: a full demo sign-in as Captain A lands on the awaiting
-quarterfinal with the "Demo · Farah El-Amin" pill, and the console's public `/status` page
-answers. To turn the picker off, unset `DEMO_ACCOUNTS` on `sideout` and redeploy it (the
-build argument follows the variable).
+Deployed commit: `c4469b5` (2026-09-19), all six services (the five above and `pingpong`),
+with `DEMO_ACCOUNTS=true` on the `sideout` service: `/sign-in` offers the six demo accounts
+(`docs/demo-accounts.md`) and `/health` on Sideout reports `demoAccounts: true`. This deploy
+carried the SSE live scoring (`docs/live.md`) and the signed score attestation
+(`docs/attestation.md`): Purse's migrations went to 19 (`user_devices` and its guards),
+Sideout's to 6 (`team_devices`). Verified on the live origins after the redeploy: every
+`/health` reports the commit with no pending migration and the crons rebuilt at it (a
+scheduled reconcile ran clean four minutes after the API came up); the console's public
+`/status` shows the seven invariants holding; a stream on `/api/live/tournaments/<Sandbar>`
+opened, heartbeat, and delivered the `score`, `match` and `standings` events the moment a
+scoreline landed; Captain B (a demo account) checked a phone in on the register screen
+(mirrored to Purse), submitted the answering scoreline signed, the match went final and
+`confirmed`, the match page marks that reading `Signed` and Captain A's `Unsigned`, and the
+`purse_calls` audit shows Purse's answer to the push: team B's two scores `verified` against
+the registered device, team A's `none`; the ping-pong ladder answers. The demo reset was not
+run after this deploy (the roster's seeded states were intact and the nightly reset keeps
+them); run it before a recording. To turn the picker off, unset `DEMO_ACCOUNTS` on `sideout`
+and redeploy it (the build argument follows the variable).
+
+The console admin password was rotated the same day (the seed's `--print-operator-password
+--rotate-operator-password` through the Postgres proxy, the value written straight into the
+`purse-console` service's `PURSE_CONSOLE_ADMIN_PASSWORD` variable and nowhere else) and
+verified: `POST /console/auth/login` answers 201 for `admin@purse.local`, the console's
+sign-in form lands on the contests list, and the ledger explorer, the replay and the
+invariants pages render. Two things worth knowing when checking that login by hand: the API
+route is `/console/auth/login` (a `POST /console/login` answers 401 `missing_session`, which
+is the authenticated stack, not a wrong password), and the nightly demo reset never rotates
+the password: `operators` and `operator_sessions` are kept tables, and the reset seeds the
+admin without `rotate`, which leaves an existing account untouched. Only a seed run with
+`--rotate-operator-password` changes it, so whoever runs one updates the variable.
+
+Previous: `c5082c4` (2026-09-19), the demo-accounts switch; `9d8dc37` (2026-09-19), the
+second tenant (`docs/second-tenant.md`).
 
 How it was deployed, with the Railway CLI (`railway`, signed in) from the repository root:
 
