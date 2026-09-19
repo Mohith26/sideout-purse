@@ -10,6 +10,7 @@ import type { SetScore, Side } from '../../domain/scoreline';
 import { api, type ApiResult } from '../../lib/api-client';
 import { queueScore } from '../../lib/offline/client';
 import { ConfirmCheck } from '../motion/ConfirmCheck';
+import { useLiveHold } from '../motion/live-hold';
 import { useConnectivity } from '../offline/useConnectivity';
 import { ScorelineCompare, ScorelineTable } from './ScorelineCompare';
 import { enteredRows, judgeRows, ScorelineEditor, toSetScores, visibleRows, type EditorSet } from './ScorelineEditor';
@@ -95,6 +96,8 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
   const [phase, setPhase] = useState<Phase>({ kind: 'closed' });
   const open = phase.kind !== 'closed';
   const busy = phase.kind === 'editing' && phase.busy;
+  // The beat after a submission stays on screen until "Done": a live event must not re-render it away.
+  useLiveHold(open);
 
   const visible = visibleRows(rows, bestOf);
   const verdict = judgeRows(visible, bestOf);

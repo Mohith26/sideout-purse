@@ -103,6 +103,12 @@ abort, or a failed write). Every variable has a safe default; none is required.
 - while the stream is open the page sets `data-live="stream"` on `<html>`, and the design
   system's live dot (`.so-live-dot`) gains a faint halo. Polling keeps the plain dot. No
   layout changes;
+- a confirmation the reader has not dismissed holds the refresh (`live-hold.ts`): the score
+  sheet from the moment it opens until "Done", the dispute card from the moment a resolution
+  is sent until the organizer moves on. Events that land meanwhile are deferred and applied
+  once, when the hold is released; otherwise the event would re-render the page from the
+  server and unmount the "both teams agree" or "settled by" beat, since the row it belongs to
+  has already moved on;
 - while a refresh is pending, a state update fires every `PARKED_REFRESH_RETRY_MS` (250 ms):
   Next 15.5's router sometimes never wakes the render it parked on the refresh's promise
   (vercel/next.js#98305), and any unrelated update makes React retry it. `docs/decisions.md`

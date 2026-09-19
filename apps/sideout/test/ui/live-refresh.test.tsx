@@ -4,6 +4,7 @@ import { Suspense, use, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LiveRefresh, PARKED_REFRESH_RETRY_MS } from '../../src/components/motion/LiveRefresh';
+import { isLiveHeld, useLiveHold } from '../../src/components/motion/live-hold';
 import { backoffMs, FAILURES_BEFORE_FALLBACK, FALLBACK_RETRY_MS, HEALTHY_AFTER_MS, LiveConnection, liveStreamPath, type EventSourceLike, type LiveTransport } from '../../src/components/motion/live-stream';
 
 /**
@@ -308,6 +309,40 @@ describe('LiveRefresh', () => {
     expect(intervals.mock.calls.filter((call) => call[1] === PARKED_REFRESH_RETRY_MS)).toHaveLength(1);
     const handle = intervals.mock.results[armed]?.value as unknown;
     expect(cleared.mock.calls.some((call) => call[0] === handle)).toBe(true);
+  });
+
+  it('defers a refresh while a confirmation on the page holds it, and runs it once when the hold is released', () => {
+    function Confirmation({ shown }: { shown: boolean }) {
+      useLiveHold(shown);
+      return shown ? <output>settled</output> : null;
+    }
+    (globalThis as { EventSource?: unknown }).EventSource = FakeSource;
+    const { rerender } = render(
+      <>
+        <Confirmation shown />
+        <LiveRefresh source={{ kind: 'tournament', id: 'trn_1' }} />
+      </>,
+    );
+    const source = FakeSource.instances[0];
+    if (source === undefined) throw new Error('no stream');
+    act(() => source.open());
+    expect(isLiveHeld()).toBe(true);
+    act(() => {
+      source.message('e-1');
+      source.message('e-2');
+    });
+    expect(refresh).not.toHaveBeenCalled();
+    // Dismissed: the deferred refresh runs, once.
+    rerender(
+      <>
+        <Confirmation shown={false} />
+        <LiveRefresh source={{ kind: 'tournament', id: 'trn_1' }} />
+      </>,
+    );
+    expect(isLiveHeld()).toBe(false);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    act(() => source.message('e-3'));
+    expect(refresh).toHaveBeenCalledTimes(2);
   });
 
   it('coalesces events that arrive while a refresh is in flight into one more refresh', () => {

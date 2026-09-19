@@ -1725,6 +1725,21 @@ second (the two-tab flow measured ~350 ms end to end, twelve of twelve). The ret
 removed once the router is on a release without the code path; upgrading Next is not this
 change's to make.
 
+### A confirmation holds the refresh until it is dismissed
+
+The score sheet keeps "waiting on", "both teams agree" and "scorelines differ" on screen
+until "Done", and the dispute card keeps "settled by" until the organizer moves on; each
+defers `router.refresh()` to the dismissal on purpose (phase 7 and 8). An event now lands
+within a millisecond of the commit, before the sheet's own answer has arrived, and a
+refresh at that moment re-renders the page from a server on which the match is already
+final or the dispute already gone, unmounting the confirmation mid-beat. So a confirmation
+holds the live refresh (`components/motion/live-hold.ts`, `useLiveHold`): the sheet from the
+moment it opens, the card from the moment the resolution is sent. `LiveRefresh` defers an
+event that lands under a hold and applies it once when the last hold is released; the
+dismissal's own refresh usually gets there first. Other viewers are unaffected; only the
+phone that is reading its own confirmation waits, which is what the five-second poll gave
+it by accident most of the time. Phase 9's two flows are what caught this.
+
 ### The one visible change is the live dot's halo
 
 While the stream is open the page sets `data-live="stream"` on `<html>` and

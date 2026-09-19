@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 
+import { isLiveHeld, subscribeLiveHold } from './live-hold';
 import { LiveConnection, type LiveSource, type LiveTransport } from './live-stream';
 
 /** Decision D11: live figures poll at five seconds; the cadence the stream falls back to. */
@@ -37,7 +38,8 @@ export type { LiveSource };
  * when it returns, and the phase 8 polling is the fallback when the browser has no
  * `EventSource` or the stream keeps failing. Without a `source` it polls, as before.
  * Fresh numbers are content, not motion, so reduced-motion preferences do not stop it.
- * Either way a refresh the router parks is retried (`PARKED_REFRESH_RETRY_MS`).
+ * Either way a refresh the router parks is retried (`PARKED_REFRESH_RETRY_MS`), and a
+ * refresh is deferred while a confirmation on the page holds it (`live-hold.ts`).
  */
 export function LiveRefresh({ source, intervalMs = LIVE_POLL_MS }: { source?: LiveSource; intervalMs?: number }) {
   const router = useRouter();
@@ -53,7 +55,7 @@ export function LiveRefresh({ source, intervalMs = LIVE_POLL_MS }: { source?: Li
 
   const refresh = useCallback(() => {
     const now = Date.now();
-    if (inFlight.current && now - startedAt.current < STALE_REFRESH_MS) {
+    if (isLiveHeld() || (inFlight.current && now - startedAt.current < STALE_REFRESH_MS)) {
       queued.current = true;
       return;
     }
@@ -69,6 +71,15 @@ export function LiveRefresh({ source, intervalMs = LIVE_POLL_MS }: { source?: Li
     inFlight.current = false;
     if (queued.current) refresh();
   }, [isPending, refresh]);
+
+  // A confirmation released its hold: the refresh it deferred runs now.
+  useEffect(
+    () =>
+      subscribeLiveHold(() => {
+        if (!isLiveHeld() && queued.current) refresh();
+      }),
+    [refresh],
+  );
 
   // The watchdog for a parked refresh (see PARKED_REFRESH_RETRY_MS): a state update nobody
   // reads, whose only job is to make React retry the suspended render.
