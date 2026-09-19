@@ -49,6 +49,7 @@ and `PURSE_SECRET_KEY`):
 | `TRUSTED_PROXY_HOPS` | `1` behind Railway's edge |
 | `PURSE_TENANT_ORIGINS` | the Sideout origin: the seed and the reset add it to the tenant's allowlist (`frame-ancestors`, CORS, the handshake) |
 | `WEBHOOK_DISPATCHER` | `on` in the one API process |
+| `SANDBOX_SELF_SERVE` | `true`: it defaults to `false` in production, and without it the public `/docs` page serves but refuses to mint (`docs/sandbox.md`) |
 | `WEBHOOK_ALLOWED_HOSTS` | **unset**: it exempts named hosts from webhook destination validation (`docs/webhooks-security.md`), so a production deployment leaves it empty and refuses every private destination. A non-empty list is logged at `warn` on boot. |
 | `WEBHOOK_ALLOWED_PORTS` | **unset**: empty means every port is allowed, which is the default; set it only to pin the ports this deployment will dial. |
 | `BUILD_SHA` | the deployed commit (`railway up` uploads the working tree without `.git`) |
@@ -111,7 +112,36 @@ built from the root.
 
 ### Public demo
 
-Deployed commit: `c4469b5` (2026-09-19), all six services (the five above and `pingpong`),
+Deployed commit: `ad6cb6d` (2026-09-19), all six services (the five above and `pingpong`),
+with `SANDBOX_SELF_SERVE=true` and `DEMO_ACCOUNTS=true` on their services. It carried the
+self-serve sandbox and the public API docs page (`docs/sandbox.md`) and webhook destination
+validation (`docs/webhooks-security.md`); Purse's migrations went to 21. Two things this
+deploy established, both worth knowing before the next one:
+
+- **The image build is not covered by CI.** The first `railway up` of the merged `main`
+  failed because the public `/docs` page bundles `apps/purse/test/contract/fixtures.json`
+  while `.dockerignore` drops `**/test`; `pnpm build` on a checkout had never seen it. The
+  `!` exception in `.dockerignore` and the assertion in `test/docker.test.ts` close that
+  one case (`docs/decisions.md`), but nothing builds the images before a deploy, so build
+  the Purse image locally (`docker build -f apps/purse/Dockerfile .`) when a change touches
+  what the bundle imports.
+- **`SANDBOX_SELF_SERVE` must be set on `purse` explicitly.** It defaults to `false` in
+  production, so the docs page serves but minting is refused until it is `true`.
+
+Verified on the live origins after the deploy: every `/health` reports `ad6cb6d` with no
+pending migration (Purse 21/21, Sideout 6/6) and the console reports `api: ok`; the public
+`/docs` page answers 200 and carries its contract examples, and a real mint
+(`POST /v1/sandbox/keys`) returned a fresh tenant whose secret key then created a user and
+issued 500 POINTS, while the same key is still refused webhooks with
+`sandbox_webhooks_unavailable`; a delivery replayed from the console *after* the deploy
+reached Sideout's real endpoint with HTTP 200 in 123 ms, which is what proves the new
+destination validation and the pinned transport deliver to the deployed receiver; the
+console's public `/status` shows the seven invariants holding; the Sideout demo picker signs
+in (an organizer session reached `/api/admin/purse/calls`) and the public tournament list
+answers; the ping-pong ladder answers. `WEBHOOK_ALLOWED_HOSTS` is deliberately unset, so the
+deployment refuses every private webhook destination.
+
+Previous: `c4469b5` (2026-09-19), the SSE live scoring and the signed score attestation,
 with `DEMO_ACCOUNTS=true` on the `sideout` service: `/sign-in` offers the six demo accounts
 (`docs/demo-accounts.md`) and `/health` on Sideout reports `demoAccounts: true`. This deploy
 carried the SSE live scoring (`docs/live.md`) and the signed score attestation
@@ -142,7 +172,7 @@ the password: `operators` and `operator_sessions` are kept tables, and the reset
 admin without `rotate`, which leaves an existing account untouched. Only a seed run with
 `--rotate-operator-password` changes it, so whoever runs one updates the variable.
 
-Previous: `c5082c4` (2026-09-19), the demo-accounts switch; `9d8dc37` (2026-09-19), the
+Earlier: `c5082c4` (2026-09-19), the demo-accounts switch; `9d8dc37` (2026-09-19), the
 second tenant (`docs/second-tenant.md`).
 
 How it was deployed, with the Railway CLI (`railway`, signed in) from the repository root:
