@@ -9,8 +9,11 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 ## Working here
 
 - Gates: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`. `.no-mistakes.yaml` and
-  `.github/workflows/ci.yml` run the same four; keep them in step. The public demo and how it
-  is deployed (Railway, three services, one Postgres, two cron jobs) is `docs/deploy.md`.
+  `.github/workflows/ci.yml` run the same four; keep them in step. CI's other job, `images`,
+  builds every Dockerfile in the repository, the one gate that sees the `.dockerignore`
+  build context: shipped source must import nothing under `test/`, `e2e/` or `docs/`
+  (`test/docker.test.ts` pins both rules). The public demo and how it is deployed (Railway,
+  three services, one Postgres, two cron jobs) is `docs/deploy.md`.
 - `apps/purse/src/env.ts` is the authoritative list of Purse's variables (`.env.example` is
   the template); the provider seams and the dev identity lists are explained in
   `docs/providers.md`, the rate limit is `RATE_LIMIT_BURST` / `RATE_LIMIT_PER_SECOND`, and
