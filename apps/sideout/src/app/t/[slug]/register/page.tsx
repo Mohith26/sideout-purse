@@ -2,6 +2,7 @@ import { and, asc, desc, eq } from 'drizzle-orm';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 
+import { DeviceCheckIn } from '../../../../components/attestation/DeviceCheckIn';
 import { LiveRefresh } from '../../../../components/motion/LiveRefresh';
 import { PurseGate } from '../../../../components/purse/PurseGate';
 import { PurseEntryStep } from '../../../../components/registration/PurseEntryStep';
@@ -9,6 +10,7 @@ import { RegistrationSteps } from '../../../../components/registration/Registrat
 import { registrationState } from '../../../../components/registration/state';
 import { donations, purseEntries, teamMembers, users } from '../../../../db/schema';
 import { signInHref } from '../../../../lib/redirects';
+import { deviceView, listTeamDevices } from '../../../../server/devices';
 import { countedTeams, reservationExpiresAt, teamHoldsPlace } from '../../../../server/field';
 import { purseBrowserConfig, purseLinks } from '../../../../server/pages';
 import { activeTeamFor } from '../../../../server/teams';
@@ -22,9 +24,11 @@ const PENDING_REFRESH_MS = 5_000;
 
 /**
  * Registration (spec 5.3, "Register"): the two visually distinct steps for the viewer's
- * team in this event. Anonymous visitors sign in first and come back here. Once the team
- * holds its place, step 2 is live: each player's own Purse entry, read back from the
- * contest and recorded server side. Phase 7's `/t/[slug]/enter` folds in here.
+ * team in this event, and the phone check-in (spec section 12, item 1). Anonymous
+ * visitors sign in first and come back here. Once the team holds its place, step 2 is
+ * live: each player's own Purse entry, read back from the contest and recorded server
+ * side; and step 3 lets each player check in the phone they will score from, until play
+ * ends. Phase 7's `/t/[slug]/enter` folds in here.
  */
 export default async function RegisterPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -73,6 +77,19 @@ export default async function RegisterPage({ params }: { params: Promise<{ slug:
     state.kind === 'registered' && team !== null ? (
       <PurseEntryStep teamId={team.id} tournamentSlug={t.slug} initialPlayers={players} viewerUserId={user.id} supportHref={links.supportHref} entriesOpen={state.entriesOpen} />
     ) : null;
+  const devices = state.kind === 'registered' && team !== null ? (await listTeamDevices(db, [team.id])).map(deviceView) : [];
+  const checkIn =
+    state.kind === 'registered' && team !== null ? (
+      <DeviceCheckIn
+        teamId={team.id}
+        teamName={team.name}
+        viewerUserId={user.id}
+        members={members.map((m) => ({ userId: m.userId, displayName: m.displayName }))}
+        devices={devices}
+        open={t.status === 'registration_open' || t.status === 'registration_closed' || t.status === 'live'}
+        timeZone={t.venue.timezone}
+      />
+    ) : null;
 
   const steps = (
     <RegistrationSteps
@@ -87,6 +104,7 @@ export default async function RegisterPage({ params }: { params: Promise<{ slug:
       teamName={team?.name ?? null}
       stripePublishableKey={app.env.stripePublishableKey ?? null}
       entry={entry}
+      checkIn={checkIn}
     />
   );
 

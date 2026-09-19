@@ -17,6 +17,7 @@ import { DONATION_STATUSES, teams, tournaments, type DonationStatus, type Tourna
 import { maskPhone } from '../../lib/phone';
 import { signInHref } from '../../lib/redirects';
 import { bracketRoundLabel } from '../../lib/rounds';
+import { listTeamDevices } from '../../server/devices';
 import { meSnapshot } from '../../server/me';
 import { pageContext, purseBrowserConfig, purseLinks } from '../../server/pages';
 import { rewardsFor } from '../../server/rewards';
@@ -57,8 +58,10 @@ export default async function MePage() {
       }
       const donation = snapshot.donations.find((d) => d.tournamentSlug === tournament.slug) ?? null;
       const donationStatus = donation === null ? null : (DONATION_STATUSES as readonly string[]).includes(donation.status) ? (donation.status as DonationStatus) : null;
+      const liveKeyIds = CURRENT.includes(status) ? (await listTeamDevices(db, [team.id])).filter((d) => d.revokedAt === null).map((d) => d.keyId) : undefined;
       return {
         team: { id: team.id, name: team.name, status: team.status, invitedPhone: teamRow?.invitedPhone ?? null, holdsPlace: team.holdsPlace },
+        ...(liveKeyIds === undefined ? {} : { liveKeyIds }),
         members: team.members,
         tournament: { slug: tournament.slug, name: tournament.name, status, startsAt: tournament.startsAt, timezone },
         donation: donation === null || donationStatus === null ? null : { amountCents: donation.amountCents, currency: donation.currency, status: donationStatus },

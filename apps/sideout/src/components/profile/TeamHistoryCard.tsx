@@ -6,16 +6,20 @@ import type { TeamHistory } from '../../server/screens';
 import { cx } from '../../lib/cx';
 import { formatCents, formatDate, ordinal } from '../../lib/format';
 import { maskPhone } from '../../lib/phone';
+import { PhoneCheckInStatus } from '../attestation/PhoneCheckInStatus';
 import { DONATION_STATUS_PILL, TEAM_STATUS_PILL, TOURNAMENT_STATUS_PILL } from '../status/pills';
 import { TeamAvatarPair } from '../tournament/TeamAvatarPair';
 
 /**
  * One team in one event, as the profile shows it: where it stands now (forming,
- * registered, withdrawn), its entry donation, and once play starts the record, pool
- * finish, bracket run and every match, all read off rows.
+ * registered, withdrawn), its entry donation, whether this phone is checked in to sign
+ * its scores (spec section 12, item 1; judged on the phone), and once play starts the
+ * record, pool finish, bracket run and every match, all read off rows.
  */
 export type TeamHistoryView = {
   team: { id: string; name: string; status: TeamStatus; invitedPhone: string | null; holdsPlace: boolean };
+  /** Key ids of the team's live check-ins; the card compares this phone's key against them. Absent for a past event. */
+  liveKeyIds?: string[];
   members: ReadonlyArray<{ displayName: string }>;
   tournament: { slug: string; name: string; status: TournamentStatus; startsAt: string; timezone: string };
   donation: { amountCents: string; currency: string; status: DonationStatus } | null;
@@ -77,6 +81,10 @@ export function TeamHistoryCard({ view, primaryAction }: { view: TeamHistoryView
           <Icons.hourglass size={16} className="mt-1 shrink-0 text-text-tertiary" />
           <span>The reservation lapsed without a payment. Register again to hold the place.</span>
         </p>
+      ) : null}
+
+      {view.liveKeyIds !== undefined && (team.status === 'registered' || team.status === 'checked_in') && team.holdsPlace ? (
+        <PhoneCheckInStatus teamName={team.name} liveKeyIds={view.liveKeyIds} checkInHref={registerHref} className="border-t border-border-subtle pt-3" />
       ) : null}
 
       {donation === null ? null : (

@@ -82,7 +82,7 @@ describe('devices', () => {
   });
 
   it('refuses a private key, a foreign JWK and a user of another tenant', async () => {
-    const withD = await rejection(registerDevice(runtime.db, { tenantId: arena.tenantId, userId: user(0), publicKey: vectors.privateJwk as unknown as EcPublicJwk, actor: TENANT_ACTOR }));
+    const withD = await rejection(registerDevice(runtime.db, { tenantId: arena.tenantId, userId: user(0), publicKey: vectors.privateJwk, actor: TENANT_ACTOR }));
     expect(isUsersError(withD, 'invalid_input')).toBe(true);
     const rsa = await rejection(registerDevice(runtime.db, { tenantId: arena.tenantId, userId: user(0), publicKey: { kty: 'RSA', n: 'x', e: 'AQAB' } as unknown as EcPublicJwk, actor: TENANT_ACTOR }));
     expect(isUsersError(rsa, 'invalid_input')).toBe(true);

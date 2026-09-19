@@ -53,7 +53,7 @@ export async function checkAttestation(db: DbOrTx, subject: AttestationSubject, 
     throw new ContestError('attestation_user_not_participant', 'attestation.userId must be a usr_ id', at('user_not_participant', {}));
   }
   const attester = participants.get(attestation.userId);
-  if (attester === undefined || attester.state !== 'entered') {
+  if (attester?.state !== 'entered') {
     throw new ContestError('attestation_user_not_participant', `The attesting user ${attestation.userId} is not an entered participant of contest ${contestId}`, at('user_not_participant', { participantState: attester?.state ?? null }));
   }
 

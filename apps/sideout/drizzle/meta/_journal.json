@@ -36,6 +36,13 @@
       "when": 1789741885489,
       "tag": "0004_consensus_and_purse",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789794651515,
+      "tag": "0005_team_devices",
+      "breakpoints": true
     }
   ]
 }

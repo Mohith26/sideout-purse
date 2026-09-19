@@ -13,7 +13,7 @@ import { bracketRoundCount, listMatchViews } from '../../../server/screens';
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Disputes' };
 
-/** The dispute queue (spec 5.3, item 6): every match whose two teams disagree, oldest first, with both readings side by side and the organizer's resolution. */
+/** The dispute queue (spec 5.3, item 6): every match whose two teams disagree, oldest first, with both readings side by side, whether a checked-in phone signed each, and the organizer's resolution. */
 export default async function DisputesPage() {
   const { app } = await organizerPageContext();
   const disputes = await listDisputes(app.db);
@@ -33,7 +33,7 @@ export default async function DisputesPage() {
       teamB: d.teamB,
       disputedReason: d.consensus.disputedReason,
       differences: d.consensus.differences.map((x) => x.setNumber),
-      submissions: d.consensus.live.map((s) => ({ teamId: s.teamId, sets: s.sets, submittedBy: s.submittedBy.displayName, createdAt: s.createdAt })),
+      submissions: d.consensus.live.map((s) => ({ teamId: s.teamId, sets: s.sets, submittedBy: s.submittedBy.displayName, createdAt: s.createdAt, attested: s.attestation !== null })),
       timeZone: meta.timeZone,
     };
   });

@@ -1,4 +1,4 @@
-import { ATTESTATION_TIMESTAMP_SHAPE, ATTESTATION_VERSION, type AttestationPayload, type CanonicalValue, type EcPublicJwk, type ScoreAttestationInput } from '@purse/types';
+import { ATTESTATION_TIMESTAMP_SHAPE, ATTESTATION_VERSION, type AttestationPayload, type EcPublicJwk, type ScoreAttestationInput } from '@purse/types';
 import { z } from 'zod';
 
 import type { SetScore, Side } from './scoreline';
@@ -68,7 +68,7 @@ export function attestationPayload(binding: AttestationBinding): AttestationPayl
     timestamp: binding.timestamp,
     sourceRef: binding.matchId,
     refs: { tournamentId: binding.tournamentId, teamId: binding.teamId },
-    content: scorelineContent(binding.matchId, binding.sets) as unknown as CanonicalValue,
+    content: scorelineContent(binding.matchId, binding.sets),
   };
 }
 
@@ -98,7 +98,7 @@ export function toPurseAttestation(stored: StoredAttestation, purseUserId: strin
     signature: stored.signature,
     timestamp: stored.timestamp,
     refs: { ...stored.refs },
-    content: stored.content as unknown as CanonicalValue,
+    content: stored.content,
   };
 }
 

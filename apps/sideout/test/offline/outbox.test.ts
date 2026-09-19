@@ -39,6 +39,29 @@ describe('outbox queue', () => {
     expect(queued[0]?.body.sets).toHaveLength(1);
   });
 
+  it('queues a signed scoreline with its signature, and keeps a refused signature as failed rather than dropping it', async () => {
+    const store = new MemoryOutbox();
+    const attestation = { keyId: 'k'.repeat(43), algorithm: 'ES256' as const, signature: 's'.repeat(86), timestamp: '2026-09-19T16:05:00.000Z' };
+    const item = await enqueueScore(store, { matchId: 'm1', sets: SETS, attestation, now: 1000 });
+    expect(item.body).toEqual({ sets: SETS, attestation });
+    const unsigned = await enqueueScore(store, { matchId: 'm2', sets: SETS, attestation: null, now: 2000 });
+    expect('attestation' in unsigned.body).toBe(false);
+    const send = vi.fn(async (sent: OutboxItem): Promise<ApiResult<unknown>> => {
+      await Promise.resolve();
+      if (sent.matchId === 'm1') return { ok: false, error: { type: 'invalid_attestation', code: 'device_revoked', message: 'The organizer revoked this phone’s check-in.' }, status: 422, retryAfterMs: null };
+      return ok();
+    });
+    const report = await replayOutbox(store, send, () => 5000);
+    expect(report.outcomes.map((o) => [o.item.matchId, o.result])).toEqual([
+      ['m1', 'failed'],
+      ['m2', 'sent'],
+    ]);
+    expect(send.mock.calls[0]?.[0]?.body).toEqual({ sets: SETS, attestation });
+    const left = await listQueued(store);
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatchObject({ matchId: 'm1', status: 'failed', lastError: { code: 'device_revoked', message: 'The organizer revoked this phone’s check-in.', at: 5000 } });
+  });
+
   it('classifies no answer, 5xx and 429 as transient; a 4xx refusal is definitive', () => {
     expect(isTransient(transport())).toBe(true);
     expect(isTransient({ ok: false, error: { type: 'internal_error', code: 'x', message: 'x' }, status: 503, retryAfterMs: null })).toBe(true);

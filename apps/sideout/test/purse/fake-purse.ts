@@ -14,7 +14,9 @@ import { IDEMPOTENCY_KEY_HEADER, IDEMPOTENT_REPLAYED_HEADER, type ApiError, type
 type Stored = { status: number; body: unknown; requestHash: string };
 type FakeUser = { id: string; externalId: string; displayName: string | null; phoneE164: string | null; wallet: Record<string, bigint>; verification: string };
 type Participant = { id: string; userId: string; state: 'entered' | 'withdrawn'; joinedAt: string; journalEntryId: string; seed: number | null; teamRef: string | null };
-type Score = { id: string; userId: string; score: number | null; attemptFinished: boolean; submittedAt: string; sourceRef: string | null; superseded: boolean };
+type Attestation = { state: 'verified' | 'unverified'; deviceId: string | null; userId: string; keyId: string; algorithm: string; signature: string; timestamp: string; refs: Record<string, string>; content: unknown; checkedAt: string };
+type Score = { id: string; userId: string; score: number | null; attemptFinished: boolean; submittedAt: string; sourceRef: string | null; superseded: boolean; attestationState: 'none' | 'verified' | 'unverified'; attestation: Attestation | null };
+type FakeDevice = { id: string; userId: string; keyId: string; publicKey: Record<string, string>; label: string | null; registeredAt: string; revokedAt: string | null; revokedReason: string | null };
 type FakeContest = {
   id: string;
   externalId: string;
@@ -53,6 +55,8 @@ export class FakePurse {
   readonly requests: LoggedRequest[] = [];
   readonly idempotency = new Map<string, Stored>();
   readonly endpoints: Array<{ id: string; url: string; secret: string }> = [];
+  /** Registered device keys per user (spec section 12, item 1); the fake records, it never runs the curve. */
+  readonly devices: FakeDevice[] = [];
   /** The next `n` requests fail at the transport (no response at all). */
   failNext = 0;
   /** The next request is refused with this envelope. */
@@ -130,6 +134,9 @@ export class FakePurse {
     if ((m = /^\/v1\/users\/([^/]+)$/.exec(path)) && method === 'GET') return this.getUser(m[1] ?? '');
     if ((m = /^\/v1\/users\/([^/]+)\/wallet$/.exec(path)) && method === 'GET') return this.getWallet(m[1] ?? '');
     if ((m = /^\/v1\/users\/([^/]+)\/credits$/.exec(path)) && method === 'POST') return this.credit(m[1] ?? '', b);
+    if ((m = /^\/v1\/users\/([^/]+)\/devices$/.exec(path)) && method === 'POST') return this.registerDevice(m[1] ?? '', b);
+    if ((m = /^\/v1\/users\/([^/]+)\/devices$/.exec(path)) && method === 'GET') return this.ok({ devices: this.devices.filter((d) => d.userId === m?.[1]).map((d) => this.deviceResource(d)) });
+    if ((m = /^\/v1\/users\/([^/]+)\/devices\/([^/]+)\/revoke$/.exec(path)) && method === 'POST') return this.revokeDevice(m[1] ?? '', m[2] ?? '', b);
     if (method === 'POST' && path === '/v1/embed/tokens') return this.embedToken(b);
     if (method === 'POST' && path === '/v1/contests') return this.createContest(b);
     if ((m = /^\/v1\/contests\/([^/]+)$/.exec(path)) && method === 'GET') return this.withContest(m[1] ?? '', (c) => this.ok(this.contestResource(c)));
@@ -301,11 +308,56 @@ export class FakePurse {
     return { id: p.id, contestId: c.id, userId: p.userId, teamRef: p.teamRef, seed: p.seed, state: p.state, joinedAt: p.joinedAt, entryJournalEntryId: p.journalEntryId };
   }
 
+  // ---- Devices and attestations (spec section 12, item 1) ---------------------------------
+
+  private deviceResource(d: FakeDevice) {
+    return { id: d.id, userId: d.userId, keyId: d.keyId, algorithm: 'ES256', publicKey: d.publicKey, label: d.label, registeredAt: d.registeredAt, revokedAt: d.revokedAt, revokedReason: d.revokedReason };
+  }
+
+  /** The key id is a stand-in thumbprint: SHA-256 of the canonical JWK members, base64url, the same derivation Purse uses. */
+  private registerDevice(userId: string, b: Record<string, unknown>): Response {
+    if (!this.users.has(userId)) return fail(400, { type: 'invalid_request', code: 'user_not_found', message: `No user ${userId}` });
+    const jwk = b['publicKey'] as Record<string, string> | undefined;
+    if (jwk?.['kty'] !== 'EC' || jwk['crv'] !== 'P-256' || typeof jwk['x'] !== 'string' || typeof jwk['y'] !== 'string' || 'd' in jwk) {
+      return fail(400, { type: 'invalid_request', code: 'invalid_input', message: 'publicKey must be a P-256 public JWK', detail: { field: 'publicKey' } });
+    }
+    const keyId = createHash('sha256').update(`{"crv":"P-256","kty":"EC","x":${JSON.stringify(jwk['x'])},"y":${JSON.stringify(jwk['y'])}}`).digest('base64url');
+    const live = this.devices.find((d) => d.userId === userId && d.keyId === keyId && d.revokedAt === null);
+    if (live !== undefined) return this.ok(this.deviceResource(live));
+    const device: FakeDevice = { id: id('udv'), userId, keyId, publicKey: { kty: 'EC', crv: 'P-256', x: jwk['x'], y: jwk['y'] }, label: (b['label'] as string | undefined) ?? null, registeredAt: this.tick(), revokedAt: null, revokedReason: null };
+    this.devices.push(device);
+    return this.ok(this.deviceResource(device), 201);
+  }
+
+  private revokeDevice(userId: string, deviceId: string, b: Record<string, unknown>): Response {
+    const device = this.devices.find((d) => d.id === deviceId && d.userId === userId);
+    if (device === undefined) return fail(400, { type: 'invalid_request', code: 'device_not_found', message: `No device ${deviceId} for user ${userId}` });
+    if (device.revokedAt === null) {
+      device.revokedAt = this.tick();
+      device.revokedReason = (b['reason'] as string | undefined) ?? null;
+    }
+    return this.ok(this.deviceResource(device));
+  }
+
+  /** Purse's verdict without the curve: a live key of the attesting user for this `sourceRef` is `verified`, a revoked one is refused, an unknown one is `unverified`. */
+  private judgeAttestation(c: FakeContest, each: { userId: string; sourceRef?: string | null; attestation?: Attestation | null }): { state: 'none' | 'verified' | 'unverified'; attestation: Attestation | null } | Response {
+    const a = each.attestation;
+    if (a === undefined || a === null) return { state: 'none', attestation: null };
+    if (each.sourceRef === undefined || each.sourceRef === null) return fail(422, { type: 'invalid_attestation', code: 'attestation_source_required', message: 'An attested score must name the sourceRef its signature binds to' });
+    if (!c.participants.some((p) => p.userId === a.userId && p.state === 'entered')) return fail(422, { type: 'invalid_attestation', code: 'attestation_user_not_participant', message: `The attesting user ${a.userId} is not an entered participant` });
+    const checkedAt = this.tick();
+    const rows = this.devices.filter((d) => d.userId === a.userId && d.keyId === a.keyId);
+    const device = rows.find((d) => d.revokedAt === null) ?? rows.at(-1);
+    if (device === undefined) return { state: 'unverified', attestation: { ...a, state: 'unverified', deviceId: null, checkedAt } };
+    if (device.revokedAt !== null) return fail(422, { type: 'invalid_attestation', code: 'attestation_device_revoked', message: `Device ${device.id} was revoked at ${device.revokedAt}`, detail: { deviceId: device.id } });
+    return { state: 'verified', attestation: { ...a, state: 'verified', deviceId: device.id, checkedAt } };
+  }
+
   private submitScores(c: FakeContest, b: Record<string, unknown>): Response {
     if (c.state !== 'in_progress' && c.state !== 'awaiting_settlement') {
       return fail(409, { type: 'invalid_state', code: 'scores_not_accepted', message: `Contest ${c.id} is ${c.state}`, detail: { contestId: c.id, state: c.state } });
     }
-    const batch = b['scores'] as Array<{ userId: string; score: number | null; attemptFinished: boolean; sourceRef?: string | null }>;
+    const batch = b['scores'] as Array<{ userId: string; score: number | null; attemptFinished: boolean; sourceRef?: string | null; attestation?: Attestation | null }>;
     for (const each of batch) {
       const participant = c.participants.find((p) => p.userId === each.userId);
       if (participant === undefined) return fail(400, { type: 'invalid_request', code: 'not_a_participant', message: `User ${each.userId} has not entered contest ${c.id}` });
@@ -313,16 +365,30 @@ export class FakePurse {
       const finished = c.scores.find((s) => s.userId === each.userId && !s.superseded && s.attemptFinished);
       if (finished !== undefined) return fail(409, { type: 'invalid_state', code: 'attempt_already_finished', message: `User ${each.userId} already has a finished attempt`, detail: { userId: each.userId } });
     }
-    const written: Score[] = [];
+    const verdicts: Array<{ state: 'none' | 'verified' | 'unverified'; attestation: Attestation | null }> = [];
     for (const each of batch) {
+      const verdict = this.judgeAttestation(c, each);
+      if (verdict instanceof Response) return verdict;
+      verdicts.push(verdict);
+    }
+    const written: Score[] = [];
+    for (const [index, each] of batch.entries()) {
       for (const old of c.scores) if (old.userId === each.userId && !old.superseded) old.superseded = true;
-      const row: Score = { id: id('sco'), userId: each.userId, score: each.score, attemptFinished: each.attemptFinished, submittedAt: this.tick(), sourceRef: each.sourceRef ?? null, superseded: false };
+      const verdict = verdicts[index] ?? { state: 'none' as const, attestation: null };
+      const row: Score = { id: id('sco'), userId: each.userId, score: each.score, attemptFinished: each.attemptFinished, submittedAt: this.tick(), sourceRef: each.sourceRef ?? null, superseded: false, attestationState: verdict.state, attestation: verdict.attestation };
       c.scores.push(row);
       written.push(row);
     }
     const entered = c.participants.filter((p) => p.state === 'entered');
     if (c.state === 'in_progress' && entered.every((p) => c.scores.some((s) => s.userId === p.userId && !s.superseded && s.attemptFinished))) c.state = 'awaiting_settlement';
-    return this.ok({ contest: this.contestResource(c), scores: written.map((s) => ({ id: s.id, contestId: c.id, userId: s.userId, score: s.score, attemptFinished: s.attemptFinished, submittedAt: s.submittedAt, sourceRef: s.sourceRef })), settlement: null }, 201);
+    return this.ok(
+      {
+        contest: this.contestResource(c),
+        scores: written.map((s) => ({ id: s.id, contestId: c.id, userId: s.userId, score: s.score, attemptFinished: s.attemptFinished, submittedAt: s.submittedAt, sourceRef: s.sourceRef, attestationState: s.attestationState, attestation: s.attestation })),
+        settlement: null,
+      },
+      201,
+    );
   }
 
   /** A settlement in the spirit of Purse's: rank by score (unscored last, ties shared), weights over the pool, floor division, remainder to the best placement. */

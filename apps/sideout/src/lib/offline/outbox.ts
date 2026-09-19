@@ -1,3 +1,4 @@
+import type { SubmittedAttestation } from '../../domain/attestation';
 import type { SubmittedSet } from '../../domain/consensus';
 import type { ApiResult } from '../api-client';
 
@@ -12,13 +13,19 @@ import type { ApiResult } from '../api-client';
  * and `MemoryOutbox` the one tests and non-IDB environments use. One queued item per
  * match: a newer submission from this phone replaces the older one, the way the server
  * supersedes a team's earlier row.
+ *
+ * A signed scoreline (spec section 12, item 1) is queued with its signature: the signature
+ * was made over the scoreline, the match and the team, none of which the wait changes, so
+ * the replay is still valid. A signature the server refuses when it arrives (the organizer
+ * revoked the phone in the meantime, say) is a definitive refusal like any other: the item
+ * is kept as `failed` with the server's words, never dropped.
  */
 export type OutboxItem = {
   id: string;
   matchId: string;
   /** The route the body is posted to. */
   path: string;
-  body: { sets: SubmittedSet[] };
+  body: { sets: SubmittedSet[]; attestation?: SubmittedAttestation };
   createdAt: number;
   attempts: number;
   /** `queued` waits for the network; `failed` is a definitive server refusal kept for the player to read and discard. */
@@ -50,14 +57,14 @@ function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export async function enqueueScore(store: OutboxStore, input: { matchId: string; sets: SubmittedSet[]; now?: number }): Promise<OutboxItem> {
+export async function enqueueScore(store: OutboxStore, input: { matchId: string; sets: SubmittedSet[]; attestation?: SubmittedAttestation | null; now?: number }): Promise<OutboxItem> {
   const existing = (await store.list()).filter((i) => i.matchId === input.matchId);
   for (const stale of existing) await store.remove(stale.id);
   const item: OutboxItem = {
     id: newId(),
     matchId: input.matchId,
     path: scorePath(input.matchId),
-    body: { sets: input.sets.map((s) => ({ ...s })) },
+    body: { sets: input.sets.map((s) => ({ ...s })), ...(input.attestation === undefined || input.attestation === null ? {} : { attestation: { ...input.attestation } }) },
     createdAt: input.now ?? Date.now(),
     attempts: 0,
     status: 'queued',

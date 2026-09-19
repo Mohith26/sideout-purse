@@ -1,3 +1,4 @@
+import type { SubmittedAttestation } from '../../domain/attestation';
 import type { SubmittedSet } from '../../domain/consensus';
 import { api } from '../api-client';
 import { createOutboxStore, discardOutbox, enqueueScore, listQueued, replayOutbox, type OutboxItem, type OutboxSend, type OutboxStore, type ReplayReport } from './outbox';
@@ -42,8 +43,8 @@ export function subscribeOutbox(listener: (items: OutboxItem[]) => void): () => 
   };
 }
 
-export async function queueScore(matchId: string, sets: SubmittedSet[]): Promise<OutboxItem> {
-  const item = await enqueueScore(outboxStore(), { matchId, sets });
+export async function queueScore(matchId: string, sets: SubmittedSet[], attestation: SubmittedAttestation | null = null): Promise<OutboxItem> {
+  const item = await enqueueScore(outboxStore(), { matchId, sets, attestation });
   await broadcast();
   return item;
 }

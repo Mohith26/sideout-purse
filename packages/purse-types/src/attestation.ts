@@ -174,8 +174,8 @@ export const attestationPayloadSchema = z.strictObject({
 
 /** The canonical byte string of a payload: the domain prefix, then the canonical JSON, UTF-8. */
 export function attestationBytes(payload: AttestationPayload): Uint8Array<ArrayBuffer> {
-  const text = ATTESTATION_DOMAIN + canonicalJson(payload as unknown as CanonicalValue);
-  const bytes = encoder.encode(text) as Uint8Array<ArrayBuffer>;
+  const text = ATTESTATION_DOMAIN + canonicalJson(payload);
+  const bytes = encoder.encode(text);
   if (bytes.length > ATTESTATION_MAX_BYTES) throw new RangeError(`attestation payload is ${bytes.length} bytes; at most ${ATTESTATION_MAX_BYTES} may be signed`);
   return bytes;
 }

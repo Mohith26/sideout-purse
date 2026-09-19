@@ -5,10 +5,13 @@ import { useCallback, useState } from 'react';
 import { ActionButton, Icons, Sheet, SheetCloseButton } from '@sideout/ui';
 
 import type { BestOf } from '../../db/schema';
+import type { SubmittedAttestation } from '../../domain/attestation';
 import type { SubmittedSet } from '../../domain/consensus';
 import type { SetScore, Side } from '../../domain/scoreline';
 import { api, type ApiResult } from '../../lib/api-client';
+import { currentDeviceKey, signScoreline } from '../../lib/attestation/device';
 import { queueScore } from '../../lib/offline/client';
+import { AttestationMark } from '../attestation/AttestationBadge';
 import { ConfirmCheck } from '../motion/ConfirmCheck';
 import { useLiveHold } from '../motion/live-hold';
 import { useConnectivity } from '../offline/useConnectivity';
@@ -30,6 +33,13 @@ import { enteredRows, judgeRows, ScorelineEditor, toSetScores, visibleRows, type
  * - no connection      → the scoreline is saved in the outbox on this phone
  *                        (`lib/offline`) and sent, unchanged, when it is back online;
  *                        the sheet says so plainly
+ *
+ * When this phone is checked in for the team (`signing.liveKeyIds` holds its key id), the
+ * scoreline is signed here before it is sent or queued (spec section 12, item 1): the
+ * signature binds the canonical, match-oriented sets to the tournament, the match and
+ * the team, and the server verifies it against the check-in before the consensus sees
+ * the submission. A phone that is not checked in sends the scoreline unsigned, and the
+ * sheet says which it is doing.
  */
 
 /** The wire shape of `POST /api/matches/:id/scores` this sheet reads. */
@@ -54,8 +64,10 @@ export type ScoreSubmitSheetProps = {
   existing: readonly SubmittedSet[] | null;
   /** Whether the opponent has a standing submission. */
   opponentSubmitted: boolean;
+  /** What a signature binds to, and the key ids checked in for `us`; null when signing is off (a spectator, a test). */
+  signing?: { tournamentId: string; liveKeyIds: readonly string[] } | null;
   /** Test hook: the request to make instead of `POST /api/matches/:id/scores`; `status` 0 or 5xx means the phone should queue it. */
-  submit?: (matchId: string, sets: SubmittedSet[]) => Promise<ApiResult<SubmitResponse>>;
+  submit?: (matchId: string, sets: SubmittedSet[], attestation: SubmittedAttestation | null) => Promise<ApiResult<SubmitResponse>>;
 };
 
 type Phase =
@@ -89,11 +101,12 @@ const TITLES: Record<Exclude<Phase['kind'], 'closed'>, string> = {
   queued: 'Saved on this phone',
 };
 
-export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, existing, opponentSubmitted, submit }: ScoreSubmitSheetProps) {
+export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, existing, opponentSubmitted, signing = null, submit }: ScoreSubmitSheetProps) {
   const router = useRouter();
   const { offline } = useConnectivity();
   const [rows, setRows] = useState<EditorSet[]>(() => (existing === null ? [] : toEditor(existing)));
   const [phase, setPhase] = useState<Phase>({ kind: 'closed' });
+  const [signer, setSigner] = useState<'unknown' | 'checked_in' | 'not_checked_in'>('unknown');
   const open = phase.kind !== 'closed';
   const busy = phase.kind === 'editing' && phase.busy;
   // The beat after a submission stays on screen until "Done": a live event must not re-render it away.
@@ -101,7 +114,20 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
 
   const visible = visibleRows(rows, bestOf);
   const verdict = judgeRows(visible, bestOf);
-  const send = submit ?? ((id: string, sets: SubmittedSet[]) => api<SubmitResponse>(`/api/matches/${id}/scores`, { method: 'POST', body: { sets } }));
+  const send = submit ?? ((id: string, sets: SubmittedSet[], attestation: SubmittedAttestation | null) => api<SubmitResponse>(`/api/matches/${id}/scores`, { method: 'POST', body: attestation === null ? { sets } : { sets, attestation } }));
+
+  /** This phone's key if the team checked it in; judged when the sheet opens so the copy can say what will happen. */
+  const signingKey = useCallback(async () => {
+    if (signing === null) return null;
+    const key = await currentDeviceKey();
+    return key !== null && signing.liveKeyIds.includes(key.keyId) ? key : null;
+  }, [signing]);
+
+  const openSheet = () => {
+    setPhase({ kind: 'editing', error: null, busy: false });
+    if (signing === null) return;
+    void signingKey().then((key) => setSigner(key === null ? 'not_checked_in' : 'checked_in'));
+  };
 
   const onClose = useCallback(() => {
     setPhase({ kind: 'closed' });
@@ -115,15 +141,18 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
     const entered = enteredRows(visible);
     const sets: SubmittedSet[] = entered.map((r) => ({ setNumber: r.setNumber, usPoints: r.left, themPoints: r.right }));
     const ours = orient(toSetScores(entered), perspective);
+    // Signed on the phone, over the match-oriented sets, bound to this tournament, match and team.
+    const key = await signingKey();
+    const attestation = key === null || signing === null ? null : await signScoreline(key, { tournamentId: signing.tournamentId, matchId, teamId: us.id }, ours);
     const queue = async () => {
-      await queueScore(matchId, sets);
+      await queueScore(matchId, sets, attestation);
       setPhase({ kind: 'queued', sets: ours });
     };
     if (offline) {
       await queue();
       return;
     }
-    const result = await send(matchId, sets);
+    const result = await send(matchId, sets, attestation);
     if (shouldQueue(result)) {
       await queue();
       return;
@@ -152,7 +181,7 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
 
   return (
     <>
-      <ActionButton variant={existing !== null ? 'secondary' : 'primary'} large block onClick={() => setPhase({ kind: 'editing', error: null, busy: false })} iconStart={<Icons.check size={18} />}>
+      <ActionButton variant={existing !== null ? 'secondary' : 'primary'} large block onClick={openSheet} iconStart={<Icons.check size={18} />}>
         {triggerLabel}
       </ActionButton>
 
@@ -186,6 +215,12 @@ export function ScoreSubmitSheet({ matchId, bestOf, us, them, perspective, exist
               Enter every set with <span className="text-text-primary">your</span> points first. {them.name} enters the same match from their side; the result is final once the two agree.
             </p>
             <ScorelineEditor bestOf={bestOf} leftLabel="Your team" rightLabel={them.name} value={rows} onChange={setRows} disabled={phase.busy} />
+            {signing === null || signer === 'unknown' ? null : (
+              <p className="mt-4 flex flex-wrap items-center gap-2 type-label text-text-tertiary" data-testid="signing-note" data-signer={signer}>
+                <AttestationMark attested={signer === 'checked_in'} />
+                {signer === 'checked_in' ? 'This phone is checked in: the scoreline is signed here before it is sent.' : 'This phone is not checked in for your team: the scoreline is sent unsigned.'}
+              </p>
+            )}
             {phase.error === null ? null : (
               <p role="alert" className="so-inline-alert mt-4">
                 <Icons.circleAlert size={16} className="mt-0.5 shrink-0" />
