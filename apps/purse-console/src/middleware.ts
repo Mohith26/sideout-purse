@@ -12,9 +12,11 @@ import { CONSOLE_PATH_HEADER, SESSION_COOKIE } from './lib/session-cookie';
  * rendering; a cookie that is present but no longer valid is caught by the frame's
  * `/auth/me` read (`src/server/api.ts`). The current path travels to the server
  * components on `X-Console-Path` so that read can send the operator back too. `/health`
- * is open: the hosted health check and the uptime probe carry no cookie.
+ * is open: the hosted health check and the uptime probe carry no cookie. So is `/status`,
+ * the public status page (spec section 12, stretch item 5), and nothing else: the list is
+ * exact paths, so `/status/anything` is gated like every other page.
  */
-const OPEN_PATHS = ['/login', '/api/auth/login', '/health'];
+export const OPEN_PATHS = ['/login', '/api/auth/login', '/health', '/status'];
 
 export function middleware(request: NextRequest) {
   const id = readOrMintRequestId(request.headers.get(REQUEST_ID_HEADER));

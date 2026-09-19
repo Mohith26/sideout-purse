@@ -153,6 +153,11 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   idempotent at the service level. Reads are `ledger/explorer.ts` (tree, as-of balance,
   running balances, entry detail), `contests/browse.ts`, `users/search.ts`,
   `eligibility/flags.ts` (review), `tenants/`. `test/console/` drives every endpoint.
+- The public status page (spec 12, item 5) is `apps/purse-console/src/app/status/page.tsx`
+  over `src/server/status.ts` (server-side probes, 30 s cache, stale-while-error), fed by
+  `GET /v1/status` (`apps/purse/src/routes/status.ts`: the stored `reconcile_runs` record,
+  never a live run, address-rate-limited, cached 30 s, no `detail`); the middleware opens
+  exactly `/status`; `SIDEOUT_ORIGIN` on the console is optional. `docs/status.md`.
 - `apps/purse-console` renders pages with `src/server/api.ts` (`load`, 401 → `/login?next=`),
   mutates through its `/api/purse/[...path]` proxy (`src/lib/client.ts` mints one
   idempotency key per action) and holds the token only in the `purse_console_session`

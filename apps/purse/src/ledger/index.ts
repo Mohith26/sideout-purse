@@ -39,7 +39,7 @@ export {
   type VoidEscrowInput,
 } from './flows';
 export { reconcile, INVARIANTS, type InvariantId, type InvariantResult, type ReconcileReport } from './reconcile';
-export { recordReconcileRun, reconcileAndRecord, lastReconcileRun, type ReconcileSummary } from './reconcile-runs';
+export { recordReconcileRun, reconcileAndRecord, lastReconcileRun, recentReconcileRuns, summarise, type ReconcileSummary } from './reconcile-runs';
 export { assertRuntimeRole, runtimeRolePrivileges, type JournalPrivileges } from './role-check';
 export {
   accountTree,

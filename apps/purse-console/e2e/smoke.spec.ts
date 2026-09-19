@@ -8,7 +8,8 @@ import { CREDENTIALS_FILE } from './global-setup';
 /**
  * The console smoke (the brief's e2e): sign in as the seeded admin, open the ledger
  * explorer for the seeded settled contest, drill into its settlement entry and see the
- * lines balance, and run the invariant panel to green.
+ * lines balance, and run the invariant panel to green. Then, signed out, the public
+ * `/status` page shows that run without a session.
  */
 const credentials = (): { email: string; password: string } => JSON.parse(readFileSync(CREDENTIALS_FILE, 'utf8')) as { email: string; password: string };
 
@@ -108,4 +109,23 @@ test('an operator signs in, follows a settled contest into its settlement entry,
   await expect(page).toHaveURL(/\/login/);
   await page.goto('/tenants');
   await expect(page).toHaveURL(/\/login\?next=%2Ftenants/);
+
+  // The public status page needs no session and shows the run the panel just recorded.
+  await page.goto('/status');
+  await expect(page).toHaveURL(/\/status$/);
+  await expect(page.getByRole('heading', { name: 'Status' })).toBeVisible();
+  const status = page.getByTestId('status-page');
+  await expect(status).toHaveAttribute('data-status', 'ok');
+  await expect(page.getByTestId('status-headline')).toHaveText('All invariants hold');
+  await expect(status.locator('[data-invariant]')).toHaveCount(7);
+  await expect(status.locator('[data-invariant][data-status="ok"]')).toHaveCount(7);
+  await expect(status.locator('[data-service="purse"]')).toHaveAttribute('data-state', 'up');
+  await expect(status.locator('[data-service="console"]')).toHaveAttribute('data-state', 'up');
+  await expect(status.locator('[data-service="sideout"]')).toHaveAttribute('data-state', 'not_configured');
+  await expect(page.getByTestId('status-runs').getByText('operator console').first()).toBeVisible();
+  await expect(page.locator('meta[http-equiv="refresh"]')).toHaveAttribute('content', '60');
+  await expect(page.getByText(/This page is public/)).toBeVisible();
+  // Nothing under /status is open: a stranger is sent to sign in.
+  await page.goto('/status/anything');
+  await expect(page).toHaveURL(/\/login\?next=%2Fstatus%2Fanything/);
 });

@@ -1365,3 +1365,65 @@ its parent and never scrolls.
   escrows; it does not apply today's contest state to historical balances or claim to run
   all seven invariants historically. The existing live invariant panel remains authoritative
   for the current ledger.
+
+## Stretch: public status page decisions
+
+Spec section 12, item 5: "Public status page rendering the live invariant panel". What
+shipped is `docs/status.md`; these are the choices the one line left open.
+
+### The feed is the stored record, never a live run
+
+`GET /v1/status` on the API (also at `/status`, mounted beside `/health` outside the v1
+key stack) returns the newest twenty `reconcile_runs` rows and the per-invariant outcome
+of the newest one. It never calls `reconcile()`: seven full-table checks on demand for an
+anonymous visitor would let anyone make the database work, and the record phase 9 added
+already holds what the 15-minute job, the console panel and the internal route found.
+"Live" on this page means "as of the last run, refreshed every minute", and the page says
+when that run was.
+
+### 200 whatever the last run found
+
+`/health` answers 503 while the last reconcile failed because an uptime check reads the
+status code. The status feed and the page answer 200 with `status: failing` in the body:
+the page has to be able to render what is wrong, and a 503 on the page would make a
+checker see the messenger as down. `docs/status.md` tells the check that pages to stay on
+`/health`, and offers `data-status="ok"` as a keyword check on the page.
+
+### What a failing invariant shows
+
+The id and the name (`I3 · no user wallet is negative`), nothing else. The panel's
+`detail` sentence quotes sums, counts and ids; the feed strips it and the test pins that
+a detail never reaches the wire. The run history shows a failed run as `failing: I3` for
+the same reason. Nothing tenant-shaped, no balance and no activity count is on the page;
+the migration counts and run durations are the only numbers.
+
+### Cached at both ends, rate limited by address
+
+The API assembles one answer per process every 30 seconds and serves it from memory in
+between (`Cache-Control: public, max-age=30`), and the route spends from the address's
+token bucket like the embed's routes, so a crawler gets cached answers and then 429s. The
+console keeps the feed and Sideout's `/health` for 30 seconds too, so a page view is at
+most one round of server-side requests per half minute however many people load it, and
+each probe has a three-second timeout.
+
+### Stale for two minutes, then down
+
+When a probe fails the console shows the last good answer marked stale, with the time it
+was confirmed, for up to two minutes past that check, then reports the service down; a
+failed probe is itself remembered for the TTL so a dead origin is not probed on every
+page view. A blip is not an outage, a minute of silence is.
+
+### Meta refresh, no script
+
+The page reloads with `<meta http-equiv="refresh" content="60">`. It is the one
+auto-refresh that works without JavaScript, the page carries no script of its own, and a
+minute is inside the brief's 30-60 second window; the console's own panel keeps its
+60-second timer and its "run now" button, which the public page has no business offering.
+
+### Sideout's origin is a console variable
+
+`SIDEOUT_ORIGIN` on the console, optional, unset locally ("not configured" on the page).
+The console already knows the API's origin; Sideout's is the one thing it did not, and a
+required variable would have broken the existing service topology. The `.env.example`
+template could not be edited from the automated pipeline (the phase 9 note applies);
+`src/env.ts`, `docs/status.md` and `docs/deploy.md` carry the variable.

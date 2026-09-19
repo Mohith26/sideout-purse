@@ -15,6 +15,7 @@ import { embedStaticRoutes } from './routes/embed-static';
 import { healthRoutes } from './routes/health';
 import { internalRoutes } from './routes/internal';
 import { pageRoutes } from './routes/pages';
+import { statusRoutes } from './routes/status';
 import { v1Routes } from './routes/v1';
 import type { ProcessKeys } from './secrets';
 
@@ -38,6 +39,8 @@ export type AppDeps = {
   trustedProxyHops?: number;
   /** The rate limiter's clock, for tests. */
   clock?: () => number;
+  /** How long `GET /status` serves one assembled answer, for tests. */
+  statusTtlMs?: number;
   /** How long a replay waits for a request in flight under its key, for tests. */
   inProgressWaitMs?: number;
 };
@@ -46,9 +49,9 @@ export type AppDeps = {
  * Build the HTTP app from its dependencies. `index.ts` wires the real ones; tests pass a
  * test database, dev providers and a capturing logger.
  *
- * `/health` and `/internal/*` answer at the root and under `/v1` (spec 4.7 lists them
- * with the versioned base). They are registered before the `/v1` router, so its
- * authentication never sees a `GET` to them; so are the embed's publishable-key routes
+ * `/health`, `/status` and `/internal/*` answer at the root and under `/v1` (spec 4.7
+ * lists them with the versioned base). They are registered before the `/v1` router, so
+ * its authentication never sees a `GET` to them; so are the embed's publishable-key routes
  * (`/v1/embed/state` and the rest of `routes/embed.ts`), the embed app itself under
  * `/embed` and the two public pages (`/responsible-play`, `/support`). Every other request
  * under `/v1` needs a secret key. The operator console's API
@@ -79,12 +82,24 @@ export function createApp(deps: AppDeps) {
 
   const health = healthRoutes({ sql: deps.sql, db: deps.db, migrationsFolder: deps.migrationsFolder, sha: deps.sha });
   const internal = internalRoutes({ db: deps.db, internalApiToken: deps.internalApiToken, nodeEnv: deps.nodeEnv });
+  const status = statusRoutes({
+    sql: deps.sql,
+    db: deps.db,
+    migrationsFolder: deps.migrationsFolder,
+    sha: deps.sha,
+    buckets,
+    trustedProxyHops: deps.trustedProxyHops ?? 0,
+    ...(deps.clock === undefined ? {} : { clock: deps.clock }),
+    ...(deps.statusTtlMs === undefined ? {} : { ttlMs: deps.statusTtlMs }),
+  });
   const embedStatic = embedStaticRoutes({ db: deps.db, dir: deps.embedDir });
   app.route('/', health);
+  app.route('/', status);
   app.route('/', internal);
   app.route('/', pageRoutes());
   app.route('/', embedStatic.routes);
   app.route('/v1', health);
+  app.route('/v1', status);
   app.route('/v1', internal);
   app.route(
     '/console',

@@ -53,7 +53,9 @@ and `PURSE_SECRET_KEY`):
 
 **purse-console**: `NODE_ENV=production`, `PORT=4200`, `PURSE_API_ORIGIN=https://<purse
 domain>` (must be `https://` in production: the session token travels on it), `BUILD_SHA`,
-`RAILWAY_DOCKERFILE_PATH=apps/purse-console/Dockerfile`.
+`RAILWAY_DOCKERFILE_PATH=apps/purse-console/Dockerfile`, and optionally
+`SIDEOUT_ORIGIN=https://<sideout domain>` so the public `/status` page (`docs/status.md`)
+can probe Sideout's `/health`.
 
 **sideout**:
 
@@ -193,6 +195,9 @@ previous one keeps serving. For monitoring between deploys, point an external HT
 | Purse | `https://purse-production-b87b.up.railway.app/health` | HTTP 200; body `{"data":{"status":"ok",...,"reconcile":{"ok":true,...}}}`. A 503 with `"status":"failing"` means the last reconcile found a violated invariant (`data.reconcile.failed` names it): page. A 503 with `"code":"database_unavailable"` means the database is down. |
 | Sideout | `https://sideout-production-5898.up.railway.app/health` | HTTP 200; body `{"data":{...,"purse":{"reachable":true,"status":"ok",...}}}`. `purse.reachable: false` means Sideout is up but cannot ask Purse; `purse.status: "failing"` relays Purse's failed reconcile. Sideout itself answers 503 only when its own database is unreachable. |
 | Console | `https://purse-console-production.up.railway.app/health` | HTTP 200; `{"data":{"sha":"...","api":"ok"}}`; `api: "unreachable"` or `"failing"` names the API's state. |
+
+For people rather than checkers, the console's public `/status` page renders the stored
+invariant record, the run history and the three services' health (`docs/status.md`).
 
 Every line the three services log is JSON with `service`, `level`, `time`, `msg` and a
 `requestId` on request-scoped lines; Sideout mints the id at its edge (`X-Request-Id`),
