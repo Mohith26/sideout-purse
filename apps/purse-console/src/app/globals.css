@@ -393,3 +393,9 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.replay-changed {
+  background: var(--bg-overlay);
+  border-left: 3px solid var(--surf);
+  padding: var(--space-1) var(--space-2);
+}

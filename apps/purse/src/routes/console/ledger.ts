@@ -6,9 +6,10 @@ import type { Id } from '@repo/ids';
 import { ok } from '../../http/envelope';
 import { RequestValidationError } from '../../http/errors';
 import { accountDetail, accountEntries, accountSummary, accountTree, decodeCursor, entryDetail, listEntries, reconcileAndRecord } from '../../ledger';
+import { replayLedger } from '../../ledger/replay';
 import { param } from '../v1/schemas';
 import type { ConsoleDeps, ConsoleScope } from './scope';
-import { accountDetailResource, accountEntryResource, accountResource, entryDetailResource, entrySummaryResource } from './serialize';
+import { accountDetailResource, accountEntryResource, accountResource, entryDetailResource, entrySummaryResource, ledgerReplayResource } from './serialize';
 import { tenantOf } from './tenants';
 
 /**
@@ -30,6 +31,12 @@ const journalQuerySchema = z
   .object({ kind: z.enum(JOURNAL_ENTRY_KINDS).optional(), contestId: z.string().regex(/^cnt_[0-9a-f-]{36}$/).optional(), cursor: cursorSchema, limit: limitSchema })
   .strict();
 
+const replayQuerySchema = z.object({
+  at: entryIdSchema.optional(),
+  position: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  after: accountIdSchema.optional(),
+}).strict().refine((q) => q.at === undefined || q.position === undefined, 'Use at or position, not both');
+
 function query<S extends z.ZodType>(schema: S, raw: Record<string, string>): z.output<S> {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) throw new RequestValidationError(parsed.error, ['query']);
@@ -38,6 +45,16 @@ function query<S extends z.ZodType>(schema: S, raw: Record<string, string>): z.o
 
 export function tenantLedgerRoutes(_deps: ConsoleDeps) {
   const routes = new Hono<ConsoleScope>();
+
+  routes.get('/ledger/replay', async (c) => {
+    const q = query(replayQuerySchema, c.req.query());
+    const replay = await replayLedger(c.get('db'), tenantOf(c).id, {
+      ...(q.at === undefined ? {} : { at: q.at }),
+      ...(q.position === undefined ? {} : { position: q.position }),
+      ...(q.after === undefined ? {} : { after: q.after }),
+    });
+    return ok(c, ledgerReplayResource(replay));
+  });
 
   routes.get('/accounts', async (c) => {
     const tenant = tenantOf(c);

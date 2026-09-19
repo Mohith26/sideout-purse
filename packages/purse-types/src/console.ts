@@ -281,3 +281,35 @@ export type AuditRowResource = {
   requestId: string | null;
   createdAt: string;
 };
+
+/** Historical money; account names and ownership are current metadata. */
+export type ReplayAccountResource = {
+  id: string;
+  kind: AccountKind;
+  asset: Asset;
+  normalSide: LedgerSide;
+  ownerRef: string | null;
+  label: string;
+  balance: Money;
+  /** Change caused by the selected entry, relative to the immediately preceding entry. */
+  delta: Money;
+  lineCount: number;
+};
+
+export type LedgerReplayResource = {
+  /** One-based in (posted_at, id) order; zero only for an empty journal. */
+  position: number;
+  total: number;
+  entry: JournalEntryResource | null;
+  accounts: ReplayAccountResource[];
+  accountCount: number;
+  accountLimit: number;
+  nextAccountCursor: string | null;
+  changedAccountIds: string[];
+  /** All escrows with journal activity up to this position, regardless of account pagination. */
+  escrows: ReplayAccountResource[];
+  lines: JournalLineResource[];
+  /** Credit-positive, debit-negative account balances summed across the entire tenant. */
+  totals: Array<{ asset: Asset; net: Money }>;
+  entryTotals: Array<{ asset: Asset; debits: Money; credits: Money }>;
+};
