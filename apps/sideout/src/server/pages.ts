@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 
 import type { User } from '../db/schema';
-import { pageUser } from './auth/current-user';
+import { pageSession } from './auth/current-user';
 import { appContext, type AppContext } from './context';
 import { settleDueDevDonations } from './donations/dev';
 import type { ReservationClock } from './field';
@@ -13,15 +13,22 @@ import type { ReservationClock } from './field';
  * you report" step the API routes take (docs/decisions.md, phase 6), so a screen never
  * shows a pending gift the provider would already call received.
  */
-export type PageContext = { app: AppContext; user: User | null; now: Date; clock: ReservationClock };
+export type PageContext = {
+  app: AppContext;
+  user: User | null;
+  /** The session was opened through the public demo's account picker; the shell marks every screen of it. */
+  demo: boolean;
+  now: Date;
+  clock: ReservationClock;
+};
 
 export async function pageContext(): Promise<PageContext> {
   const app = appContext();
   const now = new Date();
   const clock: ReservationClock = { now, reservationTtlMs: app.env.reservationTtlMs };
-  const user = await pageUser({ db: app.db, sessionSecret: app.env.sessionSecret, now });
+  const session = await pageSession({ db: app.db, sessionSecret: app.env.sessionSecret, now });
   if (app.donationProvider?.name === 'dev') await settleDueDevDonations(app.db, clock);
-  return { app, user, now, clock };
+  return { app, user: session?.user ?? null, demo: session?.via === 'demo', now, clock };
 }
 
 /** The console is role-gated on the server: a player, or anyone signed out, gets the same 404 an unknown path gives. */

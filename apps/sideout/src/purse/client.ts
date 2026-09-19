@@ -14,6 +14,7 @@ import {
   scoresSchema,
   settlementSchema,
   userSchema,
+  verificationStartSchema,
   voidSchema,
   walletSchema,
   webhookEndpointSchema,
@@ -136,6 +137,15 @@ export class PurseClient {
 
   getUser(userId: string, ctx: CallContext) {
     return this.call('GET', `/v1/users/${encodeURIComponent(userId)}`, undefined, userSchema, ctx);
+  }
+
+  /**
+   * Start (or, replayed under the same key, re-read) an identity check: Purse asks its
+   * identity provider and answers with the outcome. The seed's demo walk uses it; the app's
+   * players verify through the identity embed flow instead.
+   */
+  startVerification(userId: string, ctx: CallContext) {
+    return this.call('POST', `/v1/users/${encodeURIComponent(userId)}/verification`, {}, verificationStartSchema, ctx);
   }
 
   getWallet(userId: string, ctx: CallContext) {

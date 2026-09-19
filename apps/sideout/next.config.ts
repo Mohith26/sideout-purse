@@ -1,5 +1,7 @@
 import type { NextConfig } from 'next';
 
+import { switchFrom } from './src/lib/switch';
+
 /**
  * Route files Next recognises. `route.dev.ts` files (today: `POST /api/dev/login`) are
  * routes only when `dev.ts` is listed, and it is listed only outside production, so a
@@ -11,10 +13,21 @@ export function pageExtensionsFor(nodeEnv: string | undefined): string[] {
   return nodeEnv === 'production' ? ['ts', 'tsx'] : ['dev.ts', 'ts', 'tsx'];
 }
 
+/**
+ * `NEXT_PUBLIC_DEMO_ACCOUNTS` follows `DEMO_ACCOUNTS` (`docs/demo-accounts.md`): derived here
+ * at build time, inlined into both bundles by the `env` block below, and compared with the
+ * runtime `DEMO_ACCOUNTS` by `src/env.ts`, which refuses to boot a build made for the other
+ * setting. `apps/sideout/Dockerfile` passes `DEMO_ACCOUNTS` through as a build argument.
+ */
+export function demoAccountsFor(demoAccounts: string | undefined): 'true' | 'false' {
+  return switchFrom(demoAccounts) ? 'true' : 'false';
+}
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   pageExtensions: pageExtensionsFor(process.env.NODE_ENV),
+  env: { NEXT_PUBLIC_DEMO_ACCOUNTS: demoAccountsFor(process.env.DEMO_ACCOUNTS) },
   // Lint runs once at the repository root (`pnpm lint`), against the shared config.
   eslint: { ignoreDuringBuilds: true },
   // Workspace packages ship TypeScript source; Next compiles them alongside the app.

@@ -29,13 +29,13 @@ export const viewport: Viewport = {
 export const dynamic = 'force-dynamic';
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
-  const { app, user } = await pageContext();
+  const { app, user, demo } = await pageContext();
   const role = user?.role ?? null;
   const disputes = role === 'organizer' ? await countDisputedMatches(app.db) : 0;
   return (
     <html lang="en" className={`${instrumentSans.variable} ${archivo.variable}`}>
       <body>
-        <SideoutShell role={role} disputes={disputes} buildSha={buildSha(app.env.buildSha)}>
+        <SideoutShell role={role} disputes={disputes} buildSha={buildSha(app.env.buildSha)} demo={demo && user !== null ? { displayName: user.displayName } : null}>
           {children}
         </SideoutShell>
       </body>

@@ -11,6 +11,7 @@ import { GET as getStandings } from '../src/app/api/tournaments/[slug]/standings
 import { GET as listTournaments } from '../src/app/api/tournaments/route';
 import { donations, matchConsensus, matches, scoreSubmissions, sets, sponsors, teamMembers, teams, tournaments, users } from '../src/db/schema';
 import { buildSeed, SEED_ORGANIZER_PHONE, SEED_PHONE_PREFIX, SEED_SLUGS, writeSeed, type SeedDataset } from '../src/db/seed';
+import { dateOfBirthYearsBefore, DEMO_ACCOUNT_KEYS, DEMO_MATCH_BRACKET_POSITION, DEMO_REFUSED_AGE_YEARS, demoRoster } from '../src/db/seed/demo';
 import { drawBracket, rankForBracket } from '../src/domain/draw';
 import { drawConfigSchema } from '../src/domain/draw-config';
 import { createRng } from '../src/domain/rng';
@@ -285,6 +286,60 @@ describe('seed dataset', () => {
     expect(live.pools).toHaveLength(6);
     expect(live.bracket).toMatchObject({ size: 16, rounds: 4 });
     expect(live.teams.filter((t) => t.seed !== null).map((t) => t.seed).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('names the demo roster (docs/demo-accounts.md): six distinct seeded people, each in the state their card promises', () => {
+    const roster = demoRoster(dataset, ANCHOR);
+    expect(Object.keys(roster.phones).sort()).toEqual([...DEMO_ACCOUNT_KEYS].sort());
+    expect(new Set(Object.values(roster.phones)).size).toBe(DEMO_ACCOUNT_KEYS.length);
+    for (const phone of Object.values(roster.phones)) expect(phone).toMatch(new RegExp(`^\\${SEED_PHONE_PREFIX}\\d{4}$`));
+    const userByPhone = (phone: string) => dataset.users.find((u) => u.phoneE164 === phone);
+    const captainOf = (teamId: string | null | undefined) => dataset.teamMembers.find((m) => m.teamId === teamId && m.role === 'captain')?.userId;
+    const live = dataset.tournaments.find((t) => t.slug === SEED_SLUGS.live);
+    const upcoming = dataset.tournaments.find((t) => t.slug === SEED_SLUGS.upcoming);
+
+    // The two captains: the live quarterfinal awaiting scores, team A's reading in, team B's not.
+    const match = dataset.matches.find((m) => m.tournamentId === live?.id && m.bracketPosition === DEMO_MATCH_BRACKET_POSITION);
+    expect(match?.status).toBe('awaiting_scores');
+    expect(roster.matchBracketPosition).toBe(DEMO_MATCH_BRACKET_POSITION);
+    expect(userByPhone(roster.phones.captain_a)?.id).toBe(captainOf(match?.teamAId));
+    expect(userByPhone(roster.phones.captain_b)?.id).toBe(captainOf(match?.teamBId));
+    const submissions = dataset.scoreSubmissions.filter((s) => s.matchId === match?.id && s.supersededById === null);
+    expect(submissions.map((s) => s.submittedForTeamId)).toEqual([match?.teamAId]);
+    expect(dataset.matchConsensus.find((c) => c.matchId === match?.id)?.state).toBe('awaiting_second');
+
+    // The registrant: captain of a complete Pier 9 pair that has not entered (its payment failed).
+    const registrant = userByPhone(roster.phones.registrant);
+    const registrantTeam = dataset.teams.find((t) => t.tournamentId === upcoming?.id && captainOf(t.id) === registrant?.id);
+    expect(registrantTeam?.status).toBe('forming');
+    expect(dataset.teamMembers.filter((m) => m.teamId === registrantTeam?.id)).toHaveLength(2);
+    expect(dataset.donations.filter((d) => d.teamId === registrantTeam?.id).map((d) => d.status)).toEqual(['failed']);
+    expect(roster.registrantSlug).toBe(SEED_SLUGS.upcoming);
+
+    // The organizer, by the seeded number every doc names.
+    expect(roster.phones.organizer).toBe(SEED_ORGANIZER_PHONE);
+    expect(userByPhone(roster.phones.organizer)?.role).toBe('organizer');
+
+    // The refused player: a Pier 9 captain whose checkout lapsed (a pending donation), told to Purse as under age.
+    const refused = userByPhone(roster.phones.refused);
+    expect(refused?.role).toBe('player');
+    const lapsed = dataset.donations.find((d) => d.tournamentId === upcoming?.id && d.status === 'pending');
+    expect(captainOf(lapsed?.teamId)).toBe(refused?.id);
+    expect(roster.refusedDateOfBirth).toBe(dateOfBirthYearsBefore(ANCHOR, DEMO_REFUSED_AGE_YEARS));
+    expect(roster.refusedDateOfBirth).toBe('2010-09-19');
+    expect(DEMO_REFUSED_AGE_YEARS).toBeLessThan(18);
+
+    // The verifying player: the Community Cup captain still waiting on a partner.
+    const verifying = userByPhone(roster.phones.verifying);
+    const cup = dataset.tournaments.find((t) => t.slug === SEED_SLUGS.communityCup);
+    const waiting = dataset.teams.find((t) => t.tournamentId === cup?.id && captainOf(t.id) === verifying?.id);
+    expect(waiting?.status).toBe('forming');
+    expect(dataset.teamMembers.filter((m) => m.teamId === waiting?.id)).toHaveLength(1);
+
+    // Whatever the anchor, the same people: ids never depend on it, and neither do the phones.
+    const moved = demoRoster(buildSeed({ anchor: new Date('2027-01-09T16:00:00.000Z') }), new Date('2027-01-09T16:00:00.000Z'));
+    expect(moved.phones).toEqual(roster.phones);
+    expect(moved.refusedDateOfBirth).toBe('2011-01-09');
   });
 
   it('dev login signs in a seeded organizer and their profile carries no Purse identifier', async () => {

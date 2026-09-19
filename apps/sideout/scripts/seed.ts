@@ -15,9 +15,10 @@ import { databaseCallRecorder, PurseClient } from '../src/purse';
  *
  * Then, when `SIDEOUT_PURSE_SECRET_KEY` is set and the Purse API at `PURSE_API_URL` answers, the
  * same rows are mirrored to Purse through the app's own services (`src/db/seed/purse.ts`):
- * a settled contest for the settled event, two pushed quarterfinals on the live one, and
- * `purse_calls` rows for all of it. Otherwise the contest columns stay null and the log
- * says so. `pnpm --filter @purse/api db:seed -- --print-keys` prints the sandbox key.
+ * a settled contest for the settled event, two pushed quarterfinals on the live one, the
+ * demo roster's two Purse states (`src/db/seed/demo.ts`), and `purse_calls` rows for all
+ * of it. Otherwise the contest columns stay null and the log says so.
+ * `pnpm --filter @purse/api db:seed -- --print-keys` prints the sandbox key.
  */
 const logger = createLogger({ service: 'sideout-seed', level: 'info' });
 const config = env();
@@ -37,7 +38,7 @@ try {
     logger.warn('Purse walk skipped: the Purse API is not reachable; purse_contest_id stays null on every seeded tournament', { apiUrl: config.purse.apiUrl });
   } else {
     const purse = new PurseClient({ baseUrl: config.purse.apiUrl, secretKey: config.purse.secretKey, recorder: databaseCallRecorder(database.db) });
-    const walked = await seedPurse({ db: database.db, purse, log: logger, env: config.purse }, { now: new Date(), log: logger });
+    const walked = await seedPurse({ db: database.db, purse, log: logger, env: config.purse }, { now: new Date(), anchor, log: logger });
     logger.info('Purse walk applied', walked);
   }
 } catch (error) {

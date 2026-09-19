@@ -1427,3 +1427,119 @@ The console already knows the API's origin; Sideout's is the one thing it did no
 required variable would have broken the existing service topology. The `.env.example`
 template could not be edited from the automated pipeline (the phase 9 note applies);
 `src/env.ts`, `docs/status.md` and `docs/deploy.md` carry the variable.
+
+## Stretch: demo accounts decisions
+
+The public demo's sign-in switch (`docs/demo-accounts.md`), ported from the sibling
+Sideout-on-Lucra's demo-accounts feature as a pattern, not as code. Production issues no
+one-time code without an SMS provider (phase 6, still unchosen) and the dev login is
+compiled out, so without this a visitor could read every screen and sign in as no one.
+
+### `DEMO_ACCOUNTS` is a build-time setting with a runtime check
+
+`DEMO_ACCOUNTS=true` on the server enables the picker, `POST /api/auth/demo` and the
+`demoAccounts` field on `/health`; off by default. `next.config.ts` derives
+`NEXT_PUBLIC_DEMO_ACCOUNTS` from it at build time and `src/env.ts` refuses to boot a build
+made for the other setting (a literal `process.env.NEXT_PUBLIC_DEMO_ACCOUNTS` read, which
+`next build` inlines; unset, as in the bundled scripts and vitest, means "as the server").
+Nothing in today's browser bundle depends on the value: the picker and the pill are
+server-rendered. The check exists so a demo build can never be started as a non-demo
+server or the reverse, and so the Dockerfile's `DEMO_ACCOUNTS` build argument (default
+`false`) and the runtime variable have to be set together on purpose. `NEXT_PUBLIC_DEMO_ACCOUNTS`
+is never set by hand; the host sets `DEMO_ACCOUNTS` and passes it to the build. The
+refusal is a real one: `src/instrumentation.ts` (Next's boot hook, Node runtime only)
+parses the environment before the server serves and exits 1 with one logged line, which
+also turns any missing production variable into a failed boot rather than a 500 on every
+request.
+
+### Refused beside anything real
+
+With the switch on, `src/env.ts` refuses a live Purse key (`sk_live_`, `pk_live_`), a
+Stripe key that is not test-mode (`sk_test_` / `rk_test_`, `pk_test_`), and any SMS
+provider that is not the log sender (today the enum holds only `log`; a real provider is
+refused by name when one is added). A demo picker must never sign visitors in beside real
+money or real identities.
+
+### Production may run the `dev` donation provider under the switch only
+
+Donations are Stripe test-mode only (kickoff) and no Stripe keys are on the deployment, so
+registration for a paid event answered 503 there. Under `DEMO_ACCOUNTS`, and only under it,
+production selects the `dev` `DonationProvider` when no Stripe key is configured
+(`donationProvider: 'dev'`), so the registering captain's card can walk the entry donation
+and the Purse entry. A configured Stripe key still wins wherever it is set, so adding test
+keys later needs no code change. Outside the switch production keeps refusing without
+Stripe.
+
+### The roster is named by seeded phone and resolved against live rows
+
+`src/db/seed/demo.ts` names six accounts from the built dataset by seeded phone number
+(the same on every host; ids are stable too, but a phone survives whatever a demo does to
+the rows and reads well in a doc). `src/server/demo-accounts.ts` resolves them against the
+database on every request and reads each account's live state (the match and whose
+scoreline is in, the registrant's team and whether it holds a place, the organizer's
+dispute count, the last verification state Sideout heard). A card whose rows are gone is
+left out rather than shown broken; `POST /api/auth/demo` takes a roster key only, never a
+user id or a phone.
+
+Who they are: the two captains of the Sandbar Classic quarterfinal at bracket position 12
+(`awaiting_scores`, team A's reading in; the same match the seed test and the screen
+smoke already lean on); the captain of the Pier 9 Open pair whose payment failed (a
+complete pair not entered, on a paid event, so the dev provider is what the demo exercises;
+the Community Cup's free pair is left to the Player flow); the seeded organizer; and the two
+Purse-state players below.
+
+### "Refused" and "mid-verification" with a synchronous dev identity provider
+
+Purse's dev identity provider decides on the spot (verified with a name and a date of birth,
+rejected without, pending only for an external id on `DEV_IDENTITY_PENDING`, which is Purse
+configuration this feature does not require), and Sideout's contests are POINTS contests,
+for which the seeded ruleset does not require verification. So:
+
+- **The refused player** (the Pier 9 captain whose checkout lapsed) is made refused by the
+  seed's Purse walk after every seeded entry, so the seeded contests keep their
+  participants: `POST /v1/users/:id/verification` (rejected, no date of birth), then an
+  upsert carrying a date of birth `DEMO_REFUSED_AGE_YEARS` (16) before the anchor. The
+  profile shows the terminal identity row, and any new contest entry is refused
+  `under_minimum_age`, terminal too. Purse leaves an omitted field alone on an upsert, so
+  the app's later re-links keep the date. This is the honest way to get both a terminal
+  profile and a refusing eligibility engine with the sandbox providers as they are.
+- **The player still to verify** (the Community Cup captain waiting on a partner) is
+  linked and left `unstarted`: the profile's identity row opens Purse's identity flow, and
+  the dev provider verifies as soon as a name and a date of birth are supplied. "Mid-
+  verification" is read as this, the sibling's "player with details to add", because the
+  dev provider has no waiting state without a Purse-side list; the card shows whatever
+  state is live, so a Purse configured with `DEV_IDENTITY_PENDING` shows `pending` instead.
+
+### One reset, and the roster survives it
+
+The nightly reset phase 9 built is the reset; the demo step is part of the seed's Purse
+walk (`seedDemoAccounts` in `src/db/seed/purse.ts`), which both `db:seed` and the reset run,
+so the two Purse states come back every morning with the rows. Every call is idempotent
+under a fixed key, so a reseed replays.
+
+### A demo session is a normal session, marked
+
+`POST /api/auth/demo` issues the ordinary session cookie with `via: 'demo'` inside the
+signed payload (it cannot be added to a phone session afterwards), writes
+`user.demo_signed_in` on the user, and is rate-limited per address (30 per ten minutes) and
+process-wide (600), every cap consulted before any is charged, as the phone sign-in does.
+The shell reads the mark and shows a fixed fault-red "Demo · name" pill on every screen
+until sign-out. The phone form on `/sign-in` and its routes are untouched.
+
+### The e2e builds with the switch on
+
+The switch is inlined at build time, so CI's `pnpm build` runs with `DEMO_ACCOUNTS=true`
+and the Sideout smoke walks the picker (`e2e/demo.spec.ts`); the Playwright config starts
+the local server with the setting the build was made with (read from
+`.next/required-server-files.json`) and the demo spec skips itself when that is off, so a
+plain `pnpm build && pnpm e2e` still passes. The deployed image is built by the host from
+its own build argument. `E2E_API_PORT` / `E2E_WEB_PORT` move the local e2e servers when a
+sibling checkout holds the defaults.
+
+### Not done here
+
+- The deployment: `DEMO_ACCOUNTS=true` on the Railway `sideout` service (the same value
+  reaches the build as the Dockerfile's argument), a redeploy, and the "Public demo" note in
+  `docs/deploy.md` are the operator's step after this lands.
+- `apps/sideout/.env.example` could not be edited from the automated pipeline (writes to env
+  files are denied by policy); `src/env.ts` and `docs/demo-accounts.md` document the variable.

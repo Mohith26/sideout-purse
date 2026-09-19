@@ -17,7 +17,9 @@ import { applyDonationStatus } from './service';
  * a payment marks its row `failed` at once (what Stripe's `payment_intent.canceled` event
  * does for the real provider), so a superseded dev payment is never settled later.
  *
- * Never selected in production (`env.ts`), so this can never mark a real donation paid.
+ * Selected in production only under the public demo's `DEMO_ACCOUNTS` switch (`env.ts`,
+ * `docs/demo-accounts.md`), where a configured Stripe key still wins, so this can never
+ * mark a real donation paid.
  */
 export const DEV_SETTLE_DELAY_MS = 15_000;
 

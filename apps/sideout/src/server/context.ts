@@ -4,6 +4,7 @@ import { database, type Db } from '../db/client';
 import { env, type Env } from '../env';
 import { logger } from '../lib/logger';
 import { databaseCallRecorder, PurseClient } from '../purse';
+import { DEMO_SIGN_IN_LIMITS, type DemoLimiters } from './auth/demo';
 import { createRateLimiter } from './auth/rate-limit';
 import { createAuthService, type AuthService } from './auth/service';
 import { logSmsSender, unavailableSmsSender, type SmsSender } from './auth/sms';
@@ -14,7 +15,8 @@ import { purseContestEntryNotWired, purseContestEntryWired, type PurseContestEnt
 
 /**
  * The process-wide wiring the route handlers use: the database, the auth service with
- * its rate limiters, the SMS sender and the donation provider the environment selects.
+ * its rate limiters, the demo sign-in's limiters, the SMS sender and the donation
+ * provider the environment selects.
  * Built once and cached on `globalThis` so `next dev` hot reloads keep one set of rate
  * limit counters; tests call `resetAppContext()` between scenarios.
  */
@@ -22,6 +24,8 @@ export type AppContext = {
   env: Env;
   db: Db;
   auth: AuthService;
+  /** The demo sign-in's buckets (`auth/demo.ts`); built whatever the switch says, so a toggle needs no rewiring. */
+  demoLimiters: DemoLimiters;
   sms: SmsSender;
   donationProvider: DonationProvider | null;
   purseEntry: PurseContestEntry;
@@ -74,6 +78,7 @@ export function buildAppContext(base: Env, db: Db, overrides: AppContextOverride
       verifyPerAddress: createRateLimiter(AUTH_RATE_LIMITS.verifyPerAddress),
     },
   });
+  const demoLimiters: DemoLimiters = { perAddress: createRateLimiter(DEMO_SIGN_IN_LIMITS.perAddress), global: createRateLimiter(DEMO_SIGN_IN_LIMITS.global) };
   const purse =
     'purse' in overrides
       ? (overrides.purse ?? null)
@@ -86,6 +91,7 @@ export function buildAppContext(base: Env, db: Db, overrides: AppContextOverride
     env: config,
     db,
     auth,
+    demoLimiters,
     sms,
     donationProvider,
     purseEntry,

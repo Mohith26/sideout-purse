@@ -10,8 +10,9 @@ import { closeKey } from '../../server/purse/close';
 import { contestSubject, ensurePurseContest, mirrorContestState, readBackEntries } from '../../server/purse/contests';
 import { idempotencyKey, type PurseDeps } from '../../server/purse/deps';
 import { pushFinalStandings, pushMatchScores } from '../../server/purse/scores';
-import { linkPurseUser } from '../../server/purse/users';
-import { SEED_SLUGS } from './build';
+import { linkPurseUser, readPurseProfile } from '../../server/purse/users';
+import { buildSeed, SEED_SLUGS } from './build';
+import { demoRoster, type DemoRoster } from './demo';
 
 /**
  * The seed's Purse walk: what a live run would have done to Purse for the seeded
@@ -19,15 +20,18 @@ import { SEED_SLUGS } from './build';
  * contest for the settled event, in-progress ones with their pushed matches for the live
  * events, open ones with entries for the events taking or done taking registrations, and
  * a voided one (every stake refunded) for the cancelled event, and `purse_calls` shows
- * every request. Every step is idempotent under the same keys the app uses, so a reseed
- * replays rather than repeats. Runs only when `SIDEOUT_PURSE_SECRET_KEY` is set and the
- * API answers `/health`; otherwise `scripts/seed.ts` says so and the contest columns stay
- * null.
+ * every request; then the demo roster's two Purse states (`seedDemoAccounts`). Every step
+ * is idempotent under the same keys the app uses, so a reseed replays rather than
+ * repeats. Runs only when `SIDEOUT_PURSE_SECRET_KEY` is set and the API answers `/health`;
+ * otherwise `scripts/seed.ts` says so and the contest columns stay null.
  */
 export type SeedPurseSummary = {
   linked: number;
   tournaments: Array<{ slug: string; contestId: string; contestState: string; entered: number; pushed: number; settled: boolean }>;
+  demo: SeedDemoSummary;
 };
+
+export type SeedDemoSummary = { refused: { verification: string; dateOfBirth: string } | null; verifying: { verification: string } | null };
 
 export async function purseReachable(apiUrl: string): Promise<boolean> {
   try {
@@ -125,9 +129,51 @@ async function settleOnPurse(deps: PurseDeps, tournament: Tournament, now: Date)
   return closed.data.contest.state === 'settled';
 }
 
-export async function seedPurse(deps: PurseDeps, options: { now: Date; log: Logger }): Promise<SeedPurseSummary> {
+/**
+ * The demo roster's Purse states (`demo.ts`, `docs/demo-accounts.md`), set after every entry
+ * above so the seeded contests keep their participants. The refused player: an identity
+ * check is started, which the dev identity provider rejects for a user with no date of
+ * birth, and Purse is then told a date of birth under the minimum age, so the profile shows
+ * the terminal decision and any further contest entry is refused `under_minimum_age` (an
+ * omitted field leaves the stored one alone, so the app's later re-links keep the date).
+ * The verifying player is linked and left unstarted: the profile's identity row opens the
+ * identity flow. Both mirrored into `users.purse_verification_state`, which is what the
+ * sign-in picker reads. A rerun finds the states set and changes nothing.
+ */
+export async function seedDemoAccounts(deps: PurseDeps, roster: DemoRoster, now: Date): Promise<SeedDemoSummary> {
+  const summary: SeedDemoSummary = { refused: null, verifying: null };
+  const byPhone = async (phone: string): Promise<User | undefined> => (await deps.db.select().from(users).where(eq(users.phoneE164, phone)).limit(1))[0];
+
+  const refused = await byPhone(roster.phones.refused);
+  if (refused !== undefined) {
+    const subject = { type: 'user' as const, id: refused.id };
+    const linked = await linkPurseUser(deps, { user: refused, requestId: `seed-demo-link-${refused.id}`, now });
+    const [fresh] = await deps.db.select().from(users).where(eq(users.id, refused.id));
+    if (fresh?.purseUserId !== undefined && fresh.purseUserId !== null) {
+      if (linked.verification?.state === 'unstarted') {
+        await deps.purse.startVerification(fresh.purseUserId, { requestId: `seed-demo-verify-${refused.id}`, idempotencyKey: idempotencyKey('sideout', 'user', refused.id, 'demo-verification', 'v1'), subject });
+      }
+      await deps.purse.upsertUser(
+        { externalId: fresh.purseExternalId, dateOfBirth: roster.refusedDateOfBirth },
+        { requestId: `seed-demo-dob-${refused.id}`, idempotencyKey: idempotencyKey('sideout', 'user', refused.id, 'demo-date-of-birth', roster.refusedDateOfBirth), subject },
+      );
+      const profile = await readPurseProfile(deps, { user: fresh, requestId: `seed-demo-read-${refused.id}`, now });
+      summary.refused = { verification: profile.verification?.state ?? 'unknown', dateOfBirth: roster.refusedDateOfBirth };
+    }
+  }
+
+  const verifying = await byPhone(roster.phones.verifying);
+  if (verifying !== undefined) {
+    const linked = await linkPurseUser(deps, { user: verifying, requestId: `seed-demo-link-${verifying.id}`, now });
+    summary.verifying = { verification: linked.verification?.state ?? 'unknown' };
+  }
+  return summary;
+}
+
+/** `anchor` is the one the dataset was built with (`scripts/seed.ts`): the demo roster is derived from the same build. */
+export async function seedPurse(deps: PurseDeps, options: { now: Date; anchor: Date; log: Logger }): Promise<SeedPurseSummary> {
   const now = options.now;
-  const summary: SeedPurseSummary = { linked: 0, tournaments: [] };
+  const summary: SeedPurseSummary = { linked: 0, tournaments: [], demo: { refused: null, verifying: null } };
   // Every seeded event but the draft, which has no contest yet (a draft is created on Purse when it opens).
   const order = [SEED_SLUGS.settled, SEED_SLUGS.live, SEED_SLUGS.upcoming, SEED_SLUGS.drawn, SEED_SLUGS.cancelled, SEED_SLUGS.communityCup, SEED_SLUGS.boardwalk, SEED_SLUGS.duneCup];
   const rows = await deps.db.select().from(tournaments).where(inArray(tournaments.slug, order));
@@ -165,6 +211,8 @@ export async function seedPurse(deps: PurseDeps, options: { now: Date; log: Logg
     summary.tournaments.push({ slug, contestId: contest.id, contestState: final?.purseContestState ?? contest.state, entered, pushed, settled });
     options.log.info('seed: tournament mirrored to Purse', { slug, contestId: contest.id, contestState: final?.purseContestState ?? contest.state, entered, pushed, settled });
   }
+  summary.demo = await seedDemoAccounts(deps, demoRoster(buildSeed({ anchor: options.anchor }), options.anchor), now);
+  options.log.info('seed: demo roster states set on Purse', summary.demo);
   return summary;
 }
 

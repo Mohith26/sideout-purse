@@ -3,7 +3,8 @@ import { migrationState, type MigrationState, type Sql } from '@repo/db';
 
 /**
  * `GET /health` payload, mirroring Purse's envelope (spec section 10): commit sha,
- * migration state, the Purse SDK version this build was compiled against, and what
+ * migration state, the Purse SDK version this build was compiled against, whether the
+ * public demo's account picker is on (`DEMO_ACCOUNTS`, `docs/demo-accounts.md`), and what
  * Purse's own `/health` says right now (its active ruleset version and its last reconcile
  * result), read through one short request so a single probe of Sideout tells an operator
  * whether the platform behind it is well. Purse being unreachable, or answering that its
@@ -19,6 +20,8 @@ export type HealthReport = {
   sha: string;
   migrations: MigrationState;
   purseSdkVersion: string;
+  /** `DEMO_ACCOUNTS`: `/sign-in` offers the demo-accounts picker and `POST /api/auth/demo` exists. */
+  demoAccounts: boolean;
   purse: PurseHealthSummary;
 };
 
@@ -31,9 +34,9 @@ export type PurseHealthProbe = {
 
 const DEFAULT_TIMEOUT_MS = 3000;
 
-export async function healthReport(sql: Sql, migrationsFolder: string, sha: string, purse: PurseHealthProbe): Promise<HealthReport> {
+export async function healthReport(sql: Sql, migrationsFolder: string, sha: string, purse: PurseHealthProbe, options: { demoAccounts: boolean }): Promise<HealthReport> {
   const [migrations, purseSummary] = await Promise.all([migrationState(sql, migrationsFolder), probePurse(purse)]);
-  return { sha, migrations, purseSdkVersion: SDK_VERSION, purse: purseSummary };
+  return { sha, migrations, purseSdkVersion: SDK_VERSION, demoAccounts: options.demoAccounts, purse: purseSummary };
 }
 
 type PurseHealthBody = {

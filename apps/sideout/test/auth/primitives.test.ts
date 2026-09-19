@@ -13,9 +13,22 @@ describe('session tokens', () => {
   it('round-trips a user id and expires after the ttl', () => {
     const { token, expiresAt } = issueSession('sou_1', secret, now);
     expect(expiresAt.getTime()).toBe(now.getTime() + SESSION_TTL_SECONDS * 1000);
-    expect(verifySession(token, secret, now)).toEqual({ userId: 'sou_1' });
-    expect(verifySession(token, secret, new Date(expiresAt.getTime() - 1))).toEqual({ userId: 'sou_1' });
+    expect(verifySession(token, secret, now)).toEqual({ userId: 'sou_1', via: null });
+    expect(verifySession(token, secret, new Date(expiresAt.getTime() - 1))).toEqual({ userId: 'sou_1', via: null });
     expect(verifySession(token, secret, expiresAt)).toBeNull();
+  });
+
+  it('carries how a session was opened: a demo sign-in is marked, a phone sign-in is not', () => {
+    const demo = issueSession('sou_1', secret, now, { via: 'demo' });
+    expect(verifySession(demo.token, secret, now)).toEqual({ userId: 'sou_1', via: 'demo' });
+    const phone = issueSession('sou_1', secret, now);
+    expect(phone.token).not.toBe(demo.token);
+    expect(verifySession(phone.token, secret, now)).toEqual({ userId: 'sou_1', via: null });
+    // The mark is inside the signed payload: it cannot be added to a phone session afterwards.
+    const [encoded, signature] = phone.token.split('.');
+    const payload = JSON.parse(Buffer.from(encoded ?? '', 'base64url').toString('utf8')) as Record<string, unknown>;
+    const forged = `${Buffer.from(JSON.stringify({ ...payload, via: 'demo' }), 'utf8').toString('base64url')}.${signature ?? ''}`;
+    expect(verifySession(forged, secret, now)).toBeNull();
   });
 
   it('rejects the wrong secret, a tampered payload, and garbage', () => {
