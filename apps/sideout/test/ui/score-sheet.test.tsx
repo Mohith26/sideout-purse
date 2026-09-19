@@ -2,9 +2,13 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { exportPublicJwk, generateAttestationKeyPair, jwkThumbprint, verifyAttestation } from '@purse/types';
+
 import { ScoreSubmitSheet, shouldQueue, type SubmitResponse } from '../../src/components/consensus/ScoreSubmitSheet';
+import { attestationPayload, type SubmittedAttestation } from '../../src/domain/attestation';
 import type { SubmittedSet } from '../../src/domain/consensus';
 import type { ApiResult } from '../../src/lib/api-client';
+import { MemoryKeyStore, useDeviceKeyStoreForTests } from '../../src/lib/attestation/device';
 import { useOutboxStoreForTests } from '../../src/lib/offline/client';
 import { MemoryOutbox } from '../../src/lib/offline/outbox';
 import { interact } from './act';
@@ -59,8 +63,8 @@ function enterSweep(sheet: HTMLElement) {
   set(`${them.name}, set 2`, '16');
 }
 
-async function openSheet(submit: (matchId: string, sets: SubmittedSet[]) => Promise<ApiResult<SubmitResponse>>, opponentSubmitted = false) {
-  render(<ScoreSubmitSheet matchId="mch_1" bestOf={3} us={us} them={them} perspective="b" existing={null} opponentSubmitted={opponentSubmitted} submit={submit} />);
+async function openSheet(submit: (matchId: string, sets: SubmittedSet[], attestation: SubmittedAttestation | null) => Promise<ApiResult<SubmitResponse>>, opponentSubmitted = false, signing: { tournamentId: string; liveKeyIds: string[] } | null = null) {
+  render(<ScoreSubmitSheet matchId="mch_1" bestOf={3} us={us} them={them} perspective="b" existing={null} opponentSubmitted={opponentSubmitted} submit={submit} signing={signing} />);
   fireEvent.click(screen.getByRole('button', { name: opponentSubmitted ? 'Confirm the result' : 'Submit score' }));
   const sheet = await screen.findByTestId('score-sheet');
   return sheet;
@@ -69,6 +73,7 @@ async function openSheet(submit: (matchId: string, sets: SubmittedSet[]) => Prom
 beforeEach(() => {
   refresh.mockReset();
   useOutboxStoreForTests(new MemoryOutbox());
+  useDeviceKeyStoreForTests(new MemoryKeyStore());
 });
 afterEach(cleanup);
 
@@ -82,10 +87,14 @@ describe('ScoreSubmitSheet', () => {
     expect(within(sheet).getByTestId('match-verdict').textContent).toBe('Valid result: Your team win 2–0 in sets.');
     expect(button.disabled).toBe(false);
     await interact(() => fireEvent.click(button));
-    expect(submit).toHaveBeenCalledWith('mch_1', [
-      { setNumber: 1, usPoints: 21, themPoints: 18 },
-      { setNumber: 2, usPoints: 21, themPoints: 16 },
-    ]);
+    expect(submit).toHaveBeenCalledWith(
+      'mch_1',
+      [
+        { setNumber: 1, usPoints: 21, themPoints: 18 },
+        { setNumber: 2, usPoints: 21, themPoints: 16 },
+      ],
+      null,
+    );
   });
 
   it('first submitter: waits on the opponent, showing the scoreline in match orientation', async () => {
@@ -151,6 +160,65 @@ describe('ScoreSubmitSheet', () => {
     const [item] = await store.list();
     expect(item?.path).toBe('/api/matches/mch_1/scores');
     expect(item?.body.sets[0]).toEqual({ setNumber: 1, usPoints: 21, themPoints: 18 });
+  });
+
+  it('signs the scoreline on the phone when this phone is checked in, and says so; an unchecked phone sends unsigned', async () => {
+    const pair = await generateAttestationKeyPair();
+    const publicKey = await exportPublicJwk(pair.publicKey);
+    const keyId = await jwkThumbprint(publicKey);
+    const store = new MemoryKeyStore();
+    await store.write({ id: 'current', keyId, publicKey, privateKey: pair.privateKey });
+    useDeviceKeyStoreForTests(store);
+    const submit = vi.fn().mockResolvedValue(ok(response('awaiting_second')));
+    const sheet = await openSheet(submit, false, { tournamentId: 'trn_1', liveKeyIds: [keyId] });
+    expect((await within(sheet).findByTestId('signing-note')).getAttribute('data-signer')).toBe('checked_in');
+    enterSweep(sheet);
+    await interact(() => fireEvent.click(within(sheet).getByRole('button', { name: 'Submit scoreline' })));
+    await waitFor(() => expect(submit).toHaveBeenCalled());
+    const attestation = submit.mock.calls[0]?.[2] as SubmittedAttestation;
+    expect(attestation).toMatchObject({ keyId, algorithm: 'ES256' });
+    // Signed over the match-oriented sets (we are team B: our 21–18 is team A's 18–21), bound to the tournament, match and team.
+    const payload = attestationPayload({
+      keyId,
+      timestamp: attestation.timestamp,
+      tournamentId: 'trn_1',
+      matchId: 'mch_1',
+      teamId: us.id,
+      sets: [
+        { setNumber: 1, teamAPoints: 18, teamBPoints: 21 },
+        { setNumber: 2, teamAPoints: 16, teamBPoints: 21 },
+      ],
+    });
+    expect(await verifyAttestation(publicKey, payload, attestation.signature)).toBe(true);
+    cleanup();
+
+    // The same phone, not checked in for this team: unsigned, and the sheet says so.
+    const unsigned = vi.fn().mockResolvedValue(ok(response('awaiting_second')));
+    const other = await openSheet(unsigned, false, { tournamentId: 'trn_1', liveKeyIds: ['someone-else'] });
+    expect((await within(other).findByTestId('signing-note')).getAttribute('data-signer')).toBe('not_checked_in');
+    enterSweep(other);
+    await interact(() => fireEvent.click(within(other).getByRole('button', { name: 'Submit scoreline' })));
+    await waitFor(() => expect(unsigned).toHaveBeenCalled());
+    expect(unsigned.mock.calls[0]?.[2]).toBeNull();
+  });
+
+  it('a queued scoreline carries its signature', async () => {
+    const pair = await generateAttestationKeyPair();
+    const publicKey = await exportPublicJwk(pair.publicKey);
+    const keyId = await jwkThumbprint(publicKey);
+    const keys = new MemoryKeyStore();
+    await keys.write({ id: 'current', keyId, publicKey, privateKey: pair.privateKey });
+    useDeviceKeyStoreForTests(keys);
+    const store = new MemoryOutbox();
+    useOutboxStoreForTests(store);
+    const noAnswer: ApiResult<SubmitResponse> = { ok: false, error: { type: 'internal_error', code: 'unavailable', message: 'Could not reach Sideout.' }, status: 0, retryAfterMs: null };
+    const sheet = await openSheet(vi.fn().mockResolvedValue(noAnswer), false, { tournamentId: 'trn_1', liveKeyIds: [keyId] });
+    enterSweep(sheet);
+    await interact(() => fireEvent.click(within(sheet).getByRole('button', { name: 'Submit scoreline' })));
+    expect(await within(sheet).findByRole('heading', { name: 'Saved on this phone' })).toBeTruthy();
+    await waitFor(async () => expect(await store.list()).toHaveLength(1));
+    const [item] = await store.list();
+    expect(item?.body.attestation).toMatchObject({ keyId, algorithm: 'ES256' });
   });
 
   it('a definitive refusal stays in the editor with the message, and closing refreshes the page', async () => {
