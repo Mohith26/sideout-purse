@@ -61,7 +61,7 @@ import { TIE_BREAK_RULES, type PrizeStructure } from '../settlement/types';
 
 // ---- Tenancy -------------------------------------------------------------------------
 
-export const tenantStatus = pgEnum('tenant_status', ['active', 'suspended']);
+export const tenantStatus = pgEnum('tenant_status', ['active', 'suspended', 'retired']);
 export type TenantStatus = (typeof tenantStatus.enumValues)[number];
 
 /**
@@ -81,6 +81,19 @@ export const tenants = pgTable(
 
 export type Tenant = typeof tenants.$inferSelect;
 export type NewTenant = typeof tenants.$inferInsert;
+
+/** Immutable self-serve lease and mint replay receipt; absence means a managed tenant. */
+export const sandboxLeases = pgTable('sandbox_leases', {
+  tenantId: text('tenant_id').primaryKey().references(() => tenants.id),
+  address: text('address').notNull(),
+  requestKey: text('request_key').notNull(),
+  origin: text('origin').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('sandbox_leases_request_idx').on(table.address, table.requestKey),
+  index('sandbox_leases_expiry_idx').on(table.expiresAt),
+]);
 
 // ---- Ledger (spec 4.2) ---------------------------------------------------------------
 
@@ -1001,6 +1014,7 @@ export const apiKeys = pgTable(
     keyHash: text('key_hash').notNull(),
     scopes: text('scopes').array().$type<ApiKeyScope[]>().notNull().default(sql`'{}'::text[]`),
     label: text('label'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     ...timestamps,

@@ -4,7 +4,7 @@ import { WEBHOOK_DELIVERY_STATUSES, WEBHOOK_ENDPOINT_STATUSES, WEBHOOK_EVENT_TYP
 import type { Id } from '@repo/ids';
 
 import { parseBody } from '../../http/body';
-import { ok, okOnce } from '../../http/envelope';
+import { ApiFailure, ok, okOnce } from '../../http/envelope';
 import { RequestValidationError } from '../../http/errors';
 import { createEndpoint, getEndpoint, listDeliveries, listEndpoints, loadDelivery, replayDelivery, rotateEndpointSecret, updateEndpoint } from '../../webhooks';
 import type { V1Deps, V1Scope } from './scope';
@@ -42,6 +42,12 @@ const listQuerySchema = z.object({ status: z.enum(WEBHOOK_DELIVERY_STATUSES).opt
 
 export function webhooksRoutes(deps: V1Deps) {
   const routes = new Hono<V1Scope>();
+  routes.use('*', async (c, next) => {
+    if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && c.get('auth').selfServe) {
+      throw new ApiFailure({ type: 'permission_error', code: 'sandbox_webhooks_unavailable', message: 'Outbound webhooks are unavailable on self-serve sandboxes' });
+    }
+    await next();
+  });
 
   routes.post('/endpoints', async (c) => {
     const auth = c.get('auth');

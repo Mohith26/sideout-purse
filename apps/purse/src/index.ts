@@ -67,6 +67,7 @@ const { app, embedDir } = createApp({
   embedDir: config.embed.staticDir,
   rateLimit: config.rateLimit,
   trustedProxyHops: config.trustedProxyHops,
+  sandboxSelfServe: config.sandboxSelfServe,
 });
 if (embedDir === undefined) {
   logger.warn('embed app not found; /embed answers 404 until `pnpm --filter @purse/embed build` runs or PURSE_EMBED_DIR is set', { configured: config.embed.staticDir ?? null });

@@ -14,7 +14,7 @@ import { bootstrapTenant, client, type Bootstrap } from './client';
  * missing from the table below is a route without these guarantees, so the table also
  * checks itself against what the app actually mounts. The embed's publishable-key routes
  * (`/v1/embed/*` but `tokens`) are a separate stack with their own table in
- * `test/embed/routes.test.ts`.
+ * `test/embed/routes.test.ts`; public sandbox minting is in `test/sandbox/sandbox.test.ts`.
  */
 type Route = { method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string; invalidBody?: unknown };
 
@@ -83,6 +83,7 @@ describe('every v1 route', () => {
     const mounted = h.app.routes
       .filter((route) => route.path.startsWith('/v1/') && !route.path.endsWith('*') && route.method !== 'ALL' && route.method !== 'OPTIONS')
       .filter((route) => !route.path.startsWith('/v1/embed/') || route.path === '/v1/embed/tokens')
+      .filter((route) => !(route.method === 'POST' && route.path === '/v1/sandbox/keys'))
       .map((route) => `${route.method} ${route.path}`);
     const expected = routes().map(
       (route) =>

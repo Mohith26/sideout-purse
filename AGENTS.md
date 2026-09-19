@@ -211,6 +211,7 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   and reissues them. Then `curl -H "Authorization: Bearer sk_sandbox_..." -H
   "Idempotency-Key: k1" -H "content-type: application/json" -d '{"externalId":"u1"}'
   localhost:4000/v1/users`.
+- Public `/docs`, self-serve key minting, 24-hour expiry and retirement are documented in `docs/sandbox.md`; `SANDBOX_SELF_SERVE` is off by default in production.
 - Retention runs as the owner: `pnpm --filter @purse/api db:purge` (idempotency keys and
   their claims past 30 days, stale embed tokens).
 

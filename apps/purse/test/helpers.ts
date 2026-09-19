@@ -39,6 +39,7 @@ export type HarnessOptions = {
   internalApiToken?: string;
   rateLimit?: RateLimitConfig;
   trustedProxyHops?: number;
+  sandboxSelfServe?: boolean;
   clock?: () => number;
   inProgressWaitMs?: number;
   statusTtlMs?: number;
@@ -79,6 +80,7 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     migrationsFolder: MIGRATIONS_FOLDER,
     sha: overrides.sha ?? 'test-sha',
     nodeEnv: 'test',
+    ...(overrides.sandboxSelfServe === undefined ? {} : { sandboxSelfServe: overrides.sandboxSelfServe }),
     internalApiToken: overrides.internalApiToken,
     providers,
     keys: TEST_KEYS,

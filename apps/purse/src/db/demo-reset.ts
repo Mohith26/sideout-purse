@@ -48,7 +48,7 @@ export const DEMO_DATA_TABLES = [
   'users',
 ] as const;
 
-export const KEPT_TABLES = ['tenants', 'tenant_origins', 'api_keys', 'webhook_endpoints', 'rulesets', 'operators', 'operator_sessions', 'reconcile_runs'] as const;
+export const KEPT_TABLES = ['tenants', 'tenant_origins', 'api_keys', 'sandbox_leases', 'webhook_endpoints', 'rulesets', 'operators', 'operator_sessions', 'reconcile_runs'] as const;
 
 const DEMO_DATABASE = /^purse(_demo.*|_test|_p\d+.*)?$/;
 

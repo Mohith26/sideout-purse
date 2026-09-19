@@ -8,6 +8,7 @@ import type { ApiErrorType } from '@purse/types';
 export const AUTH_ERROR_CODES = {
   missing_api_key: 'authentication_error',
   invalid_api_key: 'authentication_error',
+  api_key_expired: 'authentication_error',
   api_key_revoked: 'authentication_error',
   secret_key_required: 'authentication_error',
   publishable_key_required: 'authentication_error',

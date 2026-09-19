@@ -33,7 +33,7 @@ export default defineConfig({
       url: `${API_ORIGIN}/health`,
       reuseExistingServer: false,
       timeout: 60_000,
-      env: { PORT: String(API_PORT), WEBHOOK_DISPATCHER: 'off', LOG_LEVEL: 'warn' },
+      env: { PORT: String(API_PORT), WEBHOOK_DISPATCHER: 'off', LOG_LEVEL: 'warn', SANDBOX_SELF_SERVE: 'true' },
     },
     {
       command: `pnpm exec next start --port ${CONSOLE_PORT}`,

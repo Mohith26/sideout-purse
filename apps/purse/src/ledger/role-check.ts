@@ -11,7 +11,7 @@ import type { Sql } from '@repo/db';
  * rules, spec 4.5) and the reconcile runs (what the invariants found when; a failed run
  * stays on the record, spec section 10).
  */
-export const APPEND_ONLY_TABLES = ['journal_entries', 'journal_lines', 'audit_log', 'contest_results', 'idempotency_keys', 'eligibility_decisions', 'reconcile_runs'] as const;
+export const APPEND_ONLY_TABLES = ['journal_entries', 'journal_lines', 'audit_log', 'contest_results', 'idempotency_keys', 'eligibility_decisions', 'reconcile_runs', 'sandbox_leases'] as const;
 
 export type AppendOnlyTable = (typeof APPEND_ONLY_TABLES)[number];
 
@@ -56,6 +56,7 @@ export async function runtimeRolePrivileges(sql: Sql): Promise<JournalPrivileges
     idempotency_keys: absent,
     eligibility_decisions: absent,
     reconcile_runs: absent,
+    sandbox_leases: absent,
   };
   for (const { table, ...privileges } of rows) tables[table] = privileges;
   return { role: who?.role ?? 'unknown', tables, ownedTables: owned?.count ?? 0 };

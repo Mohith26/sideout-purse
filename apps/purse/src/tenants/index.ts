@@ -45,6 +45,7 @@ export async function setTenantStatus(db: DbOrTx, input: SetTenantStatusInput): 
     const [before] = await tx.select().from(tenants).where(eq(tenants.id, input.tenantId)).for('update');
     if (before === undefined) throw new TenantError('tenant_not_found', `No tenant ${input.tenantId}`, { tenantId: input.tenantId });
     if (before.status === input.status) return before;
+    if (before.status === 'retired') throw new TenantError('tenant_not_found', 'Retired sandboxes cannot be reinstated');
     const [after] = await tx.update(tenants).set({ status: input.status, updatedAt: sql`now()` }).where(eq(tenants.id, before.id)).returning();
     if (after === undefined) throw new Error(`tenants update of ${before.id} returned no row`);
     await recordAudit(tx, {

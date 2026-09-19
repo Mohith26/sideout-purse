@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { API_KEY_ENVIRONMENTS, API_KEY_KINDS, TENANT_STATUSES, type TenantDetailResource, type TenantResource } from '@purse/types';
+import { API_KEY_ENVIRONMENTS, API_KEY_KINDS, type TenantDetailResource, type TenantResource } from '@purse/types';
 import type { Id } from '@repo/ids';
 
 import { createApiKey, listApiKeys, revokeApiKey } from '../../auth';
@@ -23,7 +23,7 @@ import { apiKeyResource, tenantResource } from './serialize';
  * mutation under a tenant takes an `Idempotency-Key` and is stored under the tenant's
  * namespace with the console's prefix (`routes/console/index.ts`).
  */
-const statusSchema = z.object({ status: z.enum(TENANT_STATUSES), reason: z.string().trim().min(1).max(500).optional() }).strict();
+const statusSchema = z.object({ status: z.enum(['active', 'suspended']), reason: z.string().trim().min(1).max(500).optional() }).strict();
 
 const createKeySchema = z
   .object({

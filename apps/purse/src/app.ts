@@ -12,6 +12,8 @@ import type { Providers } from './providers';
 import { consoleRoutes } from './routes/console';
 import { embedRoutes } from './routes/embed';
 import { embedStaticRoutes } from './routes/embed-static';
+import { docsOrigin, sandboxRoutes } from './routes/sandbox';
+import { docsRoutes } from './routes/docs';
 import { healthRoutes } from './routes/health';
 import { internalRoutes } from './routes/internal';
 import { pageRoutes } from './routes/pages';
@@ -37,6 +39,7 @@ export type AppDeps = {
   rateLimit?: RateLimitConfig;
   /** Proxies whose `X-Forwarded-For` entry names the client (`TRUSTED_PROXY_HOPS`); defaults to none. */
   trustedProxyHops?: number;
+  sandboxSelfServe?: boolean;
   /** The rate limiter's clock, for tests. */
   clock?: () => number;
   /** How long `GET /status` serves one assembled answer, for tests. */
@@ -59,9 +62,18 @@ export type AppDeps = {
  */
 export function createApp(deps: AppDeps) {
   const app = new Hono<RequestScope>();
+  const sandboxSelfServe = deps.sandboxSelfServe ?? deps.nodeEnv !== 'production';
   const buckets = new TokenBuckets(deps.rateLimit ?? DEFAULT_RATE_LIMIT);
 
   app.use(requestId(deps.logger));
+  app.use('/v1/*', async (c, next) => {
+    const origin = c.req.header('origin');
+    if (origin !== undefined && origin === docsOrigin(c, deps.trustedProxyHops ?? 0)) {
+      c.header('Access-Control-Allow-Origin', origin);
+      c.header('Vary', 'Origin');
+    }
+    await next();
+  });
 
   app.use(async (c, next) => {
     const started = performance.now();
@@ -80,7 +92,7 @@ export function createApp(deps: AppDeps) {
 
   app.onError((error, c) => renderError(c, c.get('logger'), error));
 
-  const health = healthRoutes({ sql: deps.sql, db: deps.db, migrationsFolder: deps.migrationsFolder, sha: deps.sha });
+  const health = healthRoutes({ sql: deps.sql, db: deps.db, migrationsFolder: deps.migrationsFolder, sha: deps.sha, sandboxSelfServe });
   const internal = internalRoutes({ db: deps.db, internalApiToken: deps.internalApiToken, nodeEnv: deps.nodeEnv });
   const status = statusRoutes({
     sql: deps.sql,
@@ -93,6 +105,8 @@ export function createApp(deps: AppDeps) {
     ...(deps.statusTtlMs === undefined ? {} : { ttlMs: deps.statusTtlMs }),
   });
   const embedStatic = embedStaticRoutes({ db: deps.db, dir: deps.embedDir });
+  app.route('/', docsRoutes({ enabled: sandboxSelfServe, rateLimit: deps.rateLimit ?? DEFAULT_RATE_LIMIT }));
+  app.route('/v1/sandbox', sandboxRoutes({ db: deps.db, enabled: sandboxSelfServe, trustedProxyHops: deps.trustedProxyHops ?? 0, ...(deps.clock === undefined ? {} : { clock: deps.clock }) }));
   app.route('/', health);
   app.route('/', status);
   app.route('/', internal);

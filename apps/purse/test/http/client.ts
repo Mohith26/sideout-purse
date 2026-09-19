@@ -59,6 +59,7 @@ export type RequestOptions = {
 };
 
 export type Client = {
+  authorization: string | undefined;
   get<T = unknown>(path: string, options?: RequestOptions): Promise<ApiResponse<T>>;
   post<T = unknown>(path: string, body?: unknown, options?: RequestOptions): Promise<ApiResponse<T>>;
   delete<T = unknown>(path: string, body?: unknown, options?: RequestOptions): Promise<ApiResponse<T>>;
@@ -94,6 +95,7 @@ export function client(h: TestHarness, apiKey: string | undefined): Client {
     return { status: res.status, headers: res.headers, data: envelope.data, error: envelope.error, raw };
   };
   return {
+    authorization: apiKey === undefined ? undefined : 'Bearer <api-key>',
     send,
     get: (path, options) => send('GET', path, undefined, options),
     post: (path, body, options) => send('POST', path, body, options),
