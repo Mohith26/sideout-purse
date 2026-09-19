@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { Button } from '@sideout/ui';
@@ -33,12 +34,12 @@ export function HeaderNav() {
 
   return (
     <>
-      <a href="/ladder" className="link-inline type-label" aria-current={pathname === '/ladder' ? 'page' : undefined}>
+      <Link href="/ladder" className="link-inline type-label" aria-current={pathname === '/ladder' ? 'page' : undefined}>
         Ladder
-      </a>
-      <a href="/audit" className="link-inline type-label" aria-current={pathname === '/audit' ? 'page' : undefined}>
+      </Link>
+      <Link href="/audit" className="link-inline type-label" aria-current={pathname === '/audit' ? 'page' : undefined}>
         Purse calls
-      </a>
+      </Link>
       {me === undefined || me === null ? null : (
         <>
           <span className="type-label" data-testid="signed-in-as">

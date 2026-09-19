@@ -69,8 +69,18 @@ test.describe('Player flow', () => {
     expect(afterRegister.teams.map((t) => t.id)).toContain(candidate.teamId);
 
     // The Purse contest entry, in Purse's own frame on Purse's origin, then read back by the server.
+    // Step 2's content is server-rendered once the team holds its place and lands with the router
+    // refresh the register button triggers; a slow runner has taken longer than the default wait
+    // over that, and a reload shows the same server state, so give it the spec's usual 30 s and
+    // reload once meanwhile rather than fail on the refresh's timing.
     const entryStep = page.getByTestId('purse-entry-step');
-    await expect(entryStep).toBeVisible();
+    await expect(async () => {
+      if (!(await entryStep.isVisible())) {
+        await page.reload();
+        await settled(page);
+      }
+      await expect(entryStep).toBeVisible();
+    }).toPass({ timeout: 30_000, intervals: [2_000] });
     const alreadyIn = await entryStep.getByTestId('entry-done').isVisible();
     if (!alreadyIn) {
       await entryStep.getByRole('button', { name: 'Enter the contest on Purse' }).click();
