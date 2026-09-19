@@ -14,6 +14,7 @@ import {
   type EntryResource,
   type PreviewResource,
   type ResultsResource,
+  type SandboxKeysResource,
   type SettlementResource,
   type UserResource,
   type WebhookDeliveryResource,
@@ -24,7 +25,6 @@ import { type Id } from '@repo/ids';
 import { createApiKey, resetAuthCaches } from '../../src/auth';
 import type { Database } from '../../src/db/client';
 import { eligibilityDecisions } from '../../src/db/schema';
-import type { SandboxKeysResource } from '@purse/types';
 import { reconcile } from '../../src/ledger';
 import { addRestriction } from '../../src/users';
 import { connectMigrator, harness, type TestHarness } from '../helpers';
