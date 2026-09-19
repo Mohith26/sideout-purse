@@ -138,6 +138,11 @@ jobs:
           tail -n 40 purse-api.log || true
 
       - name: Build
+        # Sideout is built with the demo-accounts switch on (docs/demo-accounts.md) so its
+        # Playwright smoke below walks the picker; the deployed image is built by the host
+        # from its own DEMO_ACCOUNTS build argument.
+        env:
+          DEMO_ACCOUNTS: 'true'
         run: |
           pnpm build
 

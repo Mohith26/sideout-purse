@@ -40,7 +40,7 @@ try {
   if (config.purse.secretKey === undefined) throw new Error('SIDEOUT_PURSE_SECRET_KEY is not set; the demo reset must mirror the seed to Purse');
   if (!(await purseReachable(config.purse.apiUrl))) throw new Error(`the Purse API at ${config.purse.apiUrl} did not answer /health; the demo reset must mirror the seed to Purse`);
   const purse = new PurseClient({ baseUrl: config.purse.apiUrl, secretKey: config.purse.secretKey, recorder: databaseCallRecorder(database.db) });
-  const walked = await seedPurse({ db: database.db, purse, log: logger, env: config.purse }, { now: new Date(), log: logger });
+  const walked = await seedPurse({ db: database.db, purse, log: logger, env: config.purse }, { now: new Date(), anchor, log: logger });
   logger.info('demo reset complete', walked);
 } catch (error) {
   logger.error('demo reset failed', errorFields(error));

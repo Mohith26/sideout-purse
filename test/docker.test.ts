@@ -30,9 +30,10 @@ describe('container images', () => {
     // Production dependencies come from a clean install, never from pruning the build stage in place.
     expect(text).toMatch(/pnpm install --frozen-lockfile --prod --filter/);
     expect(text).not.toMatch(/npm prune/);
-    // No secret is baked in: the only build arguments are the sha and, for Sideout, the NEXT_PUBLIC_ values.
+    // No secret is baked in: the only build arguments are the sha, for Sideout the NEXT_PUBLIC_
+    // values, and the demo-accounts switch (a boolean the build inlines; docs/demo-accounts.md).
     const args = [...text.matchAll(/^ARG (\w+)/gm)].map((m) => m[1]);
-    expect(args.every((arg) => arg === 'BUILD_SHA' || arg?.startsWith('NEXT_PUBLIC_'))).toBe(true);
+    expect(args.every((arg) => arg === 'BUILD_SHA' || arg === 'DEMO_ACCOUNTS' || arg?.startsWith('NEXT_PUBLIC_'))).toBe(true);
   });
 
   it.each(SERVICES)('$name: the start command runs the migrations first and lets a failure fail the deploy', ({ entrypoint, migrates }) => {

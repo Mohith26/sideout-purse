@@ -271,10 +271,16 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   go through it rather than filtering `teams.status` by hand.
 - Session: signed HttpOnly SameSite=Lax cookie (`server/auth/session.ts`); `requireUser` /
   `requireOrganizer` in handlers. `/api/admin/*` is organizer-only. `/api/dev/login` exists
-  only outside production (`route.dev.ts` + `pageExtensions`).
+  only outside production (`route.dev.ts` + `pageExtensions`). The public demo's sign-in is
+  the `DEMO_ACCOUNTS` switch (`docs/demo-accounts.md`: a build-time value `next.config.ts`
+  derives into `NEXT_PUBLIC_DEMO_ACCOUNTS`, the roster in `src/db/seed/demo.ts`, its Purse
+  states set by the seed walk, `POST /api/auth/demo`, sessions marked `via: 'demo'`); CI
+  builds Sideout with it on so `e2e/demo.spec.ts` runs, and `E2E_API_PORT` / `E2E_WEB_PORT`
+  move the local e2e servers off :4020/:3010.
 - Seams: `SmsSender` (`server/auth/sms.ts`) and `DonationProvider`
   (`server/donations/provider.ts`); `env.ts` selects the implementation and refuses
-  `log`/`dev` in production. Donations never touch anything Purse-shaped; public responses go
+  `log`/`dev` in production (the `dev` donation provider excepted under `DEMO_ACCOUNTS`).
+  Donations never touch anything Purse-shaped; public responses go
   through `server/public-shape.ts`, which lists fields by hand and omits every `purse_*`.
 - Seed: `src/db/seed/build.ts` is pure and uses the draw engine and scoreline rules, and
   gives every played match its consensus rows; `write.ts` upserts by id, leaving the Purse

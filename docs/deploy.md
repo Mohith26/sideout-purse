@@ -72,6 +72,7 @@ can probe Sideout's `/health`.
 | `BUILD_SHA` | the deployed commit: `/health`, and the service worker's cache version, so a new build must carry a new sha or phones keep the previous pages |
 | `RAILWAY_DOCKERFILE_PATH` | `apps/sideout/Dockerfile` |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | unset on the demo (below, "What the demo does not do") |
+| `DEMO_ACCOUNTS` | `true` for the public demo's sign-in picker (`docs/demo-accounts.md`), otherwise unset. A build-time value too: the Dockerfile declares it as a build argument (default `false`), Railway hands the service variable to the build, and a build made for the other setting refuses to boot. `NEXT_PUBLIC_DEMO_ACCOUNTS` is derived from it by `next.config.ts` and is never set by hand. |
 
 **demo-reset** (the nightly cron) needs both halves' variables: `DEMO_RESET=allow`, the
 Purse owner and runtime URLs, `PURSE_SECRET_KEY`, `PURSE_TENANT_ORIGINS`, and Sideout's
@@ -231,10 +232,15 @@ demo reset first). Last run against the deployment: both flows passed at the com
 - **Sign in with a phone.** No SMS provider is chosen (docs/decisions.md, phase 6):
   production answers `POST /api/auth/request-code` with 503 `sms_unavailable`, and the
   embed's sign-in is off the same way. The seeded screens are all readable without a
-  session; the flows sign in by minting a session with the deployment's secret.
+  session; the flows sign in by minting a session with the deployment's secret. The way in
+  for a visitor is the demo-accounts picker (`docs/demo-accounts.md`): with
+  `DEMO_ACCOUNTS=true` on the `sideout` service, `/sign-in` offers six seeded people and
+  `/health` reports `demoAccounts: true`.
 - **Take a donation.** No Stripe account is configured, so registering for an event with an
   entry donation answers 503 `donation_provider_unavailable`; the free-entry Community Cup
-  registers without one.
+  registers without one. Under `DEMO_ACCOUNTS=true` the `dev` donation provider takes the
+  entry donation instead (it settles fifteen seconds later, nothing is charged), so the
+  paid events register too; a configured Stripe key still wins.
 - **Real identity, geolocation or risk vendors.** The `dev` providers run with
   `ALLOW_DEV_PROVIDERS=true`; `docs/providers.md` is the seam table.
 - **Custom domains, a CDN, or more than one replica of anything** (the rate limiter and the

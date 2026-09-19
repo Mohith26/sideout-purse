@@ -8,10 +8,11 @@
  * - `stripe` (`stripe.ts`): a PaymentIntent per registration, confirmed by the client
  *   with the returned `clientSecret`, and settled by the signed webhook receiver.
  * - `dev` (`dev.ts`): selected automatically outside production when no Stripe key is
- *   configured; marks the donation succeeded after a short clock-driven delay.
+ *   configured, and in production only under the public demo's `DEMO_ACCOUNTS` switch;
+ *   marks the donation succeeded after a short clock-driven delay.
  *
- * In production with no Stripe key there is no provider, and registration refuses with
- * `donation_provider_unavailable` rather than faking success.
+ * In production with no Stripe key (and no demo switch) there is no provider, and
+ * registration refuses with `donation_provider_unavailable` rather than faking success.
  */
 
 export type PaymentRequest = {

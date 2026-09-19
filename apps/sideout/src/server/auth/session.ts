@@ -6,20 +6,31 @@ import { z } from 'zod';
  * The app session (decision D8: Sideout owns its own session). A signed, HttpOnly,
  * SameSite=Lax cookie carrying the user id and an expiry; the signature is an HMAC-SHA256
  * over the payload with a key derived from `SESSION_SECRET`. Nothing is stored server
- * side, so a session cannot be enumerated and a secret rotation signs everyone out.
+ * side, so a session cannot be enumerated and a secret rotation signs everyone out. A
+ * session opened through the public demo's account picker carries `via: 'demo'`
+ * (`docs/demo-accounts.md`), which the shell reads to mark every screen of it; a phone
+ * sign-in carries no `via` at all.
  */
 
 export const SESSION_COOKIE = 'sideout_session';
 export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+export const SESSION_VIAS = ['demo'] as const;
+/** How a session was opened, when it was not a phone sign-in. */
+export type SessionVia = (typeof SESSION_VIAS)[number];
 
 const payloadSchema = z.object({
   v: z.literal(1),
   uid: z.string().min(1),
   iat: z.number().int(),
   exp: z.number().int(),
+  via: z.enum(SESSION_VIAS).optional(),
 });
 
 export type SessionPayload = z.infer<typeof payloadSchema>;
+
+/** What a verified token vouches for: the user, and how the session was opened (`null` for a phone sign-in). */
+export type VerifiedSession = { userId: string; via: SessionVia | null };
 
 function sessionKey(secret: string): Buffer {
   return createHmac('sha256', secret).update('sideout:session:v1').digest();
@@ -29,16 +40,16 @@ function sign(payload: string, secret: string): string {
   return createHmac('sha256', sessionKey(secret)).update(payload).digest('base64url');
 }
 
-export function issueSession(userId: string, secret: string, now: Date): { token: string; expiresAt: Date } {
+export function issueSession(userId: string, secret: string, now: Date, options: { via?: SessionVia } = {}): { token: string; expiresAt: Date } {
   const iat = Math.floor(now.getTime() / 1000);
   const exp = iat + SESSION_TTL_SECONDS;
-  const payload: SessionPayload = { v: 1, uid: userId, iat, exp };
+  const payload: SessionPayload = { v: 1, uid: userId, iat, exp, ...(options.via === undefined ? {} : { via: options.via }) };
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   return { token: `${encoded}.${sign(encoded, secret)}`, expiresAt: new Date(exp * 1000) };
 }
 
-/** The user id a token vouches for, or null for anything malformed, forged or expired. */
-export function verifySession(token: string, secret: string, now: Date): { userId: string } | null {
+/** The user id a token vouches for (and how it was opened), or null for anything malformed, forged or expired. */
+export function verifySession(token: string, secret: string, now: Date): VerifiedSession | null {
   const dot = token.indexOf('.');
   if (dot <= 0) return null;
   const encoded = token.slice(0, dot);
@@ -57,7 +68,7 @@ export function verifySession(token: string, secret: string, now: Date): { userI
   const payload = payloadSchema.safeParse(parsed);
   if (!payload.success) return null;
   if (payload.data.exp * 1000 <= now.getTime()) return null;
-  return { userId: payload.data.uid };
+  return { userId: payload.data.uid, via: payload.data.via ?? null };
 }
 
 export function sessionCookieHeader(token: string, options: { secure: boolean; maxAgeSeconds?: number }): string {

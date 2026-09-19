@@ -24,7 +24,7 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const config = env();
     // Purse is probed only when Sideout is configured to reach it (a secret key); otherwise the report says so.
-    const report = await healthReport(database().sql, migrationsFolder(), buildSha(config.buildSha), { apiUrl: config.purse.secretKey === undefined ? undefined : config.purse.apiUrl });
+    const report = await healthReport(database().sql, migrationsFolder(), buildSha(config.buildSha), { apiUrl: config.purse.secretKey === undefined ? undefined : config.purse.apiUrl }, { demoAccounts: config.demoAccounts });
     const body: ApiDataEnvelope<HealthReport> = { data: report };
     log.info('request', { method: 'GET', path: '/health', status: 200 });
     return Response.json(body, { status: 200, headers });

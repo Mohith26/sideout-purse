@@ -22,6 +22,11 @@
 #   NEXT_PUBLIC_PURSE_ORIGIN             where the iframe is served from
 #   NEXT_PUBLIC_PURSE_TENANT_ID          the Sideout tenant on Purse
 #   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY   optional: the Payment Element's key
+#   DEMO_ACCOUNTS                        the public demo's account picker (docs/demo-accounts.md),
+#                                        default false: `next.config.ts` derives
+#                                        NEXT_PUBLIC_DEMO_ACCOUNTS from it at build time, and the
+#                                        runtime DEMO_ACCOUNTS must say the same or the server
+#                                        refuses to boot (src/env.ts)
 #
 # The start command (CMD, `docker-entrypoint.sh`) runs the migrations and fails the deploy
 # on an error, then starts the server.
@@ -41,12 +46,14 @@ ARG NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY
 ARG NEXT_PUBLIC_PURSE_ORIGIN
 ARG NEXT_PUBLIC_PURSE_TENANT_ID
 ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ARG DEMO_ACCOUNTS=false
 ENV NODE_ENV=production \
     BUILD_SHA=${BUILD_SHA:-unknown} \
     NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY=${NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY} \
     NEXT_PUBLIC_PURSE_ORIGIN=${NEXT_PUBLIC_PURSE_ORIGIN} \
     NEXT_PUBLIC_PURSE_TENANT_ID=${NEXT_PUBLIC_PURSE_TENANT_ID} \
-    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY} \
+    DEMO_ACCOUNTS=${DEMO_ACCOUNTS}
 # `.next/cache` is build-only and is not copied into the image.
 RUN pnpm --filter @sideout/web build && rm -rf apps/sideout/.next/cache
 

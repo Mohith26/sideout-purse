@@ -22,6 +22,7 @@ import {
   type ScoresResource,
   type SettlementResource,
   type UserResource,
+  type VerificationStartResource,
   type VoidResource,
   type WalletResource,
   type WebhookEndpointResource,
@@ -97,6 +98,13 @@ export const embedTokenSchema = z.looseObject({
   userId: id('usr'),
   expiresAt: instant,
 }) satisfies Shape<EmbedTokenResource>;
+
+/** What `POST /v1/users/:id/verification` answers: the user, the verification row and a single-use identity embed token. */
+export const verificationStartSchema = z.looseObject({
+  user: userSchema,
+  verification: verificationSchema,
+  embedToken: embedTokenSchema,
+}) satisfies Shape<VerificationStartResource>;
 
 const amountString = z.string().regex(/^(0|[1-9][0-9]*)$/);
 export const prizeStructureSchema = z.discriminatedUnion('type', [
@@ -241,3 +249,4 @@ export type ParsedScores = z.output<typeof scoresSchema>;
 export type ParsedPreview = z.output<typeof previewSchema>;
 export type ParsedSettlement = z.output<typeof settlementSchema>;
 export type ParsedEmbedToken = z.output<typeof embedTokenSchema>;
+export type ParsedVerificationStart = z.output<typeof verificationStartSchema>;

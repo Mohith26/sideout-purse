@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { demoAccountsFor } from '../next.config';
 import { DEVELOPMENT_SESSION_SECRET, EnvError, loadEnv } from '../src/env';
+import { switchFrom } from '../src/lib/switch';
 
 const DEV_URL = 'postgres://sideout_app:secret@localhost:5432/sideout';
 const TEST_URL = 'postgres://sideout_app:secret@localhost:5432/sideout_test';
@@ -86,5 +88,54 @@ describe('env', () => {
     expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).stripePublishableKey).toBeUndefined();
     expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_abc123' }).stripePublishableKey).toBe('pk_test_abc123');
     expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'sk_test_abc123' })).toThrow(/publishable key/);
+  });
+
+  describe('DEMO_ACCOUNTS (docs/demo-accounts.md)', () => {
+    const SANDBOX = { ...PRODUCTION, SIDEOUT_PURSE_SECRET_KEY: `sk_sandbox_${'K'.repeat(32)}`, NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: `pk_sandbox_${'P'.repeat(32)}` };
+
+    it('is off by default, on for true or 1 only, and reported on the environment', () => {
+      expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).demoAccounts).toBe(false);
+      expect(loadEnv(SANDBOX).demoAccounts).toBe(false);
+      expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, DEMO_ACCOUNTS: 'true' }).demoAccounts).toBe(true);
+      expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, DEMO_ACCOUNTS: '1' }).demoAccounts).toBe(true);
+      expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, DEMO_ACCOUNTS: 'yes' }).demoAccounts).toBe(false);
+      expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, DEMO_ACCOUNTS: '' }).demoAccounts).toBe(false);
+      expect(loadEnv({ ...SANDBOX, DEMO_ACCOUNTS: 'true' }).demoAccounts).toBe(true);
+      expect(switchFrom(' TRUE ')).toBe(true);
+      expect(switchFrom(undefined)).toBe(false);
+    });
+
+    it('is refused beside anything that is not demo-safe: a live Purse key, a live Stripe key', () => {
+      expect(() => loadEnv({ ...PRODUCTION, DEMO_ACCOUNTS: 'true' })).toThrow(/demo-safe providers .*SIDEOUT_PURSE_SECRET_KEY is a live key/);
+      expect(() => loadEnv({ ...SANDBOX, NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: PURSE.NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY, DEMO_ACCOUNTS: 'true' })).toThrow(/NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY is a live key/);
+      expect(() => loadEnv({ ...SANDBOX, DEMO_ACCOUNTS: 'true', STRIPE_SECRET_KEY: 'sk_live_x', STRIPE_WEBHOOK_SECRET: 'whsec_x' })).toThrow(/STRIPE_SECRET_KEY is not a test-mode key/);
+      expect(() => loadEnv({ ...SANDBOX, DEMO_ACCOUNTS: 'true', NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_live_x' })).toThrow(/NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is a live key/);
+      // Test-mode Stripe keys are demo-safe, and a configured Stripe still wins over the dev provider.
+      const withStripe = loadEnv({ ...SANDBOX, DEMO_ACCOUNTS: 'true', STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: 'whsec_x', NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_x' });
+      expect(withStripe.demoAccounts).toBe(true);
+      expect(withStripe.donationProvider).toBe('stripe');
+      // The log SMS sender is demo-safe outside production; production never runs it (and never a real one either, today).
+      expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, DEMO_ACCOUNTS: 'true', SMS_PROVIDER: 'log' }).smsProvider).toBe('log');
+    });
+
+    it('lets production run the dev donation provider under the switch, and only under it', () => {
+      expect(loadEnv(SANDBOX).donationProvider).toBe('none');
+      expect(loadEnv({ ...SANDBOX, DEMO_ACCOUNTS: 'true' }).donationProvider).toBe('dev');
+      expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).donationProvider).toBe('dev');
+    });
+
+    it('refuses a build made for the other setting, and takes an unset build value as "as the server"', () => {
+      expect(() => loadEnv({ ...SANDBOX, DEMO_ACCOUNTS: 'true' }, 'false')).toThrow(/NEXT_PUBLIC_DEMO_ACCOUNTS was false at build time but DEMO_ACCOUNTS is true/);
+      expect(() => loadEnv(SANDBOX, 'true')).toThrow(/NEXT_PUBLIC_DEMO_ACCOUNTS was true at build time but DEMO_ACCOUNTS is false/);
+      expect(loadEnv({ ...SANDBOX, DEMO_ACCOUNTS: 'true' }, 'true').demoAccounts).toBe(true);
+      expect(loadEnv(SANDBOX, 'false').demoAccounts).toBe(false);
+      expect(loadEnv({ ...SANDBOX, DEMO_ACCOUNTS: 'true' }, undefined).demoAccounts).toBe(true);
+      expect(loadEnv({ ...SANDBOX, DEMO_ACCOUNTS: 'true' }, '').demoAccounts).toBe(true);
+      // What next.config.ts inlines, derived from the same switch.
+      expect(demoAccountsFor('true')).toBe('true');
+      expect(demoAccountsFor('1')).toBe('true');
+      expect(demoAccountsFor(undefined)).toBe('false');
+      expect(demoAccountsFor('no')).toBe('false');
+    });
   });
 });

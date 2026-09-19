@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { defineConfig, devices, type PlaywrightTestConfig } from '@playwright/test';
@@ -24,6 +25,12 @@ import { DEVELOPMENT_PURSE_TENANT_ID } from './src/env';
  * `e2e/flows.spec.ts`) after them, because the flows consume the seed (they register a
  * team, settle a match and close a tournament).
  *
+ * The demo-accounts switch (`docs/demo-accounts.md`) is a build-time setting: the local
+ * server is started with the `DEMO_ACCOUNTS` the build under test was made with (read from
+ * the build's own manifest, so the two never disagree), and `e2e/demo.spec.ts` skips itself
+ * when that is off. CI builds with `DEMO_ACCOUNTS=true` so the picker is walked there;
+ * locally, `DEMO_ACCOUNTS=true pnpm build` first.
+ *
  * Against a deployed environment (acceptance criterion 30): `BASE_URL=https://...` points
  * the run at a live Sideout instead of starting servers; the flows then need
  * `SESSION_SECRET` (the deployment's, to mint sessions), `E2E_PURSE_URL` (its Purse API)
@@ -31,8 +38,13 @@ import { DEVELOPMENT_PURSE_TENANT_ID } from './src/env';
  * check). Only the `flows` project is meant for that mode (`--project flows`); the
  * deployed data is the seed, so run the demo reset before a rerun (docs/deploy.md).
  */
-export const API_PORT = 4020;
-export const WEB_PORT = 3010;
+/** `E2E_API_PORT` / `E2E_WEB_PORT` move the two local servers when another run (a sibling checkout) holds the defaults. */
+function port(name: string, fallback: number): number {
+  const value = process.env[name];
+  return value === undefined || value === '' ? fallback : Number(value);
+}
+export const API_PORT = port('E2E_API_PORT', 4020);
+export const WEB_PORT = port('E2E_WEB_PORT', 3010);
 export const API_ORIGIN = `http://127.0.0.1:${API_PORT}`;
 /** `localhost`, not 127.0.0.1: the browser needs a secure context for the service worker, and Chromium grants it to localhost. */
 export const WEB_ORIGIN = `http://localhost:${WEB_PORT}`;
@@ -62,6 +74,16 @@ export const SESSION_SECRET = DEPLOYED?.sessionSecret ?? LOCAL_SESSION_SECRET;
 export const INTERNAL_TOKEN = DEPLOYED === null ? LOCAL_INTERNAL_TOKEN : DEPLOYED.internalToken;
 
 const purseDir = path.resolve(import.meta.dirname, '../purse');
+
+/** What `next build` inlined for `NEXT_PUBLIC_DEMO_ACCOUNTS` (`next.config.ts`); `false` when there is no build yet. */
+export function builtDemoAccounts(): 'true' | 'false' {
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(import.meta.dirname, '.next/required-server-files.json'), 'utf8')) as { config?: { env?: Record<string, string> } };
+    return manifest.config?.env?.['NEXT_PUBLIC_DEMO_ACCOUNTS'] === 'true' ? 'true' : 'false';
+  } catch {
+    return 'false';
+  }
+}
 
 try {
   process.loadEnvFile(path.join(import.meta.dirname, '.env'));
@@ -108,6 +130,8 @@ const webServer: PlaywrightTestConfig['webServer'] =
             NEXT_PUBLIC_PURSE_TENANT_ID: process.env['NEXT_PUBLIC_PURSE_TENANT_ID'] ?? DEVELOPMENT_PURSE_TENANT_ID,
             // Required in production; the dispatcher above is off, so nothing is verified against it here.
             PURSE_WEBHOOK_SECRET: process.env['PURSE_WEBHOOK_SECRET'] ?? 'whsec_sideout_e2e_placeholder',
+            // As the build was made (a disagreement refuses to boot); `e2e/demo.spec.ts` skips when off.
+            DEMO_ACCOUNTS: builtDemoAccounts(),
           },
         },
       ];

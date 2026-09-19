@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { switchFrom } from './lib/switch';
+
 /**
  * Everything Sideout reads from the environment, validated once.
  *
@@ -21,6 +23,14 @@ import { z } from 'zod';
  * integration answers `purse_unavailable` until one is set. `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
  * is what the browser mounts Stripe's Payment Element with; it is public by design and
  * optional, and the register screen says plainly when it is missing.
+ *
+ * `DEMO_ACCOUNTS` is the public demo's sign-in switch (`docs/demo-accounts.md`): on, `/sign-in`
+ * offers the curated seeded accounts and `POST /api/auth/demo` signs a visitor in as one of
+ * them. Off by default, and refused beside anything that is not demo-safe: a live Purse key,
+ * a live Stripe key, or a real SMS provider. Under it, and only under it, production may run
+ * the `dev` donation provider so registration completes without Stripe (a configured Stripe
+ * key still wins). `next.config.ts` derives `NEXT_PUBLIC_DEMO_ACCOUNTS` from it at build time
+ * and a build made for the other setting refuses to boot (`BUILT_DEMO_ACCOUNTS`, below).
  */
 
 const postgresUrl = z
@@ -51,6 +61,10 @@ const httpUrl = z
   .string()
   .url()
   .refine((value) => /^https?:\/\//.test(value), 'must be an http(s) URL');
+/** A Stripe test-mode secret or restricted key; anything else beside `DEMO_ACCOUNTS` is refused. */
+const STRIPE_TEST_SECRET_SHAPE = /^(sk|rk)_test_/;
+/** The SMS senders a demo may run beside: the log sender and none at all. A real provider, when one is added, is not on this list. */
+const DEMO_SAFE_SMS_PROVIDERS: ReadonlySet<string> = new Set(['log']);
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -72,6 +86,8 @@ const schema = z.object({
   NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY: z.string().regex(PUBLISHABLE_KEY_SHAPE, 'must be a Purse publishable key (pk_sandbox_... or pk_live_...)').optional(),
   NEXT_PUBLIC_PURSE_ORIGIN: httpUrl.optional(),
   NEXT_PUBLIC_PURSE_TENANT_ID: z.string().regex(TENANT_ID_SHAPE, 'must be a Purse tenant id (tnt_...)').optional(),
+  DEMO_ACCOUNTS: z.string().optional(),
+  NEXT_PUBLIC_DEMO_ACCOUNTS: z.string().optional(),
 });
 
 export type SmsProviderName = 'log' | 'none';
@@ -114,13 +130,24 @@ export type Env = {
   /** `AUTH_CODE_GLOBAL_CAP`: sign-in codes this instance sends per ten minutes across every number. */
   authCodeGlobalCap: number;
   purse: PurseEnv;
+  /** `DEMO_ACCOUNTS`: the sign-in picker and `POST /api/auth/demo` exist in this process. */
+  demoAccounts: boolean;
 };
 
 export class EnvError extends Error {
   override readonly name = 'EnvError';
 }
 
-export function loadEnv(source: Record<string, string | undefined> = process.env): Env {
+/**
+ * What `next build` inlined for `NEXT_PUBLIC_DEMO_ACCOUNTS`: a literal read, which Next
+ * replaces at build time (`next.config.ts` derives the value from `DEMO_ACCOUNTS` then), so
+ * under `next start` this is the build's setting whatever the process environment says. In
+ * the bundled scripts (`dist/*.js`) and under vitest it is a plain runtime read, and unset
+ * means "as the server".
+ */
+const BUILT_DEMO_ACCOUNTS = process.env.NEXT_PUBLIC_DEMO_ACCOUNTS;
+
+export function loadEnv(source: Record<string, string | undefined> = process.env, built: string | undefined = BUILT_DEMO_ACCOUNTS): Env {
   // An empty value is an unset one: a host that exports `VAR=` has not configured it.
   const parsed = schema.safeParse(Object.fromEntries(Object.entries(source).filter(([, value]) => value !== '')));
   if (!parsed.success) {
@@ -152,7 +179,30 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     raw.STRIPE_SECRET_KEY !== undefined && raw.STRIPE_WEBHOOK_SECRET !== undefined
       ? { secretKey: raw.STRIPE_SECRET_KEY, webhookSecret: raw.STRIPE_WEBHOOK_SECRET }
       : undefined;
-  const donationProvider: DonationProviderSelection = stripe !== undefined ? 'stripe' : production ? 'none' : 'dev';
+  const demoAccounts = switchFrom(raw.DEMO_ACCOUNTS);
+  if (demoAccounts) {
+    // A demo picker must never sign visitors in beside anything real: the Purse key must be
+    // a sandbox one, the Stripe keys test-mode ones, and the SMS sender the log or none.
+    const unsafe: string[] = [];
+    if (raw.SIDEOUT_PURSE_SECRET_KEY?.startsWith('sk_live_') === true) unsafe.push('SIDEOUT_PURSE_SECRET_KEY is a live key');
+    if (raw.NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY?.startsWith('pk_live_') === true) unsafe.push('NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY is a live key');
+    if (raw.STRIPE_SECRET_KEY !== undefined && !STRIPE_TEST_SECRET_SHAPE.test(raw.STRIPE_SECRET_KEY)) unsafe.push('STRIPE_SECRET_KEY is not a test-mode key');
+    if (raw.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith('pk_live_') === true) unsafe.push('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is a live key');
+    if (raw.SMS_PROVIDER !== undefined && !DEMO_SAFE_SMS_PROVIDERS.has(raw.SMS_PROVIDER)) unsafe.push(`SMS_PROVIDER=${raw.SMS_PROVIDER} is a real provider`);
+    if (unsafe.length > 0) throw new EnvError(`Invalid environment: DEMO_ACCOUNTS=true is only permitted beside demo-safe providers (${unsafe.join('; ')})`);
+  }
+  // The browser bundle and the server-rendered picker must agree: a build made without the
+  // switch started with it (or the reverse) would show a picker its routes refuse, or hide
+  // one they accept. An unset build value (the scripts, vitest) means "as the server".
+  const builtDemoAccounts = built === undefined || built === '' ? demoAccounts : switchFrom(built);
+  if (builtDemoAccounts !== demoAccounts) {
+    throw new EnvError(`Invalid environment: NEXT_PUBLIC_DEMO_ACCOUNTS was ${built ?? ''} at build time but DEMO_ACCOUNTS is ${demoAccounts}; the build must be made with the DEMO_ACCOUNTS it runs under`);
+  }
+
+  // Outside production the dev provider stands in for Stripe; in production only the public
+  // demo may run it (docs/decisions.md, "Stretch: demo accounts"), and a configured Stripe
+  // key wins wherever it is set, so adding test keys later needs no code change.
+  const donationProvider: DonationProviderSelection = stripe !== undefined ? 'stripe' : production && !demoAccounts ? 'none' : 'dev';
 
   if (production) {
     const missing = (['PURSE_API_URL', 'SIDEOUT_PURSE_SECRET_KEY', 'PURSE_WEBHOOK_SECRET', 'NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY', 'NEXT_PUBLIC_PURSE_TENANT_ID'] as const).filter((name) => raw[name] === undefined);
@@ -182,6 +232,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     reservationTtlMs: raw.RESERVATION_TTL_MINUTES * 60_000,
     authCodeGlobalCap: raw.AUTH_CODE_GLOBAL_CAP,
     purse,
+    demoAccounts,
   };
 }
 

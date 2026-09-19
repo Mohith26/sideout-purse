@@ -21,6 +21,8 @@ describe('GET /health', () => {
         sha: buildSha(env().buildSha),
         migrations: { applied: journal.entries.length, available: journal.entries.length, pending: 0 },
         purseSdkVersion: SDK_VERSION,
+        // Off by default (`DEMO_ACCOUNTS`); the deployed demo reports true.
+        demoAccounts: false,
         // The suite runs with no secret key, so Purse is not asked (`purse_unavailable` elsewhere, `not_configured` here).
         purse: { reachable: false, reason: 'not_configured' },
       },
