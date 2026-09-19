@@ -64,7 +64,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `purse_app` is the runtime (`PURSE_DATABASE_URL`), owns nothing, and holds only what
   `apps/purse/drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`,
   `0006_contest_guards.sql`, `0008_identity_guards.sql`,
-  `0010_idempotency_reservation_grants.sql` and `0016_device_guards.sql` grant. Every new table needs an explicit
+  `0010_idempotency_reservation_grants.sql`, `0016_reconcile_run_grants.sql` and
+  `0018_device_guards.sql` grant. Every new table needs an explicit
   `GRANT ... TO purse_app` in a custom migration (`db:generate:custom`); an append-only
   table (journal, audit log, `contest_results`, `idempotency_keys`) gets `SELECT, INSERT`
   only, and a table with columns that legitimately change gets column-level `UPDATE`
