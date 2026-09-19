@@ -128,6 +128,18 @@ run after this deploy (the roster's seeded states were intact and the nightly re
 them); run it before a recording. To turn the picker off, unset `DEMO_ACCOUNTS` on `sideout`
 and redeploy it (the build argument follows the variable).
 
+The console admin password was rotated the same day (the seed's `--print-operator-password
+--rotate-operator-password` through the Postgres proxy, the value written straight into the
+`purse-console` service's `PURSE_CONSOLE_ADMIN_PASSWORD` variable and nowhere else) and
+verified: `POST /console/auth/login` answers 201 for `admin@purse.local`, the console's
+sign-in form lands on the contests list, and the ledger explorer, the replay and the
+invariants pages render. Two things worth knowing when checking that login by hand: the API
+route is `/console/auth/login` (a `POST /console/login` answers 401 `missing_session`, which
+is the authenticated stack, not a wrong password), and the nightly demo reset never rotates
+the password: `operators` and `operator_sessions` are kept tables, and the reset seeds the
+admin without `rotate`, which leaves an existing account untouched. Only a seed run with
+`--rotate-operator-password` changes it, so whoever runs one updates the variable.
+
 Previous: `c5082c4` (2026-09-19), the demo-accounts switch; `9d8dc37` (2026-09-19), the
 second tenant (`docs/second-tenant.md`).
 
