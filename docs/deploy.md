@@ -11,6 +11,7 @@ where this deploy departs from its defaults.
 | `purse` | `apps/purse/Dockerfile` | the Purse API, the contest engine, the ledger, the webhook dispatcher, and the embed app under `/embed` | `GET /health`: sha, migration state, active ruleset version, SDK version, last reconcile result; 503 while the last reconcile failed |
 | `purse-console` | `apps/purse-console/Dockerfile` | the operator console, talking to the API's `/console/*` server-to-server | `GET /health`: sha, and whether the API answers |
 | `sideout` | `apps/sideout/Dockerfile` | the Sideout web app | `GET /health`: sha, migration state, SDK version, and what Purse's `/health` says |
+| `pingpong` | `apps/pingpong/Dockerfile` | the second tenant, the office ping-pong ladder (`docs/second-tenant.md`) | `GET /health`: the same shape as Sideout's |
 
 Every image is multi-stage (build, a clean production install, runtime), runs as the
 unprivileged `node` user, carries a Docker `HEALTHCHECK` on its `/health`, and is built
@@ -94,6 +95,7 @@ phase 9):
 | Sideout | https://sideout-production-5898.up.railway.app |
 | Purse API and embed | https://purse-production-b87b.up.railway.app (`/health`, `/embed/`, `/responsible-play`, `/support`, `/v1/*`) |
 | Purse operator console | https://purse-console-production.up.railway.app (sign in as `admin@purse.local`; the seeded password is kept as the `purse-console` service's `PURSE_CONSOLE_ADMIN_PASSWORD` variable, read by no process, for the dashboard's eyes only; `pnpm --filter @purse/api db:seed -- --print-operator-password --rotate-operator-password` through the proxy sets a new one) |
+| Ping-pong (the second tenant) | https://pingpong-production-bc24.up.railway.app (sign in with any name and the office code, the `pingpong` service's `OFFICE_CODE` variable; `docs/second-tenant.md`) |
 
 Plus `Postgres` (Railway's `postgres-ssl` image, one 50 GB volume, the two logical databases
 above, reached by the services at `postgres.railway.internal:5432` and from a workstation
@@ -123,8 +125,9 @@ railway init --name sideout-purse --workspace <workspace-id> --json     # projec
 railway add --database postgres --json
 railway tcp-proxy create --port 5432 --service Postgres                 # a public port for db:setup and the seed
 railway variable list --service Postgres --json                          # PGUSER, PGPASSWORD, PGDATABASE, RAILWAY_PRIVATE_DOMAIN
-pnpm db:setup --admin-url 'postgresql://postgres:<pw>@<proxy host>:<proxy port>/railway?sslmode=require' \
-  --no-write-env --no-test-databases \
+# The admin URL through the environment, not the command line: pnpm echoes a script's arguments.
+DATABASE_ADMIN_URL='postgresql://postgres:<pw>@<proxy host>:<proxy port>/railway?sslmode=require' \
+  pnpm db:setup --no-write-env --no-test-databases \
   --purse-password ... --purse-migrator-password ... --sideout-password ...
 for s in purse purse-console sideout purse-reconcile demo-reset; do railway add --service $s --json; done
 railway domain --service purse --port 4000; railway domain --service purse-console --port 4200; railway domain --service sideout --port 3000
@@ -148,8 +151,8 @@ linked):
 
 ```sh
 SHA=$(git rev-parse HEAD)
-for s in purse purse-console sideout purse-reconcile demo-reset; do railway variable set "BUILD_SHA=$SHA" --service $s --skip-deploys; done
-for s in purse purse-console sideout purse-reconcile demo-reset; do railway up --service $s --detach; done
+for s in purse purse-console sideout purse-reconcile demo-reset pingpong; do railway variable set "BUILD_SHA=$SHA" --service $s --skip-deploys; done
+for s in purse purse-console sideout purse-reconcile demo-reset pingpong; do railway up --service $s --detach; done
 ```
 
 Then check each `/health` reports `sha` equal to the commit and `migrations.pending` 0
@@ -261,7 +264,12 @@ demo reset first). Last run against the deployment: both flows passed at the com
 
 The second tenant (`apps/pingpong`, stretch item 4) has its own image, entrypoint, health
 check and variables, following the pattern above; `docs/second-tenant.md` lists them and
-the `PURSE_PINGPONG_ORIGINS` variable the `purse` service needs for it.
+the `PURSE_PINGPONG_ORIGINS` variable the `purse` service needs for it. Deployed
+2026-09-19 at commit `9d8dc37` as the `pingpong` service
+(https://pingpong-production-bc24.up.railway.app), with the five existing services
+redeployed at the same commit first so the `purse` and `demo-reset` images carry the second
+tenant's seed; `docs/second-tenant.md` ("Deployed") has the steps and what was verified on
+the live origin. The redeploy loop above now includes it.
 
 ## Running it anywhere else
 

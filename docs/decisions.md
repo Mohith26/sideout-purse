@@ -1622,10 +1622,12 @@ consumer proved, and what it exposed.
   authentication for a throwaway office product and the wrong amount for anything else; the
   production configuration requires a real code and a real session secret, and nothing about
   it is reused by Sideout.
-- **Deploying the fourth service** is documented (`docs/second-tenant.md`, following
-  `docs/deploy.md`'s pattern) and left to the operator: the brief both asked for the deploy
-  and forbade a new service, so the PR ships deployable and the deploy itself is a decision
-  above the implementation.
+- **Deploying the fourth service** was raised as a decision rather than guessed (the brief
+  both asked for the deploy and forbade a new service) and decided as: merge first, then
+  deploy from `main`, redeploying the existing services at the same commit before adding
+  the new one, so the reset job knows the second tenant before it next runs. It is live
+  (`docs/second-tenant.md`, "Deployed"); a service's deploy order relative to the platform's
+  images turned out to be the one thing a fourth service needed that the pattern did not say.
 
 ## Stretch: SSE live scoring decisions
 

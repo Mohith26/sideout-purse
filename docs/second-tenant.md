@@ -88,19 +88,50 @@ The fourth service follows `docs/deploy.md`'s per-service pattern: `apps/pingpon
 `test/docker.test.ts` pins it), `docker-entrypoint.sh` migrates first and fails the deploy
 on an error, `GET /health` reports the sha, the migration state, the SDK version and what
 Purse's `/health` says. Variables: `NODE_ENV=production`, `PORT=3100`,
-`PINGPONG_DATABASE_URL` (`pnpm db:setup --admin-url ... --no-write-env --no-test-databases`
-provisions the `pingpong` database and role next to the others), `SESSION_SECRET`,
+`PINGPONG_DATABASE_URL` (`DATABASE_ADMIN_URL=... pnpm db:setup --no-write-env
+--no-test-databases --pingpong-password ...` provisions the `pingpong` database and role next
+to the others; the admin URL through the environment, because pnpm echoes a script's
+arguments), `SESSION_SECRET`,
 `OFFICE_CODE`, `TRUSTED_PROXY_HOPS=1`, `PURSE_API_URL`, `PINGPONG_PURSE_SECRET_KEY`, the
 three `NEXT_PUBLIC_PURSE_*`, `BUILD_SHA`, `RAILWAY_DOCKERFILE_PATH=apps/pingpong/Dockerfile`;
 on the `purse` service, `PURSE_PINGPONG_ORIGINS=https://<pingpong domain>` so the seed and
 the nightly reset allowlist it. No secret is written anywhere but the host's variables.
 
-**Live URL:** not deployed yet (the deploy is a firstmate decision; see the PR).
+### Deployed
 
-![The ladder after a settled season](screenshots/pingpong-settled.png)
+**Live URL:** https://pingpong-production-bc24.up.railway.app, the `pingpong` service of the
+Railway project in `docs/deploy.md`, deployed 2026-09-19 at commit `9d8dc37`. Sign in with
+any name and the office code, which is the service's `OFFICE_CODE` variable (a shared
+secret for the office, kept where the other secrets are). How it went up, in order:
 
-*The screenshot is from the Playwright smoke against a local Purse: the season closed, the
-challenger first, the 50/30 split of the 200-point escrow in both players' wallets.*
+1. The five existing services were redeployed at the same commit first (`docs/deploy.md`,
+   "To redeploy"), so the `purse` and `demo-reset` images carry `seedSecondTenant` before
+   the nightly reset runs: a reset from the previous image would have deleted the second
+   tenant's platform accounts without recreating them.
+2. `railway add --service pingpong` with `NODE_ENV`, `PORT` and `RAILWAY_DOCKERFILE_PATH`;
+   `railway domain --service pingpong --port 3100`; then `PURSE_PINGPONG_ORIGINS=<that
+   domain>` on `purse`, referenced from `demo-reset` (`${{purse.PURSE_PINGPONG_ORIGINS}}`).
+3. The `pingpong` database and role through the Postgres proxy (`db:setup`, above), the
+   Purse seed through the same proxy with both origins variables set (`--print-keys` printed
+   the tenant's pair the one time it was created), and the variables listed above on the
+   service, secrets through `railway variable set <NAME> --stdin`. The health check path
+   (`/health`, 180 s) and restart policy (`ON_FAILURE`, 10) were set through
+   `serviceInstanceUpdate`, the same as the other web services.
+4. `railway up --service pingpong --detach`; `/health` answered 200 with the sha,
+   `migrations.pending: 0` and `purse.reachable: true`.
+
+Verified on the live origin with the smoke (`BASE_URL=... E2E_PURSE_URL=... OFFICE_CODE=...
+pnpm --filter @pingpong/web e2e`): two players signed in and linked, entered the season in
+Purse's frame on the deployed Purse, the commissioner started play, the challenger won 11–7,
+both confirmed, the ladder reordered, the result was pushed, the frozen preview showed
+125/75 of the 200-point escrow, the close settled and the wallets read 1025 and 975; a
+`GET /internal/reconcile` on the deployed Purse straight after found every invariant holding
+with the second tenant's settlements in the ledger.
+
+![The ladder after a settled season on the deployment](screenshots/pingpong-settled.png)
+
+*The screenshot is from that run against the live origin: the season closed, the challenger
+first, the 50/30 split of the 200-point escrow paid out, the commissioner's wallet re-read.*
 
 ## What it does not do
 
