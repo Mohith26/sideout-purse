@@ -9,7 +9,7 @@ import { devIdentityProvider } from '../../src/providers';
 import { addRestriction, startVerification, upsertUser } from '../../src/users';
 import { createEndpoint } from '../../src/webhooks';
 import { OPERATOR, TENANT_ACTOR, buildArena, makeContest, type Arena } from '../contests/fixtures';
-import { connectMigrator, connectRuntime, TEST_KEYS } from '../helpers';
+import { connectMigrator, connectRuntime, TEST_KEYS, TEST_WEBHOOK_POLICY } from '../helpers';
 import { key, wipeLedger } from '../ledger/fixtures';
 
 /**
@@ -28,7 +28,7 @@ describe('webhook events at their emit sites', () => {
   beforeEach(async () => {
     await wipeLedger(migrator);
     arena = await buildArena(runtime.db, { users: 2, funding: 500n });
-    await createEndpoint(runtime.db, TEST_KEYS, { tenantId: arena.tenantId, url: 'https://events.example/hooks', subscribedEvents: WEBHOOK_EVENT_TYPES });
+    await createEndpoint(runtime.db, TEST_KEYS, TEST_WEBHOOK_POLICY, { tenantId: arena.tenantId, url: 'https://events.example/hooks', subscribedEvents: WEBHOOK_EVENT_TYPES });
   });
   afterAll(async () => {
     await wipeLedger(migrator);
@@ -115,7 +115,7 @@ describe('webhook events at their emit sites', () => {
 
   it('a tenant with no subscribed endpoint queues nothing, and another tenant hears nothing of this one', async () => {
     const other = await buildArena(runtime.db, { users: 1, funding: 100n });
-    await createEndpoint(runtime.db, TEST_KEYS, { tenantId: other.tenantId, url: 'https://other.example/hooks', subscribedEvents: ['contest.opened'] });
+    await createEndpoint(runtime.db, TEST_KEYS, TEST_WEBHOOK_POLICY, { tenantId: other.tenantId, url: 'https://other.example/hooks', subscribedEvents: ['contest.opened'] });
     const contest = await makeContest(runtime.db, other);
     await transition(runtime.db, { tenantId: other.tenantId, contestId: contest.id, to: 'open', actor: OPERATOR });
     await transition(runtime.db, { tenantId: other.tenantId, contestId: contest.id, to: 'locked', actor: OPERATOR });

@@ -5,6 +5,7 @@ import type { IdempotencyScope } from '../../http/idempotency';
 import type { RequestScope } from '../../http/request-id';
 import type { Providers } from '../../providers';
 import type { ProcessKeys } from '../../secrets';
+import type { DestinationPolicy } from '../../webhooks';
 
 /** What every v1 handler sees: the request id and logger, the authenticated key, the parsed body, and the request's database handle. */
 export type V1Scope = RequestScope & AuthScope & BodyScope & IdempotencyScope;
@@ -14,4 +15,6 @@ export type V1Deps = {
   providers: Providers;
   /** The derived process keys (`src/secrets.ts`); the webhook routes seal signing secrets with them. */
   keys: ProcessKeys;
+  /** Which destinations a webhook endpoint may name (`webhooks/destination.ts`). */
+  webhookPolicy: DestinationPolicy;
 };

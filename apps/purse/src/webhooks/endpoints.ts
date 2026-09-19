@@ -8,19 +8,22 @@ import type { DbOrTx } from '../db/client';
 import { webhookEndpoints, type WebhookEndpoint, type WebhookEndpointStatusValue } from '../db/schema';
 import { recordAudit, SYSTEM_ACTOR, type Actor } from '../ledger/audit';
 import { decryptSecret, encryptSecret, type ProcessKeys } from '../secrets';
+import { assertRegistrableDestination, type DestinationPolicy } from './destination';
 import { WebhookError } from './errors';
 
 /**
  * Webhook endpoints (spec 4.1, 4.9): where a tenant receives events. The signing secret
  * is minted here (`whsec_` and 32 random bytes), handed back exactly once, and stored
  * only as an AES-256-GCM envelope under the process's `webhook-secrets` key with the
- * endpoint id as associated data; the dispatcher opens it to sign. A URL must be `https`
- * except on a loopback host, so a production endpoint cannot be plain HTTP. Every change
- * is audited.
+ * endpoint id as associated data; the dispatcher opens it to sign. Every change is audited.
+ *
+ * Where a tenant may point an endpoint is `destination.ts`, not here: `https` outside
+ * development, no credentials or fragment, and a host that resolves to a public unicast
+ * address. Registration accepts a host whose DNS is not live yet, because the dispatcher
+ * judges the destination again on every attempt (docs/webhooks-security.md); everything
+ * else is refused with `url_not_allowed` and the reason.
  */
 export const SECRET_PREFIX = 'whsec_';
-const URL_MAX = 2000;
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 export type CreateEndpointInput = {
   tenantId: Id<'tnt'>;
@@ -32,19 +35,6 @@ export type CreateEndpointInput = {
 };
 
 export type CreatedEndpoint = { endpoint: WebhookEndpoint; secret: string };
-
-export function validateEndpointUrl(url: string): URL {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new WebhookError('invalid_input', 'url must be an absolute URL', { field: 'url' });
-  }
-  if (url.length > URL_MAX || /\s/.test(url)) throw new WebhookError('invalid_input', `url must be at most ${URL_MAX} characters with no whitespace`, { field: 'url' });
-  if (parsed.protocol === 'https:') return parsed;
-  if (parsed.protocol === 'http:' && LOOPBACK_HOSTS.has(parsed.hostname)) return parsed;
-  throw new WebhookError('url_not_allowed', 'Webhook URLs must be https:// (plain http is allowed only on localhost)', { url });
-}
 
 function validateEvents(events: readonly WebhookEventType[]): WebhookEventType[] {
   const unique = [...new Set(events)];
@@ -73,8 +63,8 @@ export function publicFields(endpoint: WebhookEndpoint): Record<string, unknown>
   return { id: endpoint.id, tenantId: endpoint.tenantId, url: endpoint.url, subscribedEvents: endpoint.subscribedEvents, status: endpoint.status, description: endpoint.description };
 }
 
-export async function createEndpoint(db: DbOrTx, keys: ProcessKeys, input: CreateEndpointInput): Promise<CreatedEndpoint> {
-  const url = validateEndpointUrl(input.url).toString();
+export async function createEndpoint(db: DbOrTx, keys: ProcessKeys, policy: DestinationPolicy, input: CreateEndpointInput): Promise<CreatedEndpoint> {
+  const url = (await assertRegistrableDestination(input.url, policy)).toString();
   const subscribedEvents = validateEvents(input.subscribedEvents);
   const description = validateDescription(input.description);
   const id = newId('whe');
@@ -130,9 +120,9 @@ export type UpdateEndpointInput = {
   requestId?: string;
 };
 
-export async function updateEndpoint(db: DbOrTx, input: UpdateEndpointInput): Promise<WebhookEndpoint> {
+export async function updateEndpoint(db: DbOrTx, policy: DestinationPolicy, input: UpdateEndpointInput): Promise<WebhookEndpoint> {
   const patch: Partial<typeof webhookEndpoints.$inferInsert> = {};
-  if (input.url !== undefined) patch.url = validateEndpointUrl(input.url).toString();
+  if (input.url !== undefined) patch.url = (await assertRegistrableDestination(input.url, policy)).toString();
   if (input.subscribedEvents !== undefined) patch.subscribedEvents = validateEvents(input.subscribedEvents);
   if (input.status !== undefined) patch.status = input.status;
   if (input.description !== undefined) patch.description = validateDescription(input.description);

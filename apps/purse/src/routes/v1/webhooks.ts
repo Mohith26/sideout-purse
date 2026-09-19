@@ -52,7 +52,7 @@ export function webhooksRoutes(deps: V1Deps) {
   routes.post('/endpoints', async (c) => {
     const auth = c.get('auth');
     const body = parseBody(c, createSchema);
-    const created = await createEndpoint(c.get('db'), deps.keys, {
+    const created = await createEndpoint(c.get('db'), deps.keys, deps.webhookPolicy, {
       tenantId: auth.tenant.id as Id<'tnt'>,
       url: body.url,
       subscribedEvents: body.subscribedEvents,
@@ -80,7 +80,7 @@ export function webhooksRoutes(deps: V1Deps) {
     const auth = c.get('auth');
     const endpointId = param(endpointIdSchema, 'id', c.req.param('id'));
     const body = parseBody(c, updateSchema);
-    const updated = await updateEndpoint(c.get('db'), {
+    const updated = await updateEndpoint(c.get('db'), deps.webhookPolicy, {
       tenantId: auth.tenant.id as Id<'tnt'>,
       endpointId,
       ...(body.url === undefined ? {} : { url: body.url }),

@@ -81,7 +81,7 @@ export function tenantWebhookRoutes(deps: ConsoleDeps) {
   routes.post('/endpoints', async (c) => {
     const tenant = tenantOf(c);
     const body = parseBody(c, createSchema);
-    const created = await createEndpoint(c.get('db'), deps.keys, {
+    const created = await createEndpoint(c.get('db'), deps.keys, deps.webhookPolicy, {
       tenantId: tenant.id as Id<'tnt'>,
       url: body.url,
       subscribedEvents: body.subscribedEvents,
@@ -102,7 +102,7 @@ export function tenantWebhookRoutes(deps: ConsoleDeps) {
     const tenant = tenantOf(c);
     const endpointId = param(endpointIdSchema, 'id', c.req.param('id'));
     const body = parseBody(c, updateSchema);
-    const updated = await updateEndpoint(c.get('db'), {
+    const updated = await updateEndpoint(c.get('db'), deps.webhookPolicy, {
       tenantId: tenant.id as Id<'tnt'>,
       endpointId,
       ...(body.url === undefined ? {} : { url: body.url }),

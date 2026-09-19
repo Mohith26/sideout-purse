@@ -10,8 +10,11 @@ import { errorFields, type Logger } from '@repo/logger';
 import type { Db } from '../db/client';
 import { webhookDeliveries, webhookDeliveryAttempts, webhookEndpoints, type WebhookDelivery, type WebhookEndpoint } from '../db/schema';
 import type { ProcessKeys } from '../secrets';
+import { checkDestination, type CheckedDestination, type DestinationPolicy } from './destination';
 import { endpointSecret } from './endpoints';
+import { isWebhookError } from './errors';
 import { retryDelayMs } from './schedule';
+import { DEFAULT_LIMITS, nodeTransport, type TransportLimits, type WebhookTransport } from './transport';
 
 /**
  * The webhook dispatcher (spec 4.9): an in-process worker started with the API that works
@@ -25,7 +28,14 @@ import { retryDelayMs } from './schedule';
  * `dead`. The body sent is the stored payload as JSON, identical on every attempt, and
  * the signature is `@purse/sdk`'s `signWebhook`, the same code a receiver verifies with.
  *
- * The clock, the random source and `fetch` are injected so the demo test
+ * Every attempt re-checks the destination (`destination.ts`) before it signs anything:
+ * an endpoint stored before the check existed, or one whose hostname has since moved to a
+ * private address, is refused here rather than delivered to. The refusal is recorded as
+ * an ordinary failed attempt carrying its reason, so the console's delivery log shows an
+ * operator what to fix and the retry schedule runs out as usual. The POST itself goes
+ * through `transport.ts`, pinned to the address that was checked.
+ *
+ * The clock, the random source and the transport are injected so the demo test
  * (`test/webhooks/dispatcher.test.ts`) walks a day of retries in seconds against a real
  * local receiver.
  */
@@ -33,11 +43,18 @@ export type DispatcherDeps = {
   db: Db;
   keys: ProcessKeys;
   logger: Logger;
-  fetch?: typeof fetch;
+  /** Which destinations this deployment will deliver to (`destination.ts`). */
+  policy: DestinationPolicy;
+  /** How an attempt leaves the process; defaults to the pinned `node:http(s)` transport. */
+  transport?: WebhookTransport;
   now?: () => Date;
   random?: () => number;
-  /** Per-attempt request timeout. Spec 4.9 says ten seconds; the lease must outlive it. */
+  /** Per-attempt total timeout. Spec 4.9 says ten seconds; the lease must outlive it. */
   deliveryTimeoutMs?: number;
+  /** How long one attempt may spend establishing the connection; capped by the total timeout. */
+  connectTimeoutMs?: number;
+  /** How much of a receiver's response is read before the attempt is abandoned. */
+  maxResponseBytes?: number;
   pollIntervalMs?: number;
   /** Deliveries leased per cycle. */
   batchSize?: number;
@@ -52,17 +69,24 @@ export type AttemptOutcome = { responseStatus: number | null; error: string | nu
 
 const USER_AGENT = 'Purse-Webhooks/1';
 const ERROR_MAX = 500;
+/** The prefix an attempt's `error` carries when the destination, not the receiver, is why nothing was sent. */
+export const DESTINATION_REFUSED = 'destination_refused';
+
+function truncate(text: string): string {
+  return text.length > ERROR_MAX ? `${text.slice(0, ERROR_MAX - 1)}…` : text;
+}
 
 export function describeFailure(error: unknown): string {
-  const text = error instanceof Error ? `${error.name}: ${error.message}${error.cause instanceof Error ? ` (${error.cause.message})` : ''}` : String(error);
-  return text.length > ERROR_MAX ? `${text.slice(0, ERROR_MAX - 1)}…` : text;
+  return truncate(error instanceof Error ? `${error.name}: ${error.message}${error.cause instanceof Error ? ` (${error.cause.message})` : ''}` : String(error));
 }
 
 export class WebhookDispatcher {
   private readonly db: Db;
   private readonly keys: ProcessKeys;
   private readonly logger: Logger;
-  private readonly fetchImpl: typeof fetch;
+  private readonly policy: DestinationPolicy;
+  private readonly transport: WebhookTransport;
+  private readonly limits: TransportLimits;
   private readonly now: () => Date;
   private readonly random: () => number;
   private readonly deliveryTimeoutMs: number;
@@ -79,10 +103,16 @@ export class WebhookDispatcher {
     this.db = deps.db;
     this.keys = deps.keys;
     this.logger = deps.logger.child({ component: 'webhook-dispatcher' });
-    this.fetchImpl = deps.fetch ?? globalThis.fetch.bind(globalThis);
+    this.policy = deps.policy;
+    this.transport = deps.transport ?? nodeTransport;
     this.now = deps.now ?? (() => new Date());
     this.random = deps.random ?? Math.random;
-    this.deliveryTimeoutMs = deps.deliveryTimeoutMs ?? 10_000;
+    this.deliveryTimeoutMs = deps.deliveryTimeoutMs ?? DEFAULT_LIMITS.totalTimeoutMs;
+    this.limits = {
+      totalTimeoutMs: this.deliveryTimeoutMs,
+      connectTimeoutMs: Math.min(deps.connectTimeoutMs ?? DEFAULT_LIMITS.connectTimeoutMs, this.deliveryTimeoutMs),
+      maxResponseBytes: deps.maxResponseBytes ?? DEFAULT_LIMITS.maxResponseBytes,
+    };
     this.pollIntervalMs = deps.pollIntervalMs ?? 1000;
     this.batchSize = deps.batchSize ?? 20;
     this.leaseMs = deps.leaseMs ?? Math.max(60_000, this.deliveryTimeoutMs * 3);
@@ -231,7 +261,7 @@ export class WebhookDispatcher {
     return status === 'failed' ? 'retried' : status;
   }
 
-  /** One signed POST. Never throws: a refused connection or a timeout is an outcome with `error` set. */
+  /** One signed POST to a re-checked, pinned destination. Never throws: a refusal, a refused connection or a timeout is an outcome with `error` set. */
   private async post(delivery: WebhookDelivery, endpoint: WebhookEndpoint, attempt: number): Promise<AttemptOutcome> {
     const startedAt = this.now();
     const body = JSON.stringify(delivery.payload);
@@ -242,23 +272,36 @@ export class WebhookDispatcher {
       // A secret that will not open never will; the attempt is recorded and the schedule runs out.
       return { responseStatus: null, error: describeFailure(error), startedAt, finishedAt: this.now() };
     }
+    // The destination is judged again here, not only where it was registered: a hostname
+    // that answered publicly then may answer privately now, and an endpoint stored before
+    // this check existed has never been judged at all.
+    let checked: CheckedDestination;
+    try {
+      checked = await checkDestination(endpoint.url, this.policy);
+    } catch (error) {
+      const detail = isWebhookError(error, 'url_not_allowed') ? error.detail['reason'] : undefined;
+      const reason = typeof detail === 'string' && error instanceof Error ? `${detail}: ${error.message}` : describeFailure(error);
+      this.logger.warn('webhook destination refused; the attempt was not sent', { deliveryId: delivery.id, endpointId: endpoint.id, url: endpoint.url, attempt, reason });
+      return { responseStatus: null, error: truncate(`${DESTINATION_REFUSED}: ${reason}`), startedAt, finishedAt: this.now() };
+    }
+    if (checked.address === null) return { responseStatus: null, error: `${DESTINATION_REFUSED}: unresolvable: the destination host could not be resolved`, startedAt, finishedAt: this.now() };
     const signed = await signWebhook(body, secret, Math.floor(startedAt.getTime() / 1000));
     try {
-      const response = await this.fetchImpl(endpoint.url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'user-agent': USER_AGENT,
-          [WEBHOOK_SIGNATURE_HEADER]: signed.header,
-          [WEBHOOK_EVENT_ID_HEADER]: delivery.eventId,
-          [WEBHOOK_DELIVERY_ID_HEADER]: `${delivery.id}:${attempt}`,
+      const response = await this.transport(
+        {
+          url: checked.url,
+          address: checked.address,
+          headers: {
+            'content-type': 'application/json',
+            'user-agent': USER_AGENT,
+            [WEBHOOK_SIGNATURE_HEADER]: signed.header,
+            [WEBHOOK_EVENT_ID_HEADER]: delivery.eventId,
+            [WEBHOOK_DELIVERY_ID_HEADER]: `${delivery.id}:${String(attempt)}`,
+          },
+          body,
         },
-        body,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(this.deliveryTimeoutMs),
-      });
-      // The body is drained and discarded: a receiver's response is never stored.
-      await response.arrayBuffer().catch(() => undefined);
+        this.limits,
+      );
       return { responseStatus: response.status, error: null, startedAt, finishedAt: this.now() };
     } catch (error) {
       return { responseStatus: null, error: describeFailure(error), startedAt, finishedAt: this.now() };

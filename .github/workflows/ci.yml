@@ -117,8 +117,12 @@ jobs:
           rm purse-seed.log
 
       - name: Start the Purse API
+        # WEBHOOK_ALLOWED_HOSTS is the destination-validation escape hatch
+        # (docs/webhooks-security.md): Sideout's integration walk registers a webhook
+        # endpoint on a loopback receiver, which a deployment refuses by default.
         run: |
-          WEBHOOK_POLL_INTERVAL_MS=200 pnpm --filter @purse/api exec tsx src/index.ts > purse-api.log 2>&1 &
+          WEBHOOK_POLL_INTERVAL_MS=200 WEBHOOK_ALLOWED_HOSTS=localhost,127.0.0.1,::1 \
+            pnpm --filter @purse/api exec tsx src/index.ts > purse-api.log 2>&1 &
           echo $! > purse-api.pid
           for i in $(seq 1 60); do
             if curl -fsS http://localhost:4000/health > /dev/null; then echo "Purse API up"; break; fi

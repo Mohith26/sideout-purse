@@ -3257,7 +3257,7 @@
         "Idempotency-Key": "<idempotency-key>"
       },
       "body": {
-        "url": "http://sideout.example/hooks/purse",
+        "url": "https://169.254.169.254/latest/meta-data/",
         "subscribedEvents": [
           "contest.settled"
         ]
@@ -3269,9 +3269,10 @@
         "error": {
           "type": "invalid_request",
           "code": "url_not_allowed",
-          "message": "Webhook URLs must be https:// (plain http is allowed only on localhost)",
+          "message": "Webhook destination refused: the destination is a link-local address",
           "detail": {
-            "url": "http://sideout.example/hooks/purse"
+            "reason": "link_local_address",
+            "host": "169.254.169.254"
           }
         }
       }

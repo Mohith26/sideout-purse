@@ -3,10 +3,10 @@ import { eq } from 'drizzle-orm';
 import type { ApiKeyResource, ConsoleDeliveryResource, ConsoleEndpointResource, TenantDetailResource, TenantResource } from '@purse/types';
 
 import { authenticateApiKey, resetAuthCaches } from '../../src/auth';
-import { auditLog, webhookDeliveries } from '../../src/db/schema';
+import { auditLog, webhookDeliveries, webhookEndpoints } from '../../src/db/schema';
 import { addOrigin } from '../../src/embed/origins';
-import { emitEvent } from '../../src/webhooks';
-import { connectMigrator, harness, type TestHarness } from '../helpers';
+import { emitEvent, WebhookDispatcher } from '../../src/webhooks';
+import { connectMigrator, harness, TEST_WEBHOOK_POLICY, type TestHarness } from '../helpers';
 import { bootstrapTenant, client } from '../http/client';
 import { createTenant, key, wipeLedger } from '../ledger/fixtures';
 import { consoleClient } from './client';
@@ -171,5 +171,39 @@ describe('console tenants, keys and webhooks', () => {
     // Another tenant's delivery is not reachable through this tenant.
     const other = await createTenant(h.database.db);
     expect((await api.get(`/console/tenants/${other}/webhooks/deliveries/${deliveryId}`)).status).toBe(403);
+  });
+
+  it('refuses a private webhook destination on the console path too, and shows a dispatch refusal in the delivery log', async () => {
+    const boot = await bootstrapTenant(h.database.db);
+    const { api } = await consoleClient(h, owner.db, 'operator');
+    const base = `/console/tenants/${boot.tenantId}/webhooks`;
+    for (const [url, reason] of [
+      ['https://169.254.169.254/latest/meta-data/', 'link_local_address'],
+      ['https://10.0.0.1/hooks', 'private_address'],
+      ['https://0xa000001/hooks', 'private_address'], // 10.0.0.1 in hexadecimal
+      ['https://user:pw@ops.example/hooks', 'credentials_present'],
+    ] as const) {
+      const response = await api.post(`${base}/endpoints`, { url, subscribedEvents: ['contest.opened'] }, { idempotencyKey: key('console-refusal') });
+      expect(response.status, url).toBe(400);
+      expect(response.error, url).toMatchObject({ type: 'invalid_request', code: 'url_not_allowed', detail: { reason } });
+    }
+
+    // An endpoint stored before this check existed still cannot deliver: the dispatcher
+    // refuses it and the attempt says why, which is what the console's delivery log renders.
+    const created = await api.post<ConsoleEndpointResource>(`${base}/endpoints`, { url: 'https://ops.example/hooks', subscribedEvents: ['contest.opened'] }, { idempotencyKey: key('console-endpoint') });
+    const endpointId = created.data?.id ?? '';
+    await owner.db.update(webhookEndpoints).set({ url: 'http://169.254.169.254/latest/meta-data/' }).where(eq(webhookEndpoints.id, endpointId));
+    await emitEvent(h.database.db, {
+      tenantId: boot.tenantId,
+      type: 'contest.opened',
+      data: { contestId: 'cnt_z', externalId: 'z', kind: 'tournament', asset: 'POINTS', state: 'open', previousState: 'draft', settledAt: null },
+    });
+    const worker = new WebhookDispatcher({ db: h.database.db, keys: h.keys, logger: h.logger, policy: TEST_WEBHOOK_POLICY, instanceId: 'console-refusal', deliveryTimeoutMs: 1000 });
+    expect((await worker.runOnce()).retried).toBe(1);
+    const log = await api.get<{ deliveries: ConsoleDeliveryResource[] }>(`${base}/endpoints/${endpointId}/deliveries`);
+    const attempt = log.data?.deliveries[0]?.attempts[0];
+    expect(attempt?.responseStatus).toBeNull();
+    expect(attempt?.error).toContain('destination_refused');
+    expect(attempt?.error).toContain('link_local_address');
   });
 });

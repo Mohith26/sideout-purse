@@ -5,7 +5,7 @@ import type { ContestResource, UserResource, WebhookDeliveryResource, WebhookEnd
 import { resetAuthCaches } from '../../src/auth';
 import type { Database } from '../../src/db/client';
 import { webhookDeliveries, webhookEndpoints } from '../../src/db/schema';
-import { endpointSecret } from '../../src/webhooks';
+import { destinationPolicy, endpointSecret } from '../../src/webhooks';
 import { connectMigrator, harness, TEST_KEYS, type TestHarness } from '../helpers';
 import { bootstrapTenant, client, type Bootstrap } from '../http/client';
 import { key, wipeLedger } from '../ledger/fixtures';
@@ -68,15 +68,28 @@ describe('webhook endpoints and origins over HTTP', () => {
     expect(after === undefined ? null : endpointSecret(TEST_KEYS, after)).toBe(rotated.data?.secret);
   });
 
-  it('validates the URL (https only, except loopback), the events and the description', async () => {
+  it('validates the destination, the events and the description', async () => {
     const api = client(h, boot.plainKey);
-    const http = await api.post('/v1/webhooks/endpoints', { url: 'http://sideout.example/hooks', subscribedEvents: ['contest.settled'] });
-    expect(http.status).toBe(400);
-    expect(http.error).toMatchObject({ type: 'invalid_request', code: 'url_not_allowed' });
+    // The loopback receiver a developer and CI use is on this deployment's allowlist
+    // (`TEST_WEBHOOK_POLICY` — the `WEBHOOK_ALLOWED_HOSTS` escape hatch), so it registers.
     const loopback = await api.post<WebhookEndpointResource>('/v1/webhooks/endpoints', { url: 'http://localhost:4300/hooks', subscribedEvents: ['contest.settled'] });
     expect(loopback.status).toBe(201);
+
+    for (const [url, reason] of [
+      ['https://127.0.0.2/hooks', 'loopback_address'],
+      ['https://user:pw@hooks.example/x', 'credentials_present'],
+      ['https://hooks.example/x#frag', 'fragment_present'],
+      ['ftp://hooks.example/x', 'scheme_not_allowed'],
+      ['not a url', 'not_absolute'],
+    ] as const) {
+      const response = await api.post('/v1/webhooks/endpoints', { url, subscribedEvents: ['contest.settled'] });
+      expect(response.status, url).toBe(400);
+      expect(response.error, url).toMatchObject({ type: 'invalid_request', code: 'url_not_allowed', detail: { reason } });
+      // The refusal names why and the host that was asked for, and nothing of the resolution.
+      expect(Object.keys(response.error?.detail ?? {}).sort(), url).toEqual(['host', 'reason']);
+    }
+
     for (const body of [
-      { url: 'not a url', subscribedEvents: ['contest.settled'] },
       { url: 'https://x.example', subscribedEvents: [] },
       { url: 'https://x.example', subscribedEvents: ['contest.exploded'] },
       { url: 'https://x.example', subscribedEvents: ['contest.settled'], description: '' },
@@ -87,8 +100,62 @@ describe('webhook endpoints and origins over HTTP', () => {
       expect(response.status, JSON.stringify(body)).toBe(400);
       expect(response.error?.type).toBe('invalid_request');
     }
+
+    // A PATCH goes through the same check, so an endpoint cannot be edited into a private destination.
     const badPatch = await api.send('PATCH', `/v1/webhooks/endpoints/${loopback.data?.id ?? ''}`, { url: 'ftp://x' });
     expect(badPatch.status).toBe(400);
+    const rebind = await api.send('PATCH', `/v1/webhooks/endpoints/${loopback.data?.id ?? ''}`, { url: 'http://169.254.169.254/latest' });
+    expect(rebind.status).toBe(400);
+    expect(rebind.error).toMatchObject({ code: 'url_not_allowed', detail: { reason: 'link_local_address' } });
+  });
+
+  it('refuses every private destination, in every spelling, when no host is exempted', async () => {
+    // The default policy: the escape hatch is empty, exactly as a deployment that never set
+    // `WEBHOOK_ALLOWED_HOSTS` runs (docs/webhooks-security.md).
+    const strict = harness({ webhookPolicy: destinationPolicy({ nodeEnv: 'test' }) });
+    try {
+      const api = client(strict, boot.plainKey);
+      for (const [url, reason] of [
+        ['http://localhost:4300/hooks', 'loopback_address'],
+        ['https://127.0.0.1/hooks', 'loopback_address'],
+        ['https://10.0.0.1/hooks', 'private_address'],
+        ['https://192.168.1.10/hooks', 'private_address'],
+        ['https://169.254.169.254/latest/meta-data/', 'link_local_address'],
+        ['https://2130706433/hooks', 'loopback_address'],
+        ['https://0177.0.0.1/hooks', 'loopback_address'],
+        ['https://0x7f000001/hooks', 'loopback_address'],
+        ['https://127.1/hooks', 'loopback_address'],
+        ['https://[::1]/hooks', 'loopback_address'],
+        ['https://[::ffff:127.0.0.1]/hooks', 'ipv4_mapped_address'],
+        ['https://[fd00::1]/hooks', 'unique_local_address'],
+        ['https://[fe80::1]/hooks', 'link_local_address'],
+        ['https://0.0.0.0/hooks', 'unspecified_address'],
+      ] as const) {
+        const response = await api.post('/v1/webhooks/endpoints', { url, subscribedEvents: ['contest.settled'] });
+        expect(response.status, url).toBe(400);
+        expect(response.error, url).toMatchObject({ type: 'invalid_request', code: 'url_not_allowed', detail: { reason } });
+      }
+      // A public destination still registers under the same policy.
+      expect((await api.post('/v1/webhooks/endpoints', { url: 'https://hooks.example/purse', subscribedEvents: ['contest.settled'] })).status).toBe(201);
+    } finally {
+      await strict.close();
+    }
+  });
+
+  it('refuses plain http once the deployment is production, allowlist or not', async () => {
+    const production = harness({ webhookPolicy: destinationPolicy({ nodeEnv: 'production', allowedHosts: ['localhost'] }) });
+    try {
+      const api = client(production, boot.plainKey);
+      const plain = await api.post('/v1/webhooks/endpoints', { url: 'http://hooks.example/purse', subscribedEvents: ['contest.settled'] });
+      expect(plain.status).toBe(400);
+      expect(plain.error).toMatchObject({ code: 'url_not_allowed', detail: { reason: 'insecure_scheme' } });
+      expect((await api.post('/v1/webhooks/endpoints', { url: 'http://localhost:4300/hooks', subscribedEvents: ['contest.settled'] })).error).toMatchObject({ detail: { reason: 'insecure_scheme' } });
+      // An exempted host over https is still reachable, which is what the hatch is for.
+      expect((await api.post('/v1/webhooks/endpoints', { url: 'https://localhost:4300/hooks', subscribedEvents: ['contest.settled'] })).status).toBe(201);
+      expect((await api.post('/v1/webhooks/endpoints', { url: 'https://10.0.0.1/hooks', subscribedEvents: ['contest.settled'] })).error).toMatchObject({ detail: { reason: 'private_address' } });
+    } finally {
+      await production.close();
+    }
   });
 
   it('keeps one tenant’s endpoints and deliveries from another', async () => {

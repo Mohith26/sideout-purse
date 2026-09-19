@@ -1875,3 +1875,59 @@ the registered v1 routes and its provider table with `docs/providers.md`. The br
 keeps keys in memory, permits requests only to this API's `/v1/` paths, refuses redirects,
 and sends the existing embed routes their publishable key. Other routes use the secret
 key, except public endpoints. Host-only internal reconciliation remains protected.
+
+## Webhook destination validation
+
+`docs/webhooks-security.md` is the contract; these are the choices it rests on.
+
+**Plain `http` is a development-only destination.** A webhook URL must be `https` whenever
+`NODE_ENV=production`; anywhere else `http` is accepted, because the sample receiver, the
+dispatcher tests and `pnpm dev` all post to a loopback port that has no certificate. The
+scheme is judged before the host allowlist, so an exempted host in production still cannot
+be reached over plain `http`. This replaces the earlier rule (https, or http on a hostname
+literally spelled `localhost`, `127.0.0.1` or `[::1]`), which classified by spelling and
+therefore missed `http://0177.0.0.1` and every other spelling of the same address.
+
+**A destination is judged by its address, not its name.** Every resolved answer must be
+public unicast; one private answer in a set refuses the whole destination. An IPv4-mapped
+IPv6 *literal* is refused even when the address it carries is public, because there is no
+reason to write one and it is a known bypass; a *resolver* answering in that form is judged
+on the IPv4 it carries, because some platforms answer that way for an A record.
+
+**A host that does not resolve is registrable but not deliverable.** Refusing an
+unresolvable host at registration would refuse an integration that registers before its
+DNS is live — and the whole test suite, which registers `*.example` hostnames. Nothing can
+be delivered to a name that does not resolve, so accepting it costs nothing: the dispatcher
+runs the same check on every attempt and treats an unresolvable host as a failed attempt
+there. The registration check is convenience; the dispatch check is the security boundary.
+
+**The check and the connection cannot disagree.** The dispatcher connects to the exact
+address the check approved, through a custom `lookup` on `node:http(s)` with `agent: false`.
+`fetch` was dropped for this reason: it offers no way to pin the address, and the same
+change buys the bounded connect timeout, the bounded response read and the guarantee that
+no redirect is ever followed. TLS still uses the hostname, so certificate validation is
+unchanged.
+
+**A refusal at dispatch is an ordinary failed attempt.** It is written to
+`webhook_delivery_attempts` with the reason (`destination_refused: <reason>: <message>`)
+and the retry schedule runs out as usual, rather than disabling the endpoint or dropping
+the delivery silently. An operator sees the reason in the console's delivery log and
+decides; nothing is deleted and no state machine gains a branch.
+
+**The allowlist is empty by default, and the port policy allows everything.**
+`WEBHOOK_ALLOWED_HOSTS` exempts named hosts from the address rules and defaults to empty
+in every environment, so a deployment that never sets it refuses every private destination;
+a production process with a non-empty list warns at boot. `WEBHOOK_ALLOWED_PORTS` defaults
+to empty, which means every port — receivers behind a proxy on a non-default port are
+ordinary, so refusing them would be a guess about someone else's network rather than a
+security rule.
+
+**Self-serve sandboxes keep the refusal.** With destination validation in place the
+question was reopened, and the answer is still no: `sandbox_webhooks_unavailable` stays.
+Validation removes the internal-network risk, but an anonymous, unauthenticated visitor
+who can register an endpoint can still make the public deployment emit signed POSTs to
+arbitrary public hosts, eight times per event over 24 hours, from the deployment's
+address — an egress and reputation surface with no product value, since the `/docs`
+sandbox runs its examples in the visitor's own browser and has no receiver to point at.
+The refusal is therefore no longer a stopgap for missing validation; it is a deliberate
+abuse-surface choice. Managed tenants, which an operator provisions, are unaffected.

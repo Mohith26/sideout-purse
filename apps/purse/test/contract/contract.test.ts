@@ -343,8 +343,9 @@ describe('v1 contract', () => {
     const endpointId = endpoint.data?.id ?? '';
     const endpointReplay = await op.record<WebhookEndpointResource>('webhooks.endpoints.create.replay', 'POST', '/v1/webhooks/endpoints', { url: 'https://sideout.example/hooks/purse', subscribedEvents: ['contest.settled', 'wallet.balance.changed'], description: 'Sideout production' }, { idempotencyKey: hookKey });
     expect(endpointReplay.data?.secret).toBeNull();
-    const plainHook = await op.record('webhooks.endpoints.create.url_not_allowed', 'POST', '/v1/webhooks/endpoints', { url: 'http://sideout.example/hooks/purse', subscribedEvents: ['contest.settled'] });
-    expect(plainHook.error).toMatchObject({ type: 'invalid_request', code: 'url_not_allowed' });
+    // Every destination is validated (docs/webhooks-security.md): a private address is refused with the reason.
+    const plainHook = await op.record('webhooks.endpoints.create.url_not_allowed', 'POST', '/v1/webhooks/endpoints', { url: 'https://169.254.169.254/latest/meta-data/', subscribedEvents: ['contest.settled'] });
+    expect(plainHook.error).toMatchObject({ type: 'invalid_request', code: 'url_not_allowed', detail: { reason: 'link_local_address' } });
     expect((await op.record<{ endpoints: WebhookEndpointResource[] }>('webhooks.endpoints.list', 'GET', '/v1/webhooks/endpoints')).data?.endpoints).toHaveLength(1);
     expect((await op.record<WebhookEndpointResource>('webhooks.endpoints.get', 'GET', `/v1/webhooks/endpoints/${endpointId}`)).data?.secret).toBeNull();
     const patched = await op.record<WebhookEndpointResource>('webhooks.endpoints.update', 'PATCH', `/v1/webhooks/endpoints/${endpointId}`, { subscribedEvents: ['contest.settled', 'contest.voided', 'wallet.balance.changed'] });
