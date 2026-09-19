@@ -3,16 +3,17 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 
 import type { Db } from '../db/client';
-import { reconcile } from '../ledger';
+import { reconcileAndRecord } from '../ledger';
 import { ApiFailure, ok } from '../http/envelope';
 import type { RequestScope } from '../http/request-id';
 import { loadDelivery, replayDelivery } from '../webhooks';
 import { deliveryResource } from './v1/serialize';
 
 /**
- * `GET /internal/reconcile`, spec 4.2.4. Runs every invariant and answers with the
- * report: 200 when clean, 500 in the error envelope (report in `detail`) when not, so a
- * scheduled caller can alarm on the status alone.
+ * `GET /internal/reconcile`, spec 4.2.4. Runs every invariant, records the run (the last
+ * result `/health` reports, spec section 10) and answers with the report: 200 when clean,
+ * 500 in the error envelope (report in `detail`) when not, so a scheduled caller can alarm
+ * on the status alone.
  *
  * `POST /internal/webhooks/deliveries/:id/replay` (spec 4.9, "manually replay any
  * delivery") queues the delivery's event to its endpoint again as a new delivery, whatever
@@ -53,14 +54,14 @@ export function internalRoutes(deps: InternalDeps) {
   return routes.get('/internal/reconcile', async (c) => {
     authorize(c.req.header('Authorization'), deps);
 
-    const report = await reconcile(deps.db);
+    const { report, run } = await reconcileAndRecord(deps.db, 'internal');
     const logger = c.get('logger');
     if (report.ok) {
-      logger.info('reconcile clean', { durationMs: report.durationMs });
+      logger.info('reconcile clean', { runId: run.id, durationMs: report.durationMs });
       return ok(c, report);
     }
     const failed = report.invariants.filter((result) => !result.ok).map((result) => result.id);
-    logger.error('reconcile failed', { failed, invariants: report.invariants.filter((result) => !result.ok) });
+    logger.error('reconcile failed', { runId: run.id, failed, invariants: report.invariants.filter((result) => !result.ok) });
     throw new ApiFailure(
       {
         type: 'internal_error',

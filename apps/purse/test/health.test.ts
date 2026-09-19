@@ -4,9 +4,11 @@ import { SDK_VERSION } from '@purse/sdk';
 import { readMigrationJournal } from '@repo/db';
 
 import { env } from '../src/env';
+import { reconcileRuns } from '../src/db/schema';
+import { recordReconcileRun, reconcile } from '../src/ledger';
 import { MIGRATIONS_FOLDER } from '../src/paths';
 import type { HealthReport } from '../src/routes/health';
-import { harness, type TestHarness } from './helpers';
+import { connectMigrator, harness, rejection, type TestHarness } from './helpers';
 
 describe('GET /health', () => {
   let h: TestHarness;
@@ -18,6 +20,12 @@ describe('GET /health', () => {
   });
 
   it('returns the documented envelope against a migrated database', async () => {
+    const migrator = connectMigrator();
+    try {
+      await migrator.db.delete(reconcileRuns);
+    } finally {
+      await migrator.close();
+    }
     const res = await h.app.request('/health');
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: HealthReport };
@@ -25,12 +33,43 @@ describe('GET /health', () => {
 
     expect(body).toEqual({
       data: {
+        status: 'ok',
         sha: 'abc123',
         migrations: { applied: journal.entries.length, available: journal.entries.length, pending: 0 },
         rulesetVersion: null,
         sdkVersion: SDK_VERSION,
+        reconcile: null,
       },
     });
+  });
+
+  it('reports the last recorded reconcile run, and answers 503 while the last one failed', async () => {
+    const clean = await reconcile(h.database.db);
+    expect(clean.ok).toBe(true);
+    await recordReconcileRun(h.database.db, clean, 'cli');
+    const first = (await (await h.app.request('/health')).json()) as { data: HealthReport };
+    expect(first.data.status).toBe('ok');
+    expect(first.data.reconcile).toEqual({ ok: true, source: 'cli', ranAt: clean.ranAt, durationMs: clean.durationMs, failed: [] });
+
+    // A later run that found a violation: what a broken ledger would record.
+    const broken = { ...clean, ok: false, ranAt: new Date(Date.parse(clean.ranAt) + 1000).toISOString(), invariants: clean.invariants.map((each) => (each.id === 'I1' ? { ...each, ok: false, status: 'failed' as const, detail: 'POINTS: debits 10, credits 9' } : each)) };
+    await recordReconcileRun(h.database.db, broken, 'schedule');
+    const failing = await h.app.request('/health');
+    expect(failing.status).toBe(503);
+    const body = (await failing.json()) as { data: HealthReport };
+    expect(body.data.status).toBe('failing');
+    expect(body.data.reconcile).toMatchObject({ ok: false, source: 'schedule', failed: ['I1'] });
+    expect(body.data.sha).toBe('abc123');
+    expect(h.lines.find((l) => l['msg'] === 'health: last reconcile failed')).toMatchObject({ level: 'error', failed: ['I1'] });
+
+    // The record is append-only for the runtime: a failed run cannot be rewritten or removed, only followed by a clean one.
+    expect(String(await rejection(h.database.sql`delete from reconcile_runs`))).toMatch(/permission denied for table reconcile_runs/);
+    expect(String(await rejection(h.database.sql`update reconcile_runs set ok = true, failed = '[]'::jsonb`))).toMatch(/permission denied for table reconcile_runs/);
+    const again = await reconcile(h.database.db);
+    await recordReconcileRun(h.database.db, { ...again, ranAt: new Date(Date.parse(broken.ranAt) + 1000).toISOString() }, 'internal');
+    const recovered = (await (await h.app.request('/health')).json()) as { data: HealthReport };
+    expect(recovered.data.status).toBe('ok');
+    expect(recovered.data.reconcile).toMatchObject({ ok: true, source: 'internal' });
   });
 
   it('never leaks the connection string or credentials', async () => {
@@ -78,6 +117,26 @@ describe('envelope', () => {
       expect(await res.json()).toEqual({
         error: { type: 'invalid_request', code: 'not_found', message: 'No route for GET /nope' },
       });
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+describe('public pages', () => {
+  it('serves the responsible-play policy (with the limits anchor) and the support path without a key', async () => {
+    const h = harness();
+    try {
+      const policy = await h.app.request('/responsible-play');
+      expect(policy.status).toBe(200);
+      expect(policy.headers.get('content-type')).toMatch(/text\/html/);
+      const policyHtml = await policy.text();
+      expect(policyHtml).toContain('id="limits"');
+      expect(policyHtml).toContain('Self-exclusion');
+      expect(policyHtml).not.toMatch(/sk_(sandbox|live)_/);
+      const support = await h.app.request('/support');
+      expect(support.status).toBe(200);
+      expect(await support.text()).toContain('responsible-play');
     } finally {
       await h.close();
     }

@@ -1,0 +1,34 @@
+# Build context for every Dockerfile in the repository (apps/*/Dockerfile and
+# docker/*/Dockerfile all build from the root, because the workspace is one install).
+# What is left out: dependencies and build output (installed and built inside the image),
+# every environment file but the template, the tests and their output, tooling caches,
+# the docs and screenshots, and the git history.
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/out
+**/*.tsbuildinfo
+**/test
+**/e2e
+**/test-results
+**/playwright-report
+**/coverage
+**/.vitest
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+docs
+docker/postgres
+.lavish
+.claude
+.railway
+.agents
+*.md
+!README.md
+.DS_Store

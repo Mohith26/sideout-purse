@@ -11,9 +11,10 @@ import { CONSOLE_PATH_HEADER, SESSION_COOKIE } from './lib/session-cookie';
  * session cookie at all is sent to sign in with the path to come back to, before any
  * rendering; a cookie that is present but no longer valid is caught by the frame's
  * `/auth/me` read (`src/server/api.ts`). The current path travels to the server
- * components on `X-Console-Path` so that read can send the operator back too.
+ * components on `X-Console-Path` so that read can send the operator back too. `/health`
+ * is open: the hosted health check and the uptime probe carry no cookie.
  */
-const OPEN_PATHS = ['/login', '/api/auth/login'];
+const OPEN_PATHS = ['/login', '/api/auth/login', '/health'];
 
 export function middleware(request: NextRequest) {
   const id = readOrMintRequestId(request.headers.get(REQUEST_ID_HEADER));

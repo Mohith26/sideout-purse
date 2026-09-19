@@ -16,10 +16,11 @@ import { SEED_SLUGS } from './build';
 /**
  * The seed's Purse walk: what a live run would have done to Purse for the seeded
  * tournaments, done through the same services, so the local Purse holds a settled
- * contest for the settled event, an in-progress one with two pushed quarterfinals for the
- * live event, and an open one with entries for the upcoming event, and `purse_calls`
- * shows every request. Every step is idempotent under the same keys the app uses, so a
- * reseed replays rather than repeats. Runs only when `SIDEOUT_PURSE_SECRET_KEY` is set and the
+ * contest for the settled event, in-progress ones with their pushed matches for the live
+ * events, open ones with entries for the events taking or done taking registrations, and
+ * a voided one (every stake refunded) for the cancelled event, and `purse_calls` shows
+ * every request. Every step is idempotent under the same keys the app uses, so a reseed
+ * replays rather than repeats. Runs only when `SIDEOUT_PURSE_SECRET_KEY` is set and the
  * API answers `/health`; otherwise `scripts/seed.ts` says so and the contest columns stay
  * null.
  */
@@ -127,7 +128,8 @@ async function settleOnPurse(deps: PurseDeps, tournament: Tournament, now: Date)
 export async function seedPurse(deps: PurseDeps, options: { now: Date; log: Logger }): Promise<SeedPurseSummary> {
   const now = options.now;
   const summary: SeedPurseSummary = { linked: 0, tournaments: [] };
-  const order = [SEED_SLUGS.settled, SEED_SLUGS.live, SEED_SLUGS.upcoming];
+  // Every seeded event but the draft, which has no contest yet (a draft is created on Purse when it opens).
+  const order = [SEED_SLUGS.settled, SEED_SLUGS.live, SEED_SLUGS.upcoming, SEED_SLUGS.drawn, SEED_SLUGS.cancelled, SEED_SLUGS.communityCup, SEED_SLUGS.boardwalk, SEED_SLUGS.duneCup];
   const rows = await deps.db.select().from(tournaments).where(inArray(tournaments.slug, order));
   for (const slug of order) {
     const tournament = rows.find((t) => t.slug === slug);

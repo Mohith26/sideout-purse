@@ -32,6 +32,7 @@ import postgres from 'postgres';
  *   pnpm db:setup                                 # admin URL from DATABASE_ADMIN_URL or local default
  *   pnpm db:setup --admin-url postgres://postgres:postgres@localhost:5432/postgres
  *   pnpm db:setup --no-write-env                  # do not create apps/{purse,sideout}/.env
+ *   pnpm db:setup --no-test-databases             # a hosted Postgres: purse and sideout only
  */
 
 const { values: args } = parseArgs({
@@ -41,13 +42,14 @@ const { values: args } = parseArgs({
     'purse-migrator-password': { type: 'string' },
     'sideout-password': { type: 'string' },
     'write-env': { type: 'boolean', default: true },
+    'test-databases': { type: 'boolean', default: true },
     help: { type: 'boolean', short: 'h', default: false },
   },
   allowNegative: true,
 });
 
 if (args.help) {
-  console.log(`Usage: pnpm db:setup [--admin-url <url>] [--purse-password <pw>] [--purse-migrator-password <pw>] [--sideout-password <pw>] [--no-write-env]
+  console.log(`Usage: pnpm db:setup [--admin-url <url>] [--purse-password <pw>] [--purse-migrator-password <pw>] [--sideout-password <pw>] [--no-write-env] [--no-test-databases]
 
 Environment: DATABASE_ADMIN_URL, PURSE_DB_PASSWORD, PURSE_MIGRATOR_DB_PASSWORD, SIDEOUT_DB_PASSWORD`);
   process.exit(0);
@@ -109,7 +111,7 @@ try {
   for (const app of apps) {
     const roles = app.runtime === app.owner ? [app.owner] : [app.owner, app.runtime];
     for (const role of roles) await ensureRole(role);
-    for (const database of app.databases) {
+    for (const database of args['test-databases'] ? app.databases : [app.databases[0]]) {
       await ensureDatabase(database, app.owner.name, roles);
       if (app.runtime !== app.owner) await reassignStrays(database, app.runtime.name, app.owner.name);
     }
@@ -127,10 +129,7 @@ try {
     };
     const [main, test] = app.databases;
     const roles = app.runtime === app.owner ? [app.owner] : [app.runtime, app.owner];
-    const lines = roles.flatMap((role) => [
-      `${role.envVar}=${urlFor(role, main)}`,
-      `${role.envVar}_TEST=${urlFor(role, test)}`,
-    ]);
+    const lines = roles.flatMap((role) => [`${role.envVar}=${urlFor(role, main)}`, ...(args['test-databases'] ? [`${role.envVar}_TEST=${urlFor(role, test)}`] : [])]);
     console.log('');
     for (const line of lines) console.log(redactLine(line));
 

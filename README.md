@@ -1,285 +1,325 @@
 # Sideout on Purse
 
-Sideout is a charity beach volleyball tournament product. Purse is the competition
-infrastructure it runs on: a ledger, contest and settlement engine, eligibility rules, an
-embeddable SDK, and an operator console, built from scratch as a real platform with a
-real boundary in front of it. The full design is in [`docs/system-spec.md`](docs/system-spec.md);
-the decisions it leaves open are answered in [`docs/decisions.md`](docs/decisions.md).
+Sideout is a charity beach volleyball tournament app, and Purse is the competition
+platform I built for it to run on: an immutable ledger, a contest and settlement engine,
+versioned eligibility rules, an embeddable SDK, a webhook dispatcher and an operator
+console, behind a boundary that Sideout can only cross over HTTPS.
 
-This README covers the workspace layout and the quickstart, and carries the short version
-of each write-up section as its phase lands (the ledger, how a score becomes a payout, the
-rounding rule). The full write-up, with the consensus half, the provider seams and
-screenshots, lands with the last phase.
+The public demo runs on Railway and resets itself every night:
 
-## Layout
+| | URL |
+|---|---|
+| Sideout | https://sideout-production-5898.up.railway.app |
+| Purse API and embed | https://purse-production-b87b.up.railway.app (`/health`, `/embed/`, `/v1/*`) |
+| Purse operator console | https://purse-console-production.up.railway.app |
 
-One pnpm workspace, four apps, and the packages that sit between them. Sideout may import
-from Purse only through `@purse/sdk` and `@purse/types`; an ESLint rule enforces that in
-CI, and a test proves the rule fires. The two products have separate databases and separate
-connection strings that are never loaded into the same process; the embed and the console
-are Purse's, own no database, and speak to the API over HTTP.
+![The Sandbar Classic, live: three matches on the sand, one disputed, the schedule, six pools and the impact meter](docs/screenshots/overview-1280.png)
 
-```
-apps/
-  purse/            Purse API. Hono on Node 22, Drizzle + postgres, Zod.   PURSE_DATABASE_URL (+ PURSE_MIGRATOR_DATABASE_URL)
-  sideout/          Sideout web app. Next.js 15 App Router, Tailwind 4.   SIDEOUT_DATABASE_URL
-  purse-embed/      the iframe-hosted sign-in, identity, wallet, entry and rewards flows; a static export the API serves under /embed
-  purse-console/    the operator console. Next.js 15, its own operator accounts and sessions, calls the API's /console routes server-to-server.   PURSE_API_ORIGIN
-packages/
-  ui/               @sideout/ui   design tokens, Tailwind theme, the AppShell and the dense primitives (tables, chips, forms)
-  purse-types/      @purse/types  API error taxonomy, header names, the eligibility vocabulary, the v1 and console resource shapes, the iframe protocol
-  purse-sdk/        @purse/sdk    the partner-facing client (phase 4 implements; phase 0 ships its version)
-  ids/              @repo/ids     typed-prefix UUID v7 ids shared by both apps
-  db/               @repo/db      connection and migration helpers; holds no schema, no URL
-  logger/           @repo/logger  structured JSON log lines and build-sha resolution, shared by both apps
-  config/           @repo/config  ESLint flat config (with the boundary rule) and tsconfig presets
-docker/postgres/    init script for the compose Postgres: two databases, three roles
-scripts/            db-setup: the same provisioning against any Postgres you can reach
-docs/               system-spec.md (verbatim), decisions.md, providers.md (the provider seam table)
-test/               repository-level tests: the boundary lint rule, env isolation
-```
+![The ledger explorer in the operator console: every account by kind with its derived balance, and the journal of one contest](docs/screenshots/console-ledger-1280.png)
 
-Each app owns its Drizzle config and migration folder (`apps/*/drizzle`). Migrations are
-forward-only and applied by `pnpm db:migrate`, which runs each app's migrator in its own
-process. Reference rows never live in migration history: `pnpm db:seed` upserts them in
-both apps (the quickstart below says what) and can be re-run against any environment; the
-four seed contests are a draft, an open one with entrants holding promo points, one in
-`awaiting_settlement` for the console's close flow, and a settled one whose results reconcile.
-
-Purse connects as two roles. `purse_migrator` owns its databases and runs migrations and
-seeds; `purse_app`, the API's runtime role, owns nothing and cannot `UPDATE` or `DELETE`
-journal rows, which Postgres enforces rather than the code. See "How the ledger cannot
-drift" below and [`docs/decisions.md`](docs/decisions.md).
+The design is [`docs/system-spec.md`](docs/system-spec.md), which I treated as the
+acceptance contract; every choice it left open, and every place I departed from it, is in
+[`docs/decisions.md`](docs/decisions.md). How the demo is hosted is
+[`docs/deploy.md`](docs/deploy.md).
 
 ## Quickstart
 
-Requires Node 22.9 or later (`.nvmrc`), pnpm 11, and a Postgres 16 to talk to.
+Node 22 (`.nvmrc`), pnpm 11, Docker for the Postgres.
 
 ```sh
-git clone <this repo> && cd sideout-purse
+git clone https://github.com/Mohith26/sideout-purse && cd sideout-purse
 pnpm install
-
-# Postgres, one of:
-docker compose up -d        # provisions the roles and databases on first start; the
-                            # .env.example defaults match it, so copy them into place:
+docker compose up -d           # Postgres 16: two databases, three roles, on first start
 cp apps/purse/.env.example apps/purse/.env && cp apps/sideout/.env.example apps/sideout/.env
-pnpm db:setup               # or: provision an existing Postgres (defaults to localhost:5432 as you)
-                            #     and write apps/purse/.env and apps/sideout/.env with local defaults
-
-pnpm db:migrate             # applies both apps' migrations, each in its own process
-pnpm db:seed                # Purse: the Sideout tenant, its platform accounts, the active ruleset, six users,
-                            # two API keys, the seed contests and the console admin. Sideout: the demo events. Both safe to re-run
-pnpm dev                    # Purse on :4000, the embed dev server on :4100, the console on :4200, Sideout on :3000
-pnpm --filter @purse/embed build   # optional: lets :4000 serve the embed under /embed as production does
+pnpm db:migrate                # both apps' migrations, each in its own process
+pnpm db:seed                   # the tenant, its keys and ruleset, seven users, eight contests; nine tournaments
+pnpm dev                       # Purse :4000, the embed :4100, the console :4200, Sideout :3000
 ```
 
-The first seed prints nothing secret. To hold a key, or the console admin's password, ask for it:
+Then http://localhost:3000 is Sideout, http://localhost:4200 is the console (sign in as
+`admin@purse.local`; `pnpm --filter @purse/api db:seed -- --print-operator-password
+--rotate-operator-password` prints a password), and `curl localhost:4000/health` is
+Purse. `pnpm db:setup` provisions any other Postgres you can reach and writes the two
+`.env` files for you. The seed prints nothing secret; `pnpm --filter @purse/api db:seed --
+--print-keys` prints the sandbox keys the one time it creates them, and
+`--print-keys --rotate-keys` reissues them. With `SIDEOUT_PURSE_SECRET_KEY` set and Purse
+running, `pnpm db:seed` also walks the seeded tournaments into Purse (links, entries,
+scores, the settled event closed), which is what the nightly reset does.
 
-```sh
-pnpm --filter @purse/api db:seed -- --print-keys               # prints the plaintext of any key this run created
-pnpm --filter @purse/api db:seed -- --print-keys --rotate-keys # revokes the seed keys and prints the new ones
-pnpm --filter @purse/api db:seed -- --print-operator-password --rotate-operator-password
-                                                               # sets and prints a new password for admin@purse.local
-                                                               # (PURSE_OPERATOR_ADMIN_EMAIL picks another address)
-```
-
-Then sign in at http://localhost:4200 with that address and password. The console needs no
-`.env` of its own: `PURSE_API_ORIGIN` names the API (default `http://localhost:4000`).
-
-Then:
-
-```sh
-curl localhost:4000/health   # { data: { sha, migrations, rulesetVersion, sdkVersion } }
-curl localhost:3000/health   # { data: { sha, migrations, purseSdkVersion } }
-curl localhost:3000/api/tournaments                              # the three seeded events
-curl localhost:3000/api/tournaments/sandbar-classic-2026         # live: pools, standings, bracket, sponsors
-curl localhost:3000/api/tournaments/sandbar-classic-2026/impact  # raised vs goal, from donation rows
-open http://localhost:3000   # the Sideout shell
-open http://localhost:4200   # the operator console: tenants and keys, deliveries, contests and the close flow,
-                             # the review queue, the ledger explorer, the invariant panel, rulesets and the tester
-pnpm --filter @purse/api reconcile   # the seven ledger invariants against the dev database; exits 1 on any failure
-pnpm --filter @purse/console e2e     # the Playwright smoke: signs in, drills into the settled contest's entry, runs the panel
-```
-
-`GET /internal/reconcile` returns the same report over HTTP behind `INTERNAL_API_TOKEN`
-(`Authorization: Bearer ...`); with no token configured it is closed outside tests.
-
-`pnpm db:seed` gives Sideout a charity, two organizers, 48 players, three sponsors and one
-tournament in each of `registration_open`, `live` (24 teams, six pools played out, a
-16-bracket with one bye and the quarterfinals in progress) and `settled`. The pools and
-brackets are produced by the same draw engine the organizer endpoint uses and every set is
-checked by the scoreline rules, so nothing on screen is typed. Re-running the seed is a
-no-op; `SEED_ANCHOR=<iso>` pins the live event's start.
-
-## Sideout API (phase 6)
-
-Every response is `{ data }` or `{ error: { type, code, message, detail? } }`; cents are
-decimal strings. Public reads omit every Purse identifier and never show a draft.
+## What is where
 
 ```
-GET   /api/tournaments[?status=]              GET  /api/tournaments/:slug (pools, bracket, standings, sponsors)
-GET   /api/tournaments/:slug/standings         GET  /api/tournaments/:slug/impact
-GET   /api/matches/:id                         GET  /api/me                          (session)
-POST  /api/auth/request-code  /api/auth/verify  /api/auth/logout
-POST  /api/teams (invite partner by phone)     POST /api/teams/:id/join              (session)
-POST  /api/tournaments/:slug/register          (session, captain; takes the entry donation)
-POST  /api/admin/tournaments                   PATCH /api/admin/tournaments/:id       (organizer; fields + status)
-POST  /api/admin/tournaments/:id/draw[?preview=1]   POST /api/admin/matches/:id/forfeit
-POST  /api/webhooks/stripe                     POST /api/dev/login                   (outside production only)
+apps/
+  purse/           Purse API: Hono on Node 22, Drizzle + postgres, Zod. Owns the Purse database.
+  purse-embed/     the iframe flows (sign-in, identity, wallet, entry, rewards): a static export the API serves under /embed
+  purse-console/   the operator console: Next.js on its own origin, talks to the API's /console routes server-to-server
+  sideout/         Sideout: Next.js App Router, Tailwind 4, a PWA. Owns the Sideout database.
+packages/
+  purse-sdk/       @purse/sdk     the partner client: mounts the iframe, runs the handshake, verifies webhooks
+  purse-types/     @purse/types   error taxonomy, resource shapes, the eligibility vocabulary, the iframe protocol
+  ui/              @sideout/ui    design tokens, Tailwind theme, the dense primitives
+  ids/ db/ logger/ config/        @repo/*: typed-prefix ids, connection and migration helpers, JSON logs, lint and tsconfig presets
+docker/            the compose Postgres init, and the demo-reset job image
+docs/              system-spec.md, decisions.md, providers.md, deploy.md, screenshots/
+test/              repository-level tests: the boundary rule, env isolation, the Dockerfiles' shape
 ```
 
-Sideout's environment, beyond the database URLs (`apps/sideout/.env.example`):
-`SESSION_SECRET` (32+ chars, required in production), `SMS_PROVIDER=log` (outside production
-only; production without a provider refuses sign-in), `TRUSTED_PROXY_HOPS` (Railway: 1),
-`STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (together or not at all; unset outside
-production selects the dev donation provider, unset in production refuses registration), and
-`RESERVATION_TTL_MINUTES` (default 30: how long a registration whose donation is still
-pending holds its place), and `AUTH_CODE_GLOBAL_CAP` (default 600: sign-in codes one instance
-sends per ten minutes, the SMS budget). The SMS provider and the Stripe account are the
-captain's calls before public deploy ([`docs/decisions.md`](docs/decisions.md)).
+Checks: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`. CI runs those against a
+Postgres service, then migrates, seeds and reconciles a Purse database (a failing
+invariant fails the build), runs the console's Playwright smoke, and starts the API to run
+Sideout's integration walk and the two end-to-end flows against it.
 
-Send `X-Request-Id: anything-you-like` to either and it comes back on the response and in
-that service's JSON log line, which is how a Sideout request will be traced into the Purse
-calls it makes.
+## The architecture, and the four rules
 
-`pnpm db:setup` takes `--admin-url` (or `DATABASE_ADMIN_URL`) for a Postgres that is not
-the local default. `apps/*/.env.example` are the templates; `apps/purse/src/env.ts` is the
-authoritative list for Purse, and [`docs/decisions.md`](docs/decisions.md) (phase 3, "Rate
-limits") notes where the template lags it.
-
-## The API
-
-Purse's public API is `/v1` (spec 4.7): the secret key in `Authorization: Bearer sk_...`,
-`Idempotency-Key` on every mutation, `{ data }` or
-`{ error: { type, code, message, detail? } }` with the sealed error types
-(`invalid_request`, `authentication_error`, `permission_error`, `not_eligible`,
-`insufficient_funds`, `invalid_state`, `conflict`, `rate_limited`, `internal_error`).
-Amounts are decimal strings of minor units. A replay of a key returns the stored response
-and creates nothing (`Idempotent-Replayed: true`); the same key with a different request
-is a `conflict`.
-
-```sh
-KEY=sk_sandbox_...   # from db:seed --print-keys
-curl -s localhost:4000/v1/users -H "Authorization: Bearer $KEY" -H "Idempotency-Key: u1" \
-  -H "content-type: application/json" \
-  -d '{"externalId":"sideout:ana","displayName":"Ana Reyes","dateOfBirth":"1994-03-12","location":{"declaredRegion":"US-TX"}}'
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ sideout-production-5898.up.railway.app         Sideout (Next.js)     │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │ events, pools, bracket, score entry, standings, impact         │  │
+│  │  ┌──────────────────────────────────────────────────────────┐  │  │
+│  │  │ <iframe src="purse-production-b87b.up.railway.app/embed">│  │  │
+│  │  │  sign-in, identity, wallet, entry confirm, rewards       │  │  │
+│  │  │  typed postMessage, exact origin, nonce-checked           │  │  │
+│  │  └──────────────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│  Sideout server: tournaments, teams, the score consensus             │
+│  Sideout DB (Postgres)                     ← Purse has no access     │
+└──────────────┬───────────────────────────────────────────────────────┘
+               │ HTTPS, secret key, server to server, Idempotency-Key on every write
+               │ webhooks back, HMAC-signed
+┌──────────────▼───────────────────────────────────────────────────────┐
+│ purse-production-b87b.up.railway.app           Purse (Hono / Node)   │
+│  /v1 API · contest engine · ledger · settlement · eligibility        │
+│  /embed (the iframe app) · webhook dispatcher · /console API         │
+│  Purse DB (Postgres)                       ← Sideout has no access   │
+└──────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ purse-console-production.up.railway.app   the operator console       │
+│  (its own origin and sessions; no database; calls /console/* above)  │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-The routes: `POST /users` (create or upsert by `externalId`), `GET /users/:id`,
-`POST /users/:id/verification` (starts the identity flow through the provider seam and
-returns a five-minute, single-use embed token), `GET /users/:id/wallet`,
-`POST /users/:id/credits` (operator-scoped keys only); `POST /contests`,
-`GET /contests/:id`, `POST /contests/:id/{open,lock,start,finish}`,
-`POST /contests/:id/entries` (evaluates eligibility, escrows the entry),
-`DELETE /contests/:id/entries/:userId`, `POST /contests/:id/scores`,
-`GET /contests/:id/preview` (the frozen settlement preview with its payout hash),
-`POST /contests/:id/close` (requires that hash), `POST /contests/:id/void`,
-`GET /contests/:id/results`; `POST /embed/tokens`; `/webhooks/endpoints` (create with the
-signing secret shown once, list, read, `PATCH`, `rotate`, the delivery log per endpoint) and
-`/webhooks/deliveries/:id` (read, `replay`); `/origins` (the embed allowlist);
-`GET /internal/reconcile`, `/internal/webhooks/deliveries/:id` (read, `replay`) and
-`GET /health` (also at the root). The embed's own routes, `/v1/embed/*` on a publishable key
-and the Purse session cookie, back the flows the SDK mounts. Every endpoint and every error
-type is recorded in `apps/purse/test/contract/fixtures.json`.
+1. **Separate databases.** Two logical databases on one Postgres, two connection strings
+   that are never loaded into the same process (`test/env-isolation.test.ts` proves each
+   app's `loadEnv` ignores the other's), no foreign key across the line. Sideout holds
+   Purse ids as opaque strings and nothing Purse-shaped otherwise: no column of Sideout's
+   holds a `POINTS` amount, and a schema test keeps it that way.
+2. **The secret key never reaches a browser.** `sk_` keys are used server to server; the
+   `pk_` publishable key only bootstraps the iframe. Sideout's build greps its client
+   bundle for `sk_` and fails; so does the console's for `sk_`, `whsec_` and session
+   tokens. The one component that imports `@purse/sdk` is `PurseGate`, and a lint rule
+   plus a test hold it there.
+3. **Sideout owns the outcome, Purse owns the settlement.** Sideout decides what the
+   score is with its own consensus rules and pushes the result; Purse decides what it
+   pays, and refuses to settle a contest that a human has not closed behind a frozen
+   preview.
+4. **Every Purse mutation is idempotent.** Every write takes an `Idempotency-Key`. A
+   replay returns the stored response with `Idempotent-Replayed: true` and creates
+   nothing; the same key with a different body is a `conflict`. Sideout's `confirmed`
+   state is literally a replay: the proof that Purse durably holds a score is that
+   sending it again changes nothing.
 
-Webhooks (spec 4.9) are signed `Purse-Signature: t=<unix>,v1=<hex>` (HMAC-SHA256 over
-`"{t}.{rawBody}"`), retried eight times over roughly a day, then `dead`, with every attempt
-in the delivery log; `verifyWebhook` from `@purse/sdk` is the receiver's check. The SDK
-(`@purse/sdk`) mounts the identity, wallet, entry-confirm, rewards and sign-in flows in an
-iframe on the Purse origin with an exact-origin, nonce-checked message protocol from
-`@purse/types`, and reads user state headlessly.
-
-Eligibility (spec 4.5) is a pure evaluator over a versioned, stored ruleset; the seeded
-version is the spec's own example, in which `POINTS` is permitted everywhere with no
-verification and `CREDIT` is region-gated, verification-gated and stake-limited. Every
-entry attempt the evaluator judges leaves a decision row carrying the ruleset version (a
-contest that is not open or is full is refused before it runs, under the version the
-contest pins). Identity, geolocation and risk are provider seams with deterministic dev
-implementations:
-[`docs/providers.md`](docs/providers.md) names the vendor each stands in for.
+The monorepo makes the boundary a lint rule rather than a physical fact (decision D1):
+Sideout may import from Purse only `@purse/sdk` and `@purse/types`, Purse imports nothing
+from Sideout, the embed and console apps import none of the API's source. `packages/config/eslint/boundary.js`
+enforces it and `test/boundary.test.ts` proves the rule fires.
 
 ## How a score becomes a payout
 
-The consensus half (two teams agreeing on a scoreline) is Sideout's and lands in phase 7.
-The Purse half is in place: a contest moves through spec 4.3's lifecycle
-(`draft -> open -> locked -> in_progress -> awaiting_settlement -> settling -> settled`,
-with `cancelled` for a contest holding nothing and `voided` for one whose entries are all
-refunded) through one `transition()` function (`apps/purse/src/contests/transition.ts`)
-that takes `SELECT ... FOR UPDATE` on the contest row, validates the move against a table
-the database also enforces, and writes `audit_log` with the row before and after. Nothing
-else assigns `contests.state`.
-
-Entering a contest escrows the entry amount in the same transaction as the participant
-row (`debit user_wallet / credit contest_escrow`); withdrawing before lock refunds it.
-Scores are append-only rows with a `superseded_by` chain; a finished attempt is final.
-When every entered participant has a finished score the contest moves to
-`awaiting_settlement` on its own, and a contest with `settlement_policy = auto` settles
-there and then. Every Sideout tournament ships on `operator_close`: a human fetches the
-preview, which is computed by the settlement engine and hashed, and closes with that hash.
-The close recomputes under the row lock; if anything changed since the preview the hashes
-differ and the close is refused before a unit moves. What lands is one journal entry:
+**The consensus** (spec 5.2, `apps/sideout/src/domain/consensus.ts`, pure). Both teams
+submit a scoreline independently. A submission is canonicalised (sets in order, sides
+normalised) and hashed; agreement is equality of hashes, never a comparison of who said
+what.
 
 ```
-Settle a contest (one entry, many lines, must balance)
-  debit  contest_escrow:cnt_y    400 POINTS
-  credit user_wallet:usr_a       200 POINTS   1st
-  credit user_wallet:usr_b       100 POINTS   =2nd
-  credit user_wallet:usr_c       100 POINTS   =2nd
+awaiting_first
+  └─ one team submits ─────────────────► awaiting_second
+        ├─ the other submits the same hash ──► agreed
+        └─ the other submits a different hash ► disputed
+disputed ──── organizer resolves ──────────► agreed
+agreed ────── Purse accepts the scores ────► pushed_to_purse
+pushed_to_purse ── Purse's replay confirms ► confirmed
 ```
 
-plus one `contest_results` row per entrant (placement, score, payout, the entry that paid
-it), written once. Twenty-five simultaneous closes produce exactly one of those; the rest
-find the contest settled (`apps/purse/test/contests/concurrency.test.ts`).
+Only `agreed` may push to Purse, and only under the idempotency key minted on entering
+`agreed`. Submissions are append-only rows, superseded and never edited. The match goes
+`final` inside the same transaction as `agreed`, and the winner is advanced in the
+bracket; a `disputed` match blocks the tournament's close until an organizer picks a
+reading. What Purse receives is not the set scores: each player's team's match wins so far
+as a running score after every agreed match, and once every match is final, one finished
+score per player derived from the final standings (a strictly better placement is a
+strictly higher score; the two players of a team share one), so Purse's ranking reproduces
+Sideout's standings exactly.
 
-## The rounding rule
+**The contest** (spec 4.3, `apps/purse/src/contests/`). The tournament is mirrored as a
+contest in `POINTS` with a 100-point stake per player; linking a Purse account grants
+1,000 welcome points once. The contest moves through one `transition()` function that
+takes `SELECT ... FOR UPDATE` on its row, checks the move against a table the database
+also enforces in a trigger, and writes the audit log:
 
-The settlement engine (`apps/purse/src/settlement/`) is a pure function: no database, no
-clock, no randomness, and the same input gives the same output byte for byte whatever
-order the entrants arrive in. Every share is computed with floor division in `bigint`, and
-whatever the floors leave over is handed out one minor unit at a time to the best
-placement first, then the next, and so on; within a tie group, by ascending `userId`.
-Nothing is ever lost. 100 points split three ways is **34 / 33 / 33**, never 33 / 33 / 33
-with a unit missing; `[50, 30, 20]` of 101 points is **51 / 30 / 20**. Conservation
-(`sum(payout) === escrowTotal`, exactly), non-negativity, placement monotonicity and
-determinism under permutation are `fast-check` properties over thousands of generated
-contests (`apps/purse/test/settlement/settle.test.ts`), not examples. The full rule set,
-including how each prize structure and tie-break rule behaves, is in
-`apps/purse/src/settlement/README.md`.
+```
+draft → open → locked → in_progress → awaiting_settlement → settling → settled
+                  └────────── voided (every stake refunded) ──────┘        cancelled (held nothing)
+```
+
+Registration opening creates and opens it; each player confirms their own entry in the
+iframe, which escrows the stake; going live locks and starts it; the final scores move it
+to `awaiting_settlement` by itself. Then the organizer fetches the preview, which the
+settlement engine computes and hashes, and closes with that hash. The close recomputes
+under the row lock; if anything changed since the preview the hashes differ and nothing
+moves. Twenty-five simultaneous closes produce exactly one settlement
+(`apps/purse/test/contests/concurrency.test.ts`).
+
+**The entry.** This is the real settlement of the seeded Low Tide Open (16 teams, so 32
+players and 3,200 points in escrow; no sponsor prizes, so the default 50 / 30 / 20 split,
+which each team's two players share, and the two semifinal losers tie for third), as the
+console shows it:
+
+![The settle entry in the ledger explorer: nine lines, the balance check re-derived from the rows](docs/screenshots/console-ledger-entry-1280.png)
+
+```
+je_01a0b60e-d641-7483-87d3-d15d4362f8d8   settle   idempotency key contest:cnt_…17560e7a:settle
+
+  #  account (kind, owner)                         side     amount
+  1  acct_…b3af  contest_escrow  Low Tide Open     debit    3,200 POINTS
+  2  acct_…9d7e  user_wallet     Beatriz Nogueira  credit     800 POINTS   1st
+  3  acct_…9e4b  user_wallet     Sienna Holloway   credit     800 POINTS   1st
+  4  acct_…a416  user_wallet     Ezra Cohen        credit     480 POINTS   2nd
+  5  acct_…a4d0  user_wallet     Ines Castellanos  credit     480 POINTS   2nd
+  6  acct_…9a40  user_wallet     June Park         credit     160 POINTS   =3rd
+  7  acct_…9b17  user_wallet     Ravi Menon        credit     160 POINTS   =3rd
+  8  acct_…a740  user_wallet     Greta Vance       credit     160 POINTS   =3rd
+  9  acct_…a805  user_wallet     Silas Petrov      credit     160 POINTS   =3rd
+                                                   3,200 = 3,200   balanced
+```
+
+Before it, each of the 32 entries was its own two-line entry (`debit user_wallet 100 /
+credit contest_escrow 100`), and each welcome grant a two-line `issue` (`debit
+promo_liability 1,000 / credit user_wallet 1,000`), which is why the explorer above shows
+promo liability at −53,000 against 40,700 in wallets and 12,300 in escrow. One
+`contest_results` row per entrant (placement, score, payout, the entry that paid it) is
+written once, in the same transaction, and the `contest.settled` webhook tells Sideout,
+whose profile screen reads the wallet back live rather than storing it.
 
 ## How the ledger cannot drift
 
-The short version, until the full write-up lands with the last phase. Purse's ledger
-(`apps/purse/src/ledger/`) is an immutable double-entry journal: every entry has at least
-two lines, balances per asset inside the transaction that writes it (checked by the service
-before it writes and by a deferred constraint trigger at commit, so a writer that bypasses
-the service is held to the same rules), and is never updated or deleted. That last part is
-a property of the database role the API runs as, not a convention in the code: `purse_app`
-holds `SELECT` and `INSERT` on the journal and nothing else, and a test expects the
-`UPDATE` to fail. Mistakes are corrected by posting a reversing entry. Balances are derived
-by summing lines, so any balance at any past moment is one `WHERE posted_at <= $1` away.
+The ledger (`apps/purse/src/ledger/`) is an immutable double-entry journal. Every entry
+has at least two lines, in one asset, and debits equal credits; balances are derived by
+summing lines, so the balance at any past instant is one `WHERE posted_at <= $1` away.
+`postEntry` checks the rules before it writes, and a deferred constraint trigger checks
+them again at commit, so a writer that bypasses the service is held to the same rules.
+Wallets and escrows may not go negative; sorted `FOR UPDATE` locks make that hold under
+concurrency.
 
-`reconcile()` (`apps/purse/src/ledger/reconcile.ts`) checks the seven invariants from
-spec 4.2.4 (the journal nets to zero per asset, every entry balances, no wallet is
-negative, settled and voided escrows are empty, a settled contest's results sum to what it
-escrowed, snapshots equal derived balances, every contest entry links to a matching escrow
-entry). It runs in CI against the seeded database and is exposed at
-`GET /internal/reconcile`. The test worth reading is
-`apps/purse/test/ledger/random-ops.test.ts`: ten thousand seeded random operations
-(issue, escrow, refund, settle, void, replay, reversal, attempted overdraft, and the
-contest operations: create, open, lock, start, enter, withdraw, score, close behind the
-preview hash, void, cancel), many fired concurrently, checked against an independent
-replay of every accepted line and every contest's escrow, and then `reconcile()` must come
-back clean.
+Nothing is ever updated or deleted, and that is a fact about the database role, not a
+convention: the API runs as `purse_app`, which holds `SELECT` and `INSERT` on the journal
+and nothing else. A test issues the `UPDATE` and expects Postgres to refuse it; the API
+refuses to boot on a role that could. Corrections are reversing entries. The migrator
+role that owns the tables never runs in the API process (the container entrypoint drops
+its connection string before the server starts).
 
-## Checks
+`reconcile()` checks the seven invariants of spec 4.2.4 and records every run:
 
-```sh
-pnpm typecheck   # tsc -b over every project reference
-pnpm lint        # eslint, including the Sideout/Purse boundary rule and no-console / no-any / no-empty-catch
-pnpm test        # vitest, one project per package; the app projects migrate their own *_test databases
-pnpm build       # tsup for Purse, next build for Sideout
-```
+| | Invariant |
+|---|---|
+| I1 | the journal nets to zero per asset |
+| I2 | every entry balances |
+| I3 | no user wallet is negative |
+| I4 | settled and voided contests have zero escrow |
+| I5 | a settled contest's payouts equal what it escrowed |
+| I6 | every balance snapshot equals its derived balance |
+| I7 | every contest entry links to a matching escrow entry |
 
-CI (`.github/workflows/ci.yml`) runs all four against a `postgres:16` service container,
-then migrates and seeds Purse's database and runs `reconcile` against it; a failing
-invariant fails the build.
+It runs every 15 minutes on the demo, in CI against the seeded database, and from the
+console's invariant panel; Purse's `/health` reports the newest run and answers 503 while
+it failed, which is what pages.
+
+The test I would read first is `apps/purse/test/ledger/random-ops.test.ts`: ten thousand
+seeded random operations (issue, escrow, refund, settle, void, replay, reversal, attempted
+overdraft, and every contest operation: create, open, lock, start, enter, withdraw, score,
+close behind the preview hash, void, cancel), many fired concurrently, checked against an
+independent replay of every accepted line, and then `reconcile()` must come back clean.
+`LEDGER_RANDOM_OPS=500 LEDGER_RANDOM_SEED=1` runs a short one; CI refuses fewer than the
+full ten thousand.
+
+## The rounding rule
+
+Every share is computed with floor division in `bigint`. Whatever the floors leave over is
+handed out one minor unit at a time to the best placement first, then the next, and within
+a tie group by ascending user id. Nothing is lost and nothing is invented. 100 points
+split three ways is **34 / 33 / 33**, never 33 / 33 / 33 with a unit missing; `[50, 30,
+20]` of 101 points is **51 / 30 / 20**.
+
+The settlement engine (`apps/purse/src/settlement/`) is a pure function: no database,
+clock or randomness, and the same input gives the same output byte for byte whatever order
+the entrants arrive in. Conservation (`sum(payout) === escrowTotal`, exactly),
+non-negativity, placement monotonicity and determinism under permutation are `fast-check`
+properties over thousands of generated contests (`apps/purse/test/settlement/settle.test.ts`),
+not examples. The prize structures and the tie rules are in
+[`apps/purse/src/settlement/README.md`](apps/purse/src/settlement/README.md).
+
+## The provider seams
+
+Where something cannot be built honestly I built the seam and named the vendor. Licensing
+and real KYC are deliberately out of scope: this is an architecture exercise, not a
+licensed operator, and nothing here is legal tender.
+
+| Seam | Interface | Dev implementation | Stands in for |
+|---|---|---|---|
+| Identity | `IdentityProvider.verify(user) → { outcome: verified \| rejected \| pending, providerRef }`, called from `POST /v1/users/:id/verification` between two short transactions, never under a lock | deny-listed external ids are `rejected`, pending-listed stay `pending`, allow-listed are `verified`; anyone else is `verified` with a name and a date of birth and `rejected` without. The reference is a digest, never anything about the person. | **Persona** or **Socure**: a hosted inquiry in the iframe, finished by webhook. The table has no column that could hold a document. |
+| Geolocation | `GeoProvider.resolve({ declaredRegion?, ip? }) → { region, confidence, source }`, on user upsert and on every entry that carries a location | a declared region at face value (0.6); otherwise a lookup of RFC 5737 / 6598 documentation prefixes (`203.0.113.x → US-TX`, ...) at 0.9; anything else resolves to no region, which the evaluator reports as `region_unknown` | **GeoComply**: a device-side fix with a licensed geofence and a spoofing verdict |
+| Risk | `RiskProvider.assess(transaction) → { decision: allow \| review \| deny, signals[] }`, alongside the pure evaluator at entry, with the journal's velocity and the user's open flags | the spec's velocity and duplicate-account rules as signals; any signal answers `review`, which becomes an operator flag and lets the entry through; it never answers `deny` | **Sardine**: device, behaviour and payment signals scored in real time |
+
+Each is selected by `IDENTITY_PROVIDER` / `GEO_PROVIDER` / `RISK_PROVIDER`; only `dev`
+exists, and a production process refuses to start on it unless `ALLOW_DEV_PROVIDERS=true`
+is set on purpose, as it is on the demo. The eligibility rules themselves are real: a
+versioned JSON ruleset evaluated by a pure function, with the ruleset version stored on
+every decision, and the seeded version is the spec's own example (`POINTS` free to enter
+anywhere, `CREDIT` region-gated, verification-gated and stake-limited).
+[`docs/providers.md`](docs/providers.md) has the full table and what crosses each seam.
+
+## What is not built, and why
+
+- **No real money.** The contest currency is closed-loop: `POINTS` for free entry and
+  `CREDIT` for sponsor-funded prizes redeemable for goods. No cash prizes, no withdrawal,
+  no peer-to-peer wagering. The ledger, the escrow model and the settlement math are the
+  same as a real-money system's; swapping the asset for legal tender is a licensing
+  problem, not an architecture problem.
+- **Donations are real and separate.** The charity dollars go through Stripe and never
+  enter the contest ledger: a donation row is not a journal line, a sponsor's prize
+  contribution shapes the split but never sits in escrow, and the public responses are
+  built from a hand-listed shape that omits every `purse_*` field. (The demo has no
+  Stripe account yet, so it takes free registrations only.)
+- **No real identity, geolocation or risk vendor**, per the table above; and no SMS
+  provider is chosen, so the demo's phone sign-in answers 503 and the end-to-end flows
+  mint their sessions with the deployment's own secret.
+- **One replica of everything**: the rate limiter and the webhook dispatcher are
+  in-process. Custom domains, double elimination, signed device attestations, SSE, and the
+  rest of spec section 12 are listed as follow-ups in `docs/decisions.md`.
+
+## Where I departed from the spec's defaults
+
+Every section 3 default was taken (`docs/decisions.md` has the table) with these
+exceptions and additions:
+
+- **D12 and section 10: Railway's own domains, no custom DNS.** The spec defaults to
+  `sideout.<yourdomain>` and friends; the demo uses `*.up.railway.app` for now. Every
+  origin is a variable, so a custom domain is a DNS change and a variable change. One
+  consequence: `up.railway.app` is on the public suffix list, so Sideout and Purse are
+  different *sites*, which is the cross-site case the embed session cookie was built for
+  and the deployed flows exercise.
+- **D11: polling stayed.** The default was polling for v1 and SSE in polish; every live
+  screen still polls at 5 s, and SSE is a follow-up.
+- **D2, plus one thing the spec did not ask for.** Two logical databases as specified,
+  but Purse connects as two roles: `purse_migrator` owns the tables and runs migrations,
+  seeds and the demo reset; `purse_app`, the runtime, owns nothing and cannot rewrite
+  the journal. The append-only guarantee is Postgres's, not mine.
+- **Cron as jobs, not timers.** The reconcile and the nightly reset are Railway cron
+  services rather than timers in the API, so a restart does not reset the schedule and
+  the reset's owner-role credentials never sit in the API process.
+- **A failing invariant is a 503.** "Pages you" is implemented as the status code of
+  Purse's `/health`, so any uptime check on the code alone pages, and Railway will not
+  switch a deploy onto a ledger that does not reconcile.
+- **One spec value changed.** `--text-tertiary` is `#7D8591`, not the spec's `#646C79`,
+  which failed AA on every surface; the contrast test in `@sideout/ui` would fail on the
+  original.

@@ -81,4 +81,10 @@ describe('env', () => {
     expect(configured.donationProvider).toBe('stripe');
     expect(loadEnv(PRODUCTION).donationProvider).toBe('none');
   });
+
+  it('exposes the optional Stripe publishable key to the browser side and refuses one of the wrong shape', () => {
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL }).stripePublishableKey).toBeUndefined();
+    expect(loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_abc123' }).stripePublishableKey).toBe('pk_test_abc123');
+    expect(() => loadEnv({ SIDEOUT_DATABASE_URL: DEV_URL, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'sk_test_abc123' })).toThrow(/publishable key/);
+  });
 });

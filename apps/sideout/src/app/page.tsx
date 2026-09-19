@@ -19,7 +19,8 @@ export const metadata: Metadata = { title: 'Live play' };
 export default async function HomePage() {
   const { app, now, clock } = await pageContext();
   const summaries = await listTournamentSummaries(app.db, clock);
-  const live = summaries.filter((s) => s.tournament.status === 'live');
+  // The event that started most recently comes first: what is happening now, ahead of one still open from yesterday.
+  const live = summaries.filter((s) => s.tournament.status === 'live').sort((a, b) => b.tournament.startsAt.localeCompare(a.tournament.startsAt));
   const strips = await Promise.all(
     live.map(async (summary) => {
       const [matches, all] = await Promise.all([listLiveMatches(app.db, summary.tournament.id), listMatchViews(app.db, summary.tournament.id)]);
@@ -28,8 +29,9 @@ export default async function HomePage() {
   );
   const upcoming = summaries.filter((s) => UPCOMING_STATUSES.includes(s.tournament.status)).sort((a, b) => a.tournament.startsAt.localeCompare(b.tournament.startsAt));
   const past = summaries.filter((s) => PAST_STATUSES.includes(s.tournament.status)).sort((a, b) => b.tournament.startsAt.localeCompare(a.tournament.startsAt));
-  const featured: TournamentSummary | undefined = strips[0]?.summary ?? upcoming[0];
-  const otherUpcoming = upcoming.filter((s) => s !== featured);
+  const featured: TournamentSummary | undefined = live[0] ?? upcoming[0];
+  // Every other live event keeps a card ahead of the upcoming ones: a strip shows only while something is on court or awaiting a result.
+  const otherUpcoming = [...live.filter((s) => s !== featured), ...upcoming.filter((s) => s !== featured)];
   const nowMs = now.getTime();
 
   return (
@@ -55,7 +57,7 @@ export default async function HomePage() {
         {otherUpcoming.length > 0 ? (
           <section aria-labelledby="upcoming-heading">
             <h2 id="upcoming-heading" className="type-label mb-3 text-text-tertiary">
-              Upcoming
+              {otherUpcoming.some((s) => s.tournament.status === 'live') ? 'Also live, and upcoming' : 'Upcoming'}
             </h2>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {otherUpcoming.map((s) => (

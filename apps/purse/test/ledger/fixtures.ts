@@ -21,6 +21,7 @@ import {
   operatorFlags,
   operatorSessions,
   operators,
+  reconcileRuns,
   rulesets,
   tenantOrigins,
   tenants,
@@ -76,6 +77,7 @@ export async function wipeLedger(migrator: Database): Promise<void> {
   await migrator.db.delete(tenants);
   await migrator.db.delete(operatorSessions);
   await migrator.db.delete(operators);
+  await migrator.db.delete(reconcileRuns);
 }
 
 export type CreateUserOptions = {

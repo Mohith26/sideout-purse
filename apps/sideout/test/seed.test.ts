@@ -21,6 +21,8 @@ import { loadPoolStage, standingsForStage } from '../src/server/standings';
 import { cookieFor, data, expectNoPurseKeys, params, request, testDatabase, truncateAll, type Database } from './helpers';
 
 const ANCHOR = new Date('2026-09-19T16:00:00.000Z');
+/** Every seeded slug the public API lists: a draft is unlisted and answers not found. */
+const PUBLIC_SLUGS = Object.values(SEED_SLUGS).filter((slug) => slug !== SEED_SLUGS.draft);
 
 describe('seed dataset', () => {
   let database: Database;
@@ -58,13 +60,21 @@ describe('seed dataset', () => {
     expect(await database.db.select().from(teams)).toHaveLength(dataset.teams.length);
   });
 
-  it('seeds one tournament per required status, a charity, organizers, players and three sponsors', async () => {
+  it('seeds one tournament per status (every status at least once), a charity, organizers, players and the sponsors', async () => {
     const rows = await database.db.select().from(tournaments);
     expect(rows.map((t) => [t.slug, t.status]).sort()).toEqual([
       [SEED_SLUGS.settled, 'settled'],
       [SEED_SLUGS.upcoming, 'registration_open'],
       [SEED_SLUGS.live, 'live'],
+      [SEED_SLUGS.draft, 'draft'],
+      [SEED_SLUGS.drawn, 'registration_closed'],
+      [SEED_SLUGS.cancelled, 'cancelled'],
+      [SEED_SLUGS.communityCup, 'registration_open'],
+      [SEED_SLUGS.boardwalk, 'live'],
+      [SEED_SLUGS.duneCup, 'live'],
     ].sort());
+    // Every tournament status (acceptance criterion 29): awaiting_settlement is the one step an organizer takes before the close, which the Organizer flow drives.
+    expect(new Set(rows.map((t) => t.status))).toEqual(new Set(['draft', 'registration_open', 'registration_closed', 'live', 'settled', 'cancelled']));
     expect(rows.every((t) => t.purseContestId === null && t.purseExternalId.startsWith('sideout-contest-'))).toBe(true);
     expect(dataset.charities).toHaveLength(1);
     expect(dataset.users.filter((u) => u.role === 'organizer')).toHaveLength(2);
@@ -73,7 +83,19 @@ describe('seed dataset', () => {
     expect(new Set(dataset.users.map((u) => u.phoneE164)).size).toBe(dataset.users.length);
     expect(new Set(dataset.users.map((u) => u.purseExternalId)).size).toBe(dataset.users.length);
     const sponsorRows = await database.db.select().from(sponsors);
-    expect(sponsorRows.map((s) => s.tier).sort()).toEqual(['court', 'presenting', 'prize']);
+    expect(sponsorRows.map((s) => s.tier).sort()).toEqual(['court', 'presenting', 'prize', 'prize']);
+    // The free-entry event: registered teams with no donation row at all, one complete pair still forming, one captain waiting on a partner.
+    const [cup] = rows.filter((t) => t.slug === SEED_SLUGS.communityCup);
+    expect(cup?.entryDonationCents).toBe(0n);
+    const cupTeams = await database.db.select().from(teams).where(eq(teams.tournamentId, cup?.id ?? ''));
+    expect(cupTeams.map((t) => t.status).sort()).toEqual(['forming', 'forming', 'registered', 'registered', 'registered']);
+    expect(await database.db.select().from(donations).where(and(eq(donations.tournamentId, cup?.id ?? ''), isNotNull(donations.teamId)))).toHaveLength(0);
+    // The drawn event has its pools and nothing played; the mid-play event has four scheduled pool matches left.
+    const drawnMatches = await database.db.select().from(matches).innerJoin(tournaments, eq(tournaments.id, matches.tournamentId)).where(eq(tournaments.slug, SEED_SLUGS.drawn));
+    expect(drawnMatches.map((r) => r.matches.status)).toEqual(Array<string>(12).fill('scheduled'));
+    const boardwalk = await database.db.select().from(matches).innerJoin(tournaments, eq(tournaments.id, matches.tournamentId)).where(eq(tournaments.slug, SEED_SLUGS.boardwalk));
+    expect(boardwalk.map((r) => r.matches.status).sort()).toEqual([...Array<string>(8).fill('final'), ...Array<string>(4).fill('scheduled')]);
+    expect(boardwalk.filter((r) => r.matches.status === 'scheduled').every((r) => r.matches.teamAId !== null && r.matches.teamBId !== null && r.matches.poolId !== null)).toBe(true);
   });
 
   it('every counted team has exactly two members with one captain', async () => {
@@ -117,7 +139,7 @@ describe('seed dataset', () => {
     }
   });
 
-  it('every played match carries an agreed consensus with a minted key; the live event holds one dispute and one first reading', async () => {
+  it('every played match carries an agreed consensus with a minted key; the flagship holds one dispute and one first reading, the Dune Cup a disputed final', async () => {
     const matchRows = await database.db.select().from(matches);
     const consensusRows = await database.db.select().from(matchConsensus);
     const submissionRows = await database.db.select().from(scoreSubmissions);
@@ -144,15 +166,22 @@ describe('seed dataset', () => {
         expect(subs).toHaveLength(0);
       }
     }
-    expect(consensusRows.filter((c) => c.state === 'disputed')).toHaveLength(1);
+    const disputed = consensusRows.filter((c) => c.state === 'disputed');
+    expect(disputed).toHaveLength(2);
     expect(consensusRows.filter((c) => c.state === 'awaiting_second')).toHaveLength(1);
     expect(new Set(consensusRows.map((c) => c.idempotencyKey).filter((k) => k !== null)).size).toBe(consensusRows.filter((c) => c.state === 'agreed').length);
-    // The dispute is in the organizer's queue.
+    // One dispute per event: the flagship's quarterfinal and the Dune Cup's final (its bracket is otherwise complete, so resolving it is all that stands before the close).
+    const disputedMatches = matchRows.filter((m) => disputed.some((c) => c.matchId === m.id));
+    const [dune] = await database.db.select().from(tournaments).where(eq(tournaments.slug, SEED_SLUGS.duneCup));
+    const duneFinal = disputedMatches.find((m) => m.tournamentId === dune?.id);
+    expect(duneFinal).toMatchObject({ bracketPosition: 3, nextMatchId: null });
+    expect(matchRows.filter((m) => m.tournamentId === dune?.id && m.id !== duneFinal?.id).every((m) => m.status === 'final')).toBe(true);
+    // Both disputes are in the organizer's queue.
     const [organizer] = await database.db.select().from(users).where(eq(users.phoneE164, SEED_ORGANIZER_PHONE));
     if (organizer === undefined) throw new Error('organizer missing');
     const queue = await data<{ disputes: Array<{ match: { id: string }; consensus: { differences: unknown[] } }> }>(await listDisputes(request('GET', '/x', { cookie: cookieFor(organizer) })));
-    expect(queue.disputes).toHaveLength(1);
-    expect(queue.disputes[0]?.consensus.differences).toHaveLength(1);
+    expect(queue.disputes.map((d) => d.match.id).sort()).toEqual(disputedMatches.map((m) => m.id).sort());
+    expect(queue.disputes.every((d) => d.consensus.differences.length === 1)).toBe(true);
     expectNoPurseKeys(queue);
     // A Purse that was never reached: the contest columns say so, and a reseed leaves them alone.
     expect((await database.db.select().from(tournaments)).every((t) => t.purseContestId === null && t.purseContestState === null)).toBe(true);
@@ -202,7 +231,7 @@ describe('seed dataset', () => {
   });
 
   it('impact figures equal the sum of succeeded donations, and pending or failed ones count for nothing', async () => {
-    for (const slug of Object.values(SEED_SLUGS)) {
+    for (const slug of PUBLIC_SLUGS) {
       const [t] = await database.db.select().from(tournaments).where(eq(tournaments.slug, slug));
       const rows = await database.db.select().from(donations).where(eq(donations.tournamentId, t?.id ?? ''));
       const succeeded = rows.filter((d) => d.status === 'succeeded');
@@ -224,9 +253,10 @@ describe('seed dataset', () => {
     expect(settledRaised.progressPercent).toBe(100);
   });
 
-  it('serves every seeded event through the public API without a single Purse identifier', async () => {
+  it('serves every seeded event but the draft through the public API without a single Purse identifier', async () => {
     const list = await data<{ tournaments: PublicTournament[] }>(await listTournaments(request('GET', '/api/tournaments')));
-    expect(list.tournaments.map((t) => t.slug).sort()).toEqual(Object.values(SEED_SLUGS).sort());
+    expect(list.tournaments.map((t) => t.slug).sort()).toEqual([...PUBLIC_SLUGS].sort());
+    expect((await getTournament(request('GET', '/x'), params({ slug: SEED_SLUGS.draft }))).status).toBe(404);
     expect(list.tournaments.find((t) => t.slug === SEED_SLUGS.live)?.teamCount).toBe(24);
     // Ten paid teams; the lapsed pending reservation holds no place.
     expect(list.tournaments.find((t) => t.slug === SEED_SLUGS.upcoming)?.teamCount).toBe(10);
@@ -237,7 +267,7 @@ describe('seed dataset', () => {
     expect(upcoming.teams.map((t) => t.id)).not.toContain(pendingTeamIds[0]);
     expect(upcoming.teams).toHaveLength(10);
 
-    for (const slug of Object.values(SEED_SLUGS)) {
+    for (const slug of PUBLIC_SLUGS) {
       const detail = await data<PublicTournamentDetail>(await getTournament(request('GET', '/x'), params({ slug })));
       expectNoPurseKeys(detail);
       expect(detail.teams.every((team) => team.members.length === 2 && (team.status === 'registered' || team.status === 'checked_in'))).toBe(true);

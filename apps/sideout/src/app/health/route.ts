@@ -13,6 +13,8 @@ export const dynamic = 'force-dynamic';
 /**
  * Sideout's `/health`, in the same `{ data }` / `{ error }` envelope Purse uses so one
  * uptime check understands both services. Never includes a connection string or key.
+ * `purse` relays what Purse's `/health` says (ruleset version, last reconcile result) or
+ * why it could not be asked; only Sideout's own database being unreachable is a 503.
  */
 export async function GET(request: Request): Promise<Response> {
   const requestId = readOrMintRequestId(request.headers.get(REQUEST_ID_HEADER));
@@ -20,7 +22,9 @@ export async function GET(request: Request): Promise<Response> {
   const headers = { [REQUEST_ID_HEADER]: requestId };
 
   try {
-    const report = await healthReport(database().sql, migrationsFolder(), buildSha(env().buildSha));
+    const config = env();
+    // Purse is probed only when Sideout is configured to reach it (a secret key); otherwise the report says so.
+    const report = await healthReport(database().sql, migrationsFolder(), buildSha(config.buildSha), { apiUrl: config.purse.secretKey === undefined ? undefined : config.purse.apiUrl });
     const body: ApiDataEnvelope<HealthReport> = { data: report };
     log.info('request', { method: 'GET', path: '/health', status: 200 });
     return Response.json(body, { status: 200, headers });
