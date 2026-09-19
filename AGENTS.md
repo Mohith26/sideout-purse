@@ -9,7 +9,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 ## Working here
 
 - Gates: `pnpm typecheck && pnpm lint && pnpm test && pnpm build`. `.no-mistakes.yaml` and
-  `.github/workflows/ci.yml` run the same four; keep them in step.
+  `.github/workflows/ci.yml` run the same four; keep them in step. The public demo and how it
+  is deployed (Railway, three services, one Postgres, two cron jobs) is `docs/deploy.md`.
 - `apps/purse/src/env.ts` is the authoritative list of Purse's variables (`.env.example` is
   the template); the provider seams and the dev identity lists are explained in
   `docs/providers.md`, the rate limit is `RATE_LIMIT_BURST` / `RATE_LIMIT_PER_SECOND`, and
@@ -38,7 +39,20 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 - `PURSE_SECRET_KEY` derives every process key (`apps/purse/src/secrets.ts`); production
   refuses to start without it, elsewhere a stand-in is used. `EMBED_SMS_PROVIDER`,
   `PURSE_EMBED_DIR`, `WEBHOOK_DISPATCHER` and `WEBHOOK_POLL_INTERVAL_MS` are the other
-  phase 4 variables (`env.ts`); `PURSE_TENANT_ORIGINS` is read by the seed only.
+  phase 4 variables (`env.ts`); `PURSE_TENANT_ORIGINS` is read by the seed and the demo
+  reset only (the deployed Sideout origin goes there).
+- `/health` (Purse: `routes/health.ts`) reports the newest `reconcile_runs` row and answers
+  503 while it failed; every reconcile (`scripts/reconcile.ts`, `/internal/reconcile`, the
+  console panel) records one through `ledger/reconcile-runs.ts`. Sideout's `/health`
+  (`src/health/report.ts`) relays Purse's. The console's is `src/app/health/route.ts`.
+- Containers: `apps/*/Dockerfile` (one per service, built from the repository root; the
+  entrypoints migrate first) and `docker/demo-reset/Dockerfile` (the nightly reset job);
+  `test/docker.test.ts` pins their shape. Purse's `tsup` bundles the scripts into `dist/`
+  (`node dist/migrate.js`, `dist/seed.js`, `dist/reconcile.js --source schedule`,
+  `dist/demo-reset.js`); Sideout's `tsup` does the same for its scripts and compiles
+  `next.config.ts` for `next start`. `pnpm --filter <app> demo:reset` (`DEMO_RESET=allow`)
+  is the reset: Purse keeps tenant config and the platform record (`src/db/demo-reset.ts`),
+  Sideout is emptied and reseeded, then mirrored.
 - CI also migrates and seeds Purse's `purse` database, runs
   `pnpm --filter @purse/api reconcile` (a failing invariant fails the build) and, after the
   build, the console's Playwright smoke against that database.
@@ -180,7 +194,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `/v1` outside that stack. Response shapes are the `@purse/types` resources.
 - Contract: `test/contract/contract.test.ts` drives every endpoint and error type and
   compares with `test/contract/fixtures.json`; after a deliberate contract change rerun it
-  with `UPDATE_CONTRACT_FIXTURES=1` and commit the file.
+  with `UPDATE_CONTRACT_FIXTURES=1` and commit the file. `/responsible-play` and `/support`
+  (`routes/pages.ts`) are the two public HTML pages on the Purse origin.
 - A sandbox key locally: `pnpm --filter @purse/api db:seed -- --print-keys` prints the seed
   keys' plaintext the one time they are created; `-- --print-keys --rotate-keys` revokes
   and reissues them. Then `curl -H "Authorization: Bearer sk_sandbox_..." -H
@@ -204,6 +219,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `db:seed` script. Follow the conventions in each schema file's header (typed-prefix ids
   with a CHECK via `idCheck`, `timestamptz`, `bigint` minor units with an explicit `asset`).
 - New id prefixes go in `packages/ids/src/index.ts`, nowhere else.
+- Writes to `.env*` files (the templates included) are denied to the automated pipeline;
+  `apps/*/src/env.ts` and `docs/deploy.md` are where variables are documented.
 - Tokens live only in `packages/ui/src/styles/tokens.css`; the Tailwind mapping is
   `theme.css`, primitives are plain CSS in `components.css`. The contrast test parses
   `tokens.css`, so a colour change that fails AA fails the build.
@@ -253,7 +270,10 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   through `server/public-shape.ts`, which lists fields by hand and omits every `purse_*`.
 - Seed: `src/db/seed/build.ts` is pure and uses the draw engine and scoreline rules, and
   gives every played match its consensus rows; `write.ts` upserts by id, leaving the Purse
-  columns and a consensus's push state alone. `pnpm db:seed` at the root seeds both apps.
+  columns and a consensus's push state alone. Nine events (`SEED_SLUGS`): the three
+  flagships plus one per remaining status and the three the e2e flows consume (the free
+  Community Cup, the Boardwalk Invitational mid pool play, the Dune Cup with a disputed
+  final). `pnpm db:seed` at the root seeds both apps.
   With `SIDEOUT_PURSE_SECRET_KEY` set and the Purse API answering `PURSE_API_URL`, Sideout's seed
   then mirrors the seeded events to Purse through the app's services (`src/db/seed/purse.ts`:
   links, entries, pushes, the settled event closed); otherwise it logs that the walk was
@@ -279,9 +299,13 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `POST /api/matches/:id/scores`). To run it locally: `pnpm --filter @sideout/web build && pnpm
   --filter @sideout/web start` (`next dev` unregisters the worker).
 - `pnpm --filter @sideout/web e2e` is the Playwright run (`playwright.config.ts`: the built app
-  on :3010 against a Purse API on :4020, both seeded databases; needs
-  `SIDEOUT_PURSE_SECRET_KEY` and `NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY` in `apps/sideout/.env` or
-  the environment). Sessions are minted by `e2e/session.ts`, screens are listed once in
+  on :3010 against a Purse API on :4020; needs `SIDEOUT_PURSE_SECRET_KEY` and
+  `NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY` in `apps/sideout/.env` or the environment). Its global
+  setup runs the demo reset on both dev databases first (the flows consume the seed).
+  Projects: the screen smoke at three widths, then `flows` (`e2e/flows.spec.ts`, the section 8
+  Player and Organizer flows). `BASE_URL=https://...` with `SESSION_SECRET`, `E2E_PURSE_URL`
+  and `E2E_PURSE_INTERNAL_TOKEN` runs `--project flows` against a deployment
+  (`docs/deploy.md`). Sessions are minted by `e2e/session.ts`, screens are listed once in
   `e2e/helpers.ts`, and the smoke writes `docs/screenshots/<screen>-<width>.png`. Component
   tests under `test/ui/` run in jsdom via a `@vitest-environment jsdom` docblock.
 - Route tests call handlers directly with `Request` objects (`test/helpers.ts`), truncate

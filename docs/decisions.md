@@ -1246,3 +1246,103 @@ stroke of its own; the PWA icons are rendered by `apps/sideout/scripts/render-ic
 rather than checked in from elsewhere. A missing event answers the not-found screen inside a
 200: the route's loading boundary streams, and Next cannot change the status once the shell
 has gone out. The e2e asserts the screen, not the status.
+
+## Phase 9 decisions (polish and host)
+
+### Railway-provided domains, no custom DNS
+
+D12 and spec section 10 default to custom subdomains on a personal domain
+(`sideout.<yourdomain>`, `purse.<yourdomain>`, `console.purse.<yourdomain>`). The captain
+chose Railway's own domains for now (`*.up.railway.app`, TLS included) and no DNS, the same
+as the sibling Sideout-on-Lucra deploy: `docs/deploy.md` lists the three URLs. Everything
+that depends on an origin reads it from a variable (`PURSE_TENANT_ORIGINS`,
+`NEXT_PUBLIC_PURSE_ORIGIN`, `PURSE_API_URL`, `PURSE_API_ORIGIN`), so custom domains are a
+DNS change plus a variable change, not a code change. One consequence worth knowing:
+`up.railway.app` is on the public suffix list, so the Sideout and Purse origins are
+different *sites* as well as different origins, which is exactly the cross-site case the
+embed session cookie was written for (`SameSite=None; Secure; Partitioned`, phase 4), and
+the deployed flows prove it.
+
+### Cron: two Railway cron services, not in-process timers
+
+Spec section 10 wants `reconcile()` on a 15-minute schedule and a nightly demo reset. Both
+are Railway cron services (a container that starts on its schedule, does the job, exits;
+the platform skips a run while the previous one is still going): `purse-reconcile` runs the
+Purse image with `node dist/reconcile.js --source schedule` every 15 minutes, `demo-reset`
+runs `docker/demo-reset` at 10:00 UTC. A timer inside the API process would have tied the
+schedule to the serving process (a restart resets it, a second replica doubles it) and
+would have needed the reset's owner-role connection string in the API, which the role model
+forbids. The price is a container boot per run, which is seconds. Each run is recorded in
+the new `reconcile_runs` table (append-only for the runtime, like the journal), and
+`/health` reports the newest row: the "last reconcile result" the spec asks for is now
+durable and the same on every replica, which is why phase 1 left it out
+(`apps/purse/src/ledger/reconcile-runs.ts`). `GET /internal/reconcile` and the console's
+invariant panel record runs too.
+
+### A failing invariant makes `/health` answer 503
+
+"A failing invariant pages you" is implemented as the status code: while the newest
+recorded reconcile run failed, Purse's `/health` answers 503 with `status: "failing"` and the
+failed invariant ids, so an external check on the status code alone pages, and Railway's
+own deploy health check refuses to switch to a new deployment of a ledger that does not
+reconcile. That last part is deliberate: a deploy onto a broken ledger is not something to
+do quietly. The console's `GET /console/reconcile` still answers 200 with a failed report
+(phase 5), because the panel renders it. Sideout's `/health` relays Purse's state in a
+`purse` field and never inherits the 503: it is Sideout's health.
+
+### The demo reset is a job, protected by the role model
+
+The sibling protects its reset with a bearer token on an HTTP route. Here the reset must
+delete journal rows, which only `purse_migrator` may, and the API process must never hold
+that role (phase 1; the Purse entrypoint even unsets the migrator URL before serving). So
+the reset is not a route: it is a container (`docker/demo-reset`) that holds the owner
+role's connection string and an explicit `DEMO_RESET=allow` switch, refuses any database
+not named `purse`/`sideout` (or a demo or test one), and is started by Railway's cron or by
+`railway restart`. What it keeps on Purse is the tenant's configuration and the platform's
+record (tenants, origins, API keys, webhook endpoints, the ruleset, operators, sessions,
+`reconcile_runs`); everything the demo produces, journal and audit log included, is deleted
+and reseeded. Sideout is emptied and reseeded whole, then mirrored to the fresh Purse
+through the API, so the reseeded contests are the ones the seeded events point at. The
+Sideout e2e global setup runs the same two halves locally, which is how a rerun of the
+flows starts from the seed rather than from what the last run left behind.
+
+### Seeds: every state, in two places
+
+Purse's seed now holds one contest per resting state (`draft`, `open`, `locked`,
+`in_progress`, `awaiting_settlement`, `settled`, `cancelled`, `voided`; `settling` exists
+only inside the settlement transaction) and a seventh user, verified but `platform_block`ed,
+so every verification state and the blocked case are on the console's review screens.
+Sideout's seed grew from three events to nine: one per tournament status (a draft, a
+drawn-but-not-live event, a cancelled one whose contest is voided with every stake
+refunded) and three the end-to-end flows drive (the free-entry Community Cup, the
+Boardwalk Invitational mid pool play, the Dune Cup complete but for a disputed final). Players
+are drawn from the same roster of 48, so a player is in several events, as people are.
+`awaiting_settlement` on Sideout is the one status the seed does not write: it is the step
+the organizer takes before the close, which the Organizer flow performs.
+
+### The images bundle the scripts; no `tsx` in production
+
+Purse's `tsup` build now emits the operational scripts (`migrate`, `seed`, `reconcile`,
+`purge`, `demo-reset`) next to the server as flat files, and Sideout gained a `tsup` build
+for its scripts plus a compiled `next.config.js` (so `next start` needs no TypeScript
+installed), so the runtime images carry `dist/`, the migrations and production
+`node_modules` only. The Sideout image is still large (Next, its SWC binary, `sharp`,
+`lucide-react`); Next's standalone output would shrink it and is a follow-up.
+
+### Purse publishes `/responsible-play` and `/support`
+
+Phase 8 pointed the profile's responsible-play links at the Purse origin without Purse
+serving anything there. The API now serves both pages itself (`src/routes/pages.ts`):
+static HTML, no script, cacheable, the policy carrying the `#limits` anchor the wallet
+links to. They live in the API rather than the embed export because the embed is sized by
+its parent and never scrolls.
+
+### Follow-ups this phase leaves
+
+- An SMS provider for both sign-ins and a Stripe account for donations (phase 6's two
+  captain decisions) are still unmade; the demo says so plainly (`docs/deploy.md`).
+- Custom domains and DNS; a second replica (the rate limiter and the webhook dispatcher are
+  in-process); Next standalone output for the Sideout image; SSE in place of polling (D11).
+- The `.env.example` templates could not be edited from the automated pipeline (writes to
+  env files are denied by policy); `apps/*/src/env.ts` and `docs/deploy.md` are the
+  variable lists.
