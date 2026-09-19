@@ -8,7 +8,10 @@
 #   build    installs the API's and the embed's workspace subsets with dev dependencies,
 #            builds the SDK bundle, the embed's static export and the API's `dist/`
 #            (tsup inlines the workspace packages; `dist/` is the service plus its
-#            operational scripts: migrate, seed, reconcile, purge, demo-reset)
+#            operational scripts: migrate, seed, reconcile, purge, demo-reset). It needs
+#            `apps/purse/test/contract/fixtures.json`, which the public `/docs` page
+#            bundles (`src/routes/docs.ts`): `.dockerignore` drops `**/test` and names
+#            that one file as an exception, so do not remove it there.
 #   deps     a clean install of the API's subset with production dependencies only
 #   runtime  Node 22, those node_modules, `dist/`, the migrations and the embed export,
 #            running as the unprivileged `node` user
