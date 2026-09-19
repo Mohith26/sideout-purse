@@ -32,10 +32,11 @@ export function PhoneCheckInStatus({ teamName, liveKeyIds, checkInHref, classNam
     };
   }, []);
 
-  if (keyId === undefined) return <span className={cx('type-label text-text-tertiary', className)} data-testid="phone-status" data-status="loading" />;
+  if (keyId === undefined) return <p className={cx('type-label text-text-tertiary', className)} data-testid="phone-status" data-status="loading" />;
   const checkedIn = keyId !== null && liveKeyIds.includes(keyId);
+  // A sentence with an inline link (WCAG 2.5.8's exception), so a paragraph, not a control row.
   return (
-    <span className={cx('inline-flex flex-wrap items-center gap-x-2 gap-y-1 type-label', checkedIn ? 'text-surf' : 'text-text-tertiary', className)} data-testid="phone-status" data-status={checkedIn ? 'checked_in' : 'not_checked_in'}>
+    <p className={cx('flex flex-wrap items-center gap-x-2 gap-y-1 type-label', checkedIn ? 'text-surf' : 'text-text-tertiary', className)} data-testid="phone-status" data-status={checkedIn ? 'checked_in' : 'not_checked_in'}>
       <Icons.smartphone size={14} />
       {checkedIn ? (
         <span>This phone is checked in for {teamName}; scorelines from it are signed.</span>
@@ -47,6 +48,6 @@ export function PhoneCheckInStatus({ teamName, liveKeyIds, checkInHref, classNam
           </Link>
         </span>
       )}
-    </span>
+    </p>
   );
 }
