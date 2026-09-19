@@ -166,6 +166,9 @@ PURSE_DATABASE_URL=... PURSE_MIGRATOR_DATABASE_URL=... PURSE_TENANT_ORIGINS=http
   pnpm --filter @purse/api db:seed -- --print-keys --print-operator-password   # through the proxy; prints the sandbox keys and the admin password once
 curl -X POST https://<purse domain>/v1/webhooks/endpoints -H "Authorization: Bearer sk_sandbox_..." -H "Idempotency-Key: deploy-webhook-endpoint-1" \
   -H 'content-type: application/json' -d '{"url":"https://<sideout domain>/api/webhooks/purse","subscribedEvents":[...all eight...]}'   # prints whsec_... once
+# The destination must be the public Sideout domain: every webhook URL is validated and the
+# address pinned (docs/webhooks-security.md). A `*.railway.internal` host resolves to a
+# unique-local address and is refused with `url_not_allowed` unless WEBHOOK_ALLOWED_HOSTS names it.
 railway variable set ... --service sideout      # the keys and the webhook secret
 railway up --service purse-console --detach; railway up --service sideout --detach
 railway up --service purse-reconcile --detach; railway up --service demo-reset --detach
