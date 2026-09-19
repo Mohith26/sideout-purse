@@ -52,7 +52,7 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import type { EligibilityReason, RequiredAction, WebhookEventType } from '@purse/types';
+import type { AttestationState, EligibilityReason, EcPublicJwk, RequiredAction, ScoreAttestationResource, WebhookEventType } from '@purse/types';
 import { idCheck, idPatternLiteral, nullableIdCheck, timestamps } from '@repo/db';
 
 import type { Ruleset } from '../eligibility/ruleset';
@@ -495,12 +495,24 @@ export const contestScores = pgTable(
     /** The partner's reference for where this score came from (a match id, a consensus record). */
     sourceRef: text('source_ref'),
     supersededBy: text('superseded_by'),
+    /**
+     * Signed score attestation (spec section 12, item 1; `@purse/types` `attestation.ts`):
+     * `none` when the batch carried no attestation for this score, `verified` when a device
+     * registered to the attesting user signed exactly this content for this `source_ref`,
+     * `unverified` when one was presented under a key Purse does not hold. Fixed at insert
+     * like everything else on the row: a later revocation never rewrites history.
+     */
+    attestationState: text('attestation_state').$type<AttestationState>().notNull().default('none'),
+    /** The attestation as presented, verbatim, plus the device it was checked against; null when the state is `none`. */
+    attestation: jsonb('attestation').$type<ScoreAttestationResource>(),
   },
   (table) => [
     idCheck('contest_scores_id_prefix', table.id, 'sco'),
     idCheck('contest_scores_user_id_prefix', table.userId, 'usr'),
     foreignKey({ name: 'contest_scores_superseded_by_fk', columns: [table.supersededBy], foreignColumns: [table.id] }),
     check('contest_scores_not_self_superseded', sql`${table.supersededBy} is null or ${table.supersededBy} <> ${table.id}`),
+    check('contest_scores_attestation_state', sql`${table.attestationState} in ('none', 'verified', 'unverified')`),
+    check('contest_scores_attestation_pair', sql`(${table.attestationState} = 'none') = (${table.attestation} is null)`),
     index('contest_scores_contest_id_user_id_idx').on(table.contestId, table.userId),
   ],
 );
@@ -746,6 +758,51 @@ export const userRestrictions = pgTable(
 );
 
 export type UserRestriction = typeof userRestrictions.$inferSelect;
+
+/**
+ * Signed score attestation (spec section 12, item 1): one registered device key of one
+ * user. The partner registers the public half of a WebCrypto P-256 key pair the device
+ * generated (the private half is non-extractable and never leaves the browser), and every
+ * score submitted for that user (or a teammate, the partner says whose) may carry a
+ * signature Purse checks against this row (`src/attestation/verify.ts`). `key_id` is the
+ * JWK thumbprint, derived from the key and never chosen. A revocation is the one runtime
+ * update and is never undone; a lost or replaced device is a new row under a new key,
+ * and re-registering a revoked key is a new row too (the partial unique index admits one
+ * live row per key per user).
+ */
+export const userDevices = pgTable(
+  'user_devices',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    keyId: text('key_id').notNull(),
+    algorithm: text('algorithm').notNull().default('ES256'),
+    publicKey: jsonb('public_key').$type<EcPublicJwk>().notNull(),
+    /** The partner's label (a team, "this phone"); never anything that identifies a person. */
+    label: text('label'),
+    /** Actor reference of the registration: `key:<prefix>`, `operator:<ref>`. */
+    createdBy: text('created_by').notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedBy: text('revoked_by'),
+    revokedReason: text('revoked_reason'),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('user_devices_id_prefix', table.id, 'udv'),
+    idCheck('user_devices_user_id_prefix', table.userId, 'usr'),
+    check('user_devices_key_id_shape', sql`${table.keyId} ~ '^[A-Za-z0-9_-]{43}$'`),
+    check('user_devices_algorithm', sql`${table.algorithm} in ('ES256')`),
+    check('user_devices_label_length', sql`${table.label} is null or length(${table.label}) <= 120`),
+    check('user_devices_revoked_pair', sql`(${table.revokedAt} is null) = (${table.revokedBy} is null)`),
+    check('user_devices_revoked_reason_length', sql`${table.revokedReason} is null or length(${table.revokedReason}) <= 500`),
+    uniqueIndex('user_devices_live_key').on(table.userId, table.keyId).where(sql`${table.revokedAt} is null`),
+    index('user_devices_user_id_idx').on(table.userId),
+  ],
+);
+
+export type UserDevice = typeof userDevices.$inferSelect;
 
 export const locationSource = pgEnum('location_source', ['ip', 'declared', 'provider']);
 export type LocationSource = (typeof locationSource.enumValues)[number];

@@ -48,6 +48,8 @@ export const ID_PREFIXES = {
   operatorSession: 'ops',
   // Purse operations (system spec section 10): one row per reconcile run
   reconcileRun: 'rcr',
+  // Purse signed score attestation (system spec section 12, item 1): a user's registered device key
+  userDevice: 'udv',
   // Sideout (system spec 5.1). Sideout's local account is `sou`, never `usr`: the two
   // identities are linked by an opaque external id (decision D8), not by sharing a prefix.
   charity: 'chr',
@@ -69,6 +71,8 @@ export const ID_PREFIXES = {
   purseCall: 'pcl',
   purseWebhookEvent: 'pwe',
   purseEntry: 'pen',
+  // Sideout signed score attestation: a team member's device key registered at check-in
+  teamDevice: 'dev',
   // Ping-pong, the second tenant (system spec section 12, stretch 4). Its own local
   // account prefix (`ppl`), like Sideout's `sou`, and its own Purse call audit (`ppc`).
   pingpongPlayer: 'ppl',

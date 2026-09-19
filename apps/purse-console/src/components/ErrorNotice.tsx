@@ -11,6 +11,7 @@ const TITLE_BY_TYPE: Record<ApiError['type'], string> = {
   invalid_state: 'Not in that state',
   conflict: 'Conflict',
   rate_limited: 'Slow down',
+  invalid_attestation: 'Signature refused',
   internal_error: 'Something went wrong',
 };
 

@@ -41,6 +41,9 @@ import {
 } from 'drizzle-orm/pg-core';
 import { idCheck, timestamps } from '@repo/db';
 
+import type { EcPublicJwk } from '@purse/types';
+
+import type { StoredAttestation } from '../domain/attestation';
 import type { DrawConfig } from '../domain/draw-config';
 import type { FrozenClosePreview } from '../domain/close-preview';
 import type { SetDifference, SubmittedSet } from '../domain/consensus';
@@ -387,6 +390,51 @@ export const teamMembers = pgTable(
 export type TeamMember = typeof teamMembers.$inferSelect;
 export type NewTeamMember = typeof teamMembers.$inferInsert;
 
+/**
+ * Signed score attestation (spec section 12, item 1; `docs/attestation.md`): a team member's
+ * phone, registered at check-in. The browser generates a non-extractable P-256 key pair
+ * and registers the public half here for the team; `key_id` is its JWK thumbprint, computed
+ * server side. A scoreline submitted from that phone carries a signature the server checks
+ * against this row before the consensus sees it, and the same key is mirrored to Purse for
+ * the member's linked user (`purse_device_id`) so Purse can verify again on its own. The
+ * organizer may revoke a device; a revocation is never undone, and a lost or replaced phone
+ * registers again as a new row (one live row per key per team).
+ */
+export const teamDevices = pgTable(
+  'team_devices',
+  {
+    id: text('id').primaryKey(),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => teams.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    keyId: text('key_id').notNull(),
+    algorithm: text('algorithm').notNull().default('ES256'),
+    publicKey: jsonb('public_key').$type<EcPublicJwk>().notNull(),
+    /** The Purse device (`udv_`) this key was mirrored as for the member's linked user; null until the mirror lands. */
+    purseDeviceId: text('purse_device_id'),
+    purseMirroredAt: tz('purse_mirrored_at'),
+    revokedAt: tz('revoked_at'),
+    revokedByUserId: text('revoked_by_user_id').references(() => users.id),
+    revokedReason: text('revoked_reason'),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('team_devices_id_prefix', table.id, 'dev'),
+    check('team_devices_key_id_shape', sql`${table.keyId} ~ '^[A-Za-z0-9_-]{43}$'`),
+    check('team_devices_algorithm', sql`${table.algorithm} in ('ES256')`),
+    check('team_devices_revoked_pair', sql`(${table.revokedAt} IS NULL) = (${table.revokedByUserId} IS NULL)`),
+    uniqueIndex('team_devices_live_key').on(table.teamId, table.keyId).where(sql`${table.revokedAt} IS NULL`),
+    index('team_devices_team_idx').on(table.teamId),
+    index('team_devices_user_idx').on(table.userId),
+  ],
+);
+
+export type TeamDevice = typeof teamDevices.$inferSelect;
+export type NewTeamDevice = typeof teamDevices.$inferInsert;
+
 // ---- Pools and matches ------------------------------------------------------------------
 
 export const pools = pgTable(
@@ -630,6 +678,12 @@ export const scoreSubmissions = pgTable(
     sets: jsonb('sets').$type<SubmittedSet[]>().notNull(),
     /** SHA-256 of the canonical, match-oriented scoreline (`domain/scoreline-hash.ts`). */
     hash: text('hash').notNull(),
+    /**
+     * The device signature over this scoreline, verified against the team's registered
+     * device before the row was written (`server/attestation.ts`), or null for an unsigned
+     * submission and an organizer's resolution. Fixed at insert like the rest of the row.
+     */
+    attestation: jsonb('attestation').$type<StoredAttestation>(),
     supersededById: text('superseded_by_id').references((): AnyPgColumn => scoreSubmissions.id),
     createdAt: tz('created_at').notNull().defaultNow(),
   },

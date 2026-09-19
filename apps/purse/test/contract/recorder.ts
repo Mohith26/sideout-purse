@@ -39,6 +39,8 @@ const API_KEY = /^(sk|pk)_(sandbox|live)_[A-Za-z0-9]{32}$/;
 const WEBHOOK_SECRET = /^whsec_[A-Za-z0-9_-]{43}$/;
 const SIGNIN_CODE = /^\d{6}$/;
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/** An ES256 signature is randomised per signing, so an attestation's signature never pins. */
+const ES256_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
 
 function normaliseString(value: string): string {
   const id = ID.exec(value);
@@ -61,6 +63,7 @@ function normaliseField(key: string, value: unknown): unknown {
   if (key === 'idempotencyKey' && typeof value === 'string') return '<idempotency-key>';
   if (key === 'durationMs' && typeof value === 'number') return '<ms>';
   if ((key === 'devCode' || key === 'code') && typeof value === 'string' && SIGNIN_CODE.test(value)) return '<code>';
+  if (key === 'signature' && typeof value === 'string' && ES256_SIGNATURE.test(value)) return '<signature>';
   return value;
 }
 

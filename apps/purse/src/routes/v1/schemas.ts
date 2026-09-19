@@ -20,6 +20,7 @@ export const positiveMoneySchema = moneySchema.refine((value) => value > 0n, 'mu
 
 export const userIdSchema = z.string().refine((value) => isId(value, 'usr'), 'must be a usr_ id');
 export const contestIdSchema = z.string().refine((value) => isId(value, 'cnt'), 'must be a cnt_ id');
+export const deviceIdSchema = z.string().refine((value) => isId(value, 'udv'), 'must be a udv_ id');
 
 export function param<S extends z.ZodType>(schema: S, name: string, value: string | undefined): z.output<S> {
   const result = schema.safeParse(value);

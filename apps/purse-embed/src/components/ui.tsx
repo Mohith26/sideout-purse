@@ -104,5 +104,6 @@ const TITLE_BY_TYPE: Partial<Record<ApiError['type'], string>> = {
   invalid_state: 'Not right now',
   conflict: 'Already done',
   rate_limited: 'Slow down',
+  invalid_attestation: 'Signature refused',
   internal_error: 'Something went wrong',
 };

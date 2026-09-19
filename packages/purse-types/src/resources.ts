@@ -1,3 +1,4 @@
+import type { AttestationState, ScoreAttestationResource } from './attestation';
 import type { EligibilityDecision } from './eligibility';
 
 /**
@@ -187,6 +188,10 @@ export type ScoreResource = {
   attemptFinished: boolean;
   submittedAt: string;
   sourceRef: string | null;
+  /** Whether a registered device signed this score (`attestation.ts`): `none`, `verified` or `unverified`. */
+  attestationState: AttestationState;
+  /** The attestation Purse recorded, verbatim plus its verdict; `null` when the state is `none`. */
+  attestation: ScoreAttestationResource | null;
 };
 
 export type ResultResource = {

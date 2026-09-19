@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import type { CreditResource, VerificationStartResource, WalletResource } from '@purse/types';
+import type { CreditResource, DeviceResource, VerificationStartResource, WalletResource } from '@purse/types';
 import type { Id } from '@repo/ids';
 
 import { asset as assetEnum } from '../../db/schema';
@@ -10,17 +10,29 @@ import { ok, okOnce } from '../../http/envelope';
 import { findAccount, openAccount } from '../../ledger/accounts';
 import { balanceOf } from '../../ledger/balance';
 import { issuePromoPoints } from '../../ledger/flows';
-import { loadProfile, profileOf, startVerification, upsertUser, upsertUserSchema } from '../../users';
+import { listDevices, loadProfile, profileOf, registerDevice, revokeDevice, startVerification, upsertUser, upsertUserSchema } from '../../users';
 import type { V1Deps, V1Scope } from './scope';
-import { param, positiveMoneySchema, userIdSchema } from './schemas';
-import { embedTokenResource, replayedEmbedToken, userResource, verificationResource } from './serialize';
+import { deviceIdSchema, param, positiveMoneySchema, userIdSchema } from './schemas';
+import { deviceResource, embedTokenResource, replayedEmbedToken, userResource, verificationResource } from './serialize';
 
 /**
  * `/v1/users` (spec 4.7): create or upsert by external id, read, start verification, read
  * the wallet, and issue credits (operator scope). Money moves only through the ledger's
- * typed flows; identity moves only through the users services.
+ * typed flows; identity moves only through the users services. `/:id/devices` is the
+ * signed score attestation's registry (spec section 12, item 1): the partner registers a
+ * device's public key, lists them, and revokes one.
  */
 const emptyBodySchema = z.object({}).strict();
+
+/** The key is validated to the strict JWK shape by the service; the route only bounds it. */
+const registerDeviceSchema = z
+  .object({
+    publicKey: z.record(z.string().max(16), z.string().max(128)),
+    label: z.string().trim().min(1).max(120).nullable().optional(),
+  })
+  .strict();
+
+const revokeDeviceSchema = z.object({ reason: z.string().trim().min(1).max(500).nullable().optional() }).strict();
 
 const creditsSchema = z
   .object({
@@ -74,6 +86,45 @@ export function usersRoutes(deps: V1Deps) {
       embedToken: embedTokenResource(started.embedToken),
     };
     return okOnce(c, body, { ...body, embedToken: replayedEmbedToken(body.embedToken) }, 201);
+  });
+
+  routes.post('/:id/devices', async (c) => {
+    const auth = c.get('auth');
+    const userId = param(userIdSchema, 'id', c.req.param('id'));
+    const body = parseBody(c, registerDeviceSchema);
+    const { device, created } = await registerDevice(c.get('db'), {
+      tenantId: auth.tenant.id as Id<'tnt'>,
+      userId,
+      publicKey: body.publicKey as Parameters<typeof registerDevice>[1]['publicKey'],
+      label: body.label ?? null,
+      actor: auth.actor,
+      requestId: c.get('requestId'),
+    });
+    const resource: DeviceResource = deviceResource(device);
+    return ok(c, resource, created ? 201 : 200);
+  });
+
+  routes.get('/:id/devices', async (c) => {
+    const auth = c.get('auth');
+    const userId = param(userIdSchema, 'id', c.req.param('id'));
+    const devices = await listDevices(c.get('db'), auth.tenant.id as Id<'tnt'>, userId);
+    return ok(c, { devices: devices.map(deviceResource) });
+  });
+
+  routes.post('/:id/devices/:deviceId/revoke', async (c) => {
+    const auth = c.get('auth');
+    const userId = param(userIdSchema, 'id', c.req.param('id'));
+    const deviceId = param(deviceIdSchema, 'deviceId', c.req.param('deviceId'));
+    const body = parseBody(c, revokeDeviceSchema);
+    const { device } = await revokeDevice(c.get('db'), {
+      tenantId: auth.tenant.id as Id<'tnt'>,
+      userId,
+      deviceId,
+      reason: body.reason ?? null,
+      actor: auth.actor,
+      requestId: c.get('requestId'),
+    });
+    return ok(c, deviceResource(device));
   });
 
   routes.get('/:id/wallet', async (c) => {
