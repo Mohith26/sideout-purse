@@ -124,12 +124,13 @@ test('two players, one confirmed result, the ladder reorders, the season closes 
   await expect(settlement.getByTestId('result-row')).toHaveCount(2);
   await expect(settlement.getByTestId('result-row').first()).toContainText('125');
   await expect(settlement.getByTestId('result-row').last()).toContainText('75');
-  await ada.evaluate(() => window.scrollTo(0, 0));
-  await ada.screenshot({ path: path.join(SCREENSHOT_DIR, 'pingpong-settled.png'), fullPage: true });
 
   // ---- The payouts landed: 1000 welcome, 100 staked, 125 back to the winner, 75 to the loser.
   expect(await pointsOf(grace)).toBe('1025');
   expect(await pointsOf(ada)).toBe('975');
+  // The screenshot after the re-read, so the balance on it is the settled one.
+  await ada.evaluate(() => window.scrollTo(0, 0));
+  await ada.screenshot({ path: path.join(SCREENSHOT_DIR, 'pingpong-settled.png'), fullPage: true });
 
   // ---- The audit holds the calls, and Purse's ledger still reconciles.
   await ada.goto('/audit');
