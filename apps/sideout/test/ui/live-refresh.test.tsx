@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, render } from '@testing-library/react';
+import { Suspense, use, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { LiveRefresh } from '../../src/components/motion/LiveRefresh';
+import { LiveRefresh, PARKED_REFRESH_RETRY_MS } from '../../src/components/motion/LiveRefresh';
 import { backoffMs, FAILURES_BEFORE_FALLBACK, FALLBACK_RETRY_MS, HEALTHY_AFTER_MS, LiveConnection, liveStreamPath, type EventSourceLike, type LiveTransport } from '../../src/components/motion/live-stream';
 
 /**
@@ -10,8 +11,16 @@ import { backoffMs, FAILURES_BEFORE_FALLBACK, FALLBACK_RETRY_MS, HEALTHY_AFTER_M
  * `EventSource` under fake timers, and the `LiveRefresh` component wiring it to the
  * router, the transport attribute and the tab's visibility.
  */
-const refresh = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh, push: vi.fn(), replace: vi.fn() }) }));
+const refresh = vi.fn<() => void>();
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    refresh: () => {
+      refresh();
+    },
+    push: vi.fn(),
+    replace: vi.fn(),
+  }),
+}));
 
 class FakeSource implements EventSourceLike {
   static instances: FakeSource[] = [];
@@ -227,6 +236,78 @@ describe('LiveRefresh', () => {
     tick(1_000);
     tick(1_000);
     expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a retry ticking while a refresh is pending, so a render the router parks is re-attempted', () => {
+    // The router suspends the tree on the refresh's promise inside a transition; here the
+    // promise never settles until the test says so, which is what a parked render looks like
+    // from this component (`isPending` stays true). The retry is a plain state update on an
+    // interval of PARKED_REFRESH_RETRY_MS; React's response to it (clearing the suspended lanes
+    // and re-attempting the render) is the browser's job, checked by the Playwright flow.
+    let setRouterState: (state: number | Promise<number>) => void = () => undefined;
+    let resolveRefresh: (value: number) => void = () => undefined;
+    function Router({ state }: { state: number | Promise<number> }) {
+      return <output>{typeof state === 'number' ? state : use(state)}</output>;
+    }
+    function App() {
+      const [state, setState] = useState<number | Promise<number>>(0);
+      setRouterState = setState;
+      return (
+        <Suspense fallback={<output>loading</output>}>
+          <Router state={state} />
+          <LiveRefresh source={{ kind: 'tournament', id: 'trn_1' }} />
+        </Suspense>
+      );
+    }
+    refresh.mockImplementation(() => {
+      setRouterState(
+        new Promise<number>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+      );
+    });
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    const cleared = vi.spyOn(globalThis, 'clearInterval');
+    (globalThis as { EventSource?: unknown }).EventSource = FakeSource;
+    const { container } = render(<App />);
+    const source = FakeSource.instances[0];
+    if (source === undefined) throw new Error('no stream');
+    act(() => source.open());
+    const retries = () => intervals.mock.calls.filter((call) => call[1] === PARKED_REFRESH_RETRY_MS);
+    expect(retries()).toHaveLength(0);
+
+    act(() => source.message('e-1'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // Suspended: the old content stays and the retry interval is armed.
+    expect(container.querySelector('output')?.textContent).toBe('0');
+    expect(retries()).toHaveLength(1);
+    const handle = intervals.mock.results.at(-1)?.value as unknown;
+    expect(cleared.mock.calls.some((call) => call[0] === handle)).toBe(false);
+    tick(PARKED_REFRESH_RETRY_MS * 3);
+    expect(cleared.mock.calls.some((call) => call[0] === handle)).toBe(false);
+
+    // Leaving the page disarms it too.
+    cleanup();
+    expect(cleared.mock.calls.some((call) => call[0] === handle)).toBe(true);
+    resolveRefresh(1);
+    refresh.mockReset();
+  });
+
+  it('disarms the retry as soon as a refresh settles', () => {
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    const cleared = vi.spyOn(globalThis, 'clearInterval');
+    (globalThis as { EventSource?: unknown }).EventSource = FakeSource;
+    render(<LiveRefresh source={{ kind: 'tournament', id: 'trn_1' }} />);
+    const source = FakeSource.instances[0];
+    if (source === undefined) throw new Error('no stream');
+    act(() => source.open());
+    act(() => source.message('e-1'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    const armed = intervals.mock.calls.findIndex((call) => call[1] === PARKED_REFRESH_RETRY_MS);
+    expect(armed).toBeGreaterThanOrEqual(0);
+    expect(intervals.mock.calls.filter((call) => call[1] === PARKED_REFRESH_RETRY_MS)).toHaveLength(1);
+    const handle = intervals.mock.results[armed]?.value as unknown;
+    expect(cleared.mock.calls.some((call) => call[0] === handle)).toBe(true);
   });
 
   it('coalesces events that arrive while a refresh is in flight into one more refresh', () => {

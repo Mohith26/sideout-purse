@@ -102,7 +102,12 @@ abort, or a failed write). Every variable has a safe default; none is required.
   again; a browser with no `EventSource` polls from the start;
 - while the stream is open the page sets `data-live="stream"` on `<html>`, and the design
   system's live dot (`.so-live-dot`) gains a faint halo. Polling keeps the plain dot. No
-  layout changes.
+  layout changes;
+- while a refresh is pending, a state update fires every `PARKED_REFRESH_RETRY_MS` (250 ms):
+  Next 15.5's router sometimes never wakes the render it parked on the refresh's promise
+  (vercel/next.js#98305), and any unrelated update makes React retry it. `docs/decisions.md`
+  ("Stretch: SSE live scoring decisions") has the measurements; the retry goes with the Next
+  upgrade that removes the code path.
 
 The register screen's wait on a pending donation still polls (`LiveRefresh` without a
 `source`); it is not a live-scoring surface.

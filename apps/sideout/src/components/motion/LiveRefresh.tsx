@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useTransition } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 
 import { LiveConnection, type LiveSource, type LiveTransport } from './live-stream';
 
@@ -10,6 +10,18 @@ export const LIVE_POLL_MS = 5_000;
 
 /** A refresh that has not settled after this long is treated as done, so a stuck transition can never stop the next one. */
 const STALE_REFRESH_MS = 15_000;
+
+/**
+ * While a refresh is in flight, a plain state update at this cadence. Next 15.5's app
+ * router suspends the whole tree on the refresh's promise inside a transition, and in a
+ * production build the render it parked is sometimes never woken once that promise settles
+ * (vercel/next.js#98305: `suspendedLanes` set, `pingedLanes` never): the page keeps the old
+ * figures for good. Any non-idle update clears React's suspended lanes and retries the
+ * parked render, which then commits at once. A normal refresh settles in tens of
+ * milliseconds and never sees the first tick; a parked one is retried within a quarter
+ * second. Remove once the router is on a release that removed the code path (Next 16).
+ */
+export const PARKED_REFRESH_RETRY_MS = 250;
 
 /** The attribute on `<html>` that tells the design system which transport is carrying live figures (`.so-live-dot` reads it). */
 export const LIVE_TRANSPORT_ATTRIBUTE = 'data-live';
@@ -25,6 +37,7 @@ export type { LiveSource };
  * when it returns, and the phase 8 polling is the fallback when the browser has no
  * `EventSource` or the stream keeps failing. Without a `source` it polls, as before.
  * Fresh numbers are content, not motion, so reduced-motion preferences do not stop it.
+ * Either way a refresh the router parks is retried (`PARKED_REFRESH_RETRY_MS`).
  */
 export function LiveRefresh({ source, intervalMs = LIVE_POLL_MS }: { source?: LiveSource; intervalMs?: number }) {
   const router = useRouter();
@@ -56,6 +69,15 @@ export function LiveRefresh({ source, intervalMs = LIVE_POLL_MS }: { source?: Li
     inFlight.current = false;
     if (queued.current) refresh();
   }, [isPending, refresh]);
+
+  // The watchdog for a parked refresh (see PARKED_REFRESH_RETRY_MS): a state update nobody
+  // reads, whose only job is to make React retry the suspended render.
+  const [, retry] = useState(0);
+  useEffect(() => {
+    if (!isPending) return;
+    const timer = setInterval(() => retry((n) => n + 1), PARKED_REFRESH_RETRY_MS);
+    return () => clearInterval(timer);
+  }, [isPending]);
 
   // The source is compared by value: a server component renders a fresh object each time.
   const sourceKey = source === undefined ? null : source.kind === 'all' ? 'all' : `tournament:${source.id}`;

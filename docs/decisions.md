@@ -1702,6 +1702,29 @@ stream is tried again; a browser with no `EventSource` polls from the start. The
 pauses while the tab is hidden and one refresh catches up on return, the same visibility
 rule the poll had.
 
+### A refresh the router parks is retried, because Next 15.5 sometimes never wakes it
+
+Found while proving the Playwright flow, and it predates this work: in a production build
+of Next 15.5.25, `router.refresh()` frequently never applies. The app router suspends the
+whole tree on the refresh's promise inside a transition (`use(state)` in `useActionQueue`),
+and the render React parked is sometimes not woken when that promise settles: the root is
+left with the transition lane pending and suspended and `pingedLanes` at zero, the RSC
+payload fully received, every later refresh entangled with the stuck one, and the page keeps
+its old figures for good (vercel/next.js#98305 describes the same lost ping; the code path
+is gone in Next 16). Measured on the seeded event it took most refreshes on the home and
+overview screens and about half on the match page, in a single tab as much as in two. The
+phase 8 poll used the same call, so it was affected as much; nobody had watched a live
+screen long enough to see it.
+
+The mitigation lives in `LiveRefresh`: while a refresh is pending, a state update nobody
+reads fires every `PARKED_REFRESH_RETRY_MS` (250 ms). Any non-idle update clears React's
+suspended lanes and re-attempts the parked render, which then commits at once (a browser
+probe confirmed an unrelated `setState` unparks it). A refresh that settles normally, in
+tens of milliseconds, never sees the first tick; a parked one is on screen within a quarter
+second (the two-tab flow measured ~350 ms end to end, twelve of twelve). The retry is
+removed once the router is on a release without the code path; upgrading Next is not this
+change's to make.
+
 ### The one visible change is the live dot's halo
 
 While the stream is open the page sets `data-live="stream"` on `<html>` and
