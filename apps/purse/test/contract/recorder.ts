@@ -74,7 +74,9 @@ export class Recorder {
 
   async record<T = unknown>(name: string, method: string, requestPath: string, body?: unknown, options: RequestOptions = {}): Promise<ApiResponse<T>> {
     const response = await this.client.send<T>(method, requestPath, body, options);
-    const headers: Record<string, string> = { Authorization: 'Bearer <api-key>' };
+    const headers: Record<string, string> = {};
+    if (this.client.authorization !== undefined) headers['Authorization'] = this.client.authorization;
+    for (const [name, value] of Object.entries(options.headers ?? {})) headers[name] = name.toLowerCase() === 'cookie' ? 'purse_session=<session-cookie>' : normaliseString(value);
     if (method !== 'GET' && options.idempotencyKey !== null) headers[IDEMPOTENCY_KEY_HEADER] = '<idempotency-key>';
     this.fixtures.push({
       name,

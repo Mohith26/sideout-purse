@@ -3762,9 +3762,7 @@
     "request": {
       "method": "GET",
       "path": "/v1/users/usr_<id>",
-      "headers": {
-        "Authorization": "Bearer <api-key>"
-      },
+      "headers": {},
       "body": null
     },
     "response": {
@@ -3783,9 +3781,7 @@
     "request": {
       "method": "POST",
       "path": "/v1/internal/webhooks/deliveries/whd_<id>/replay",
-      "headers": {
-        "Authorization": "Bearer <api-key>"
-      },
+      "headers": {},
       "body": {}
     },
     "response": {
@@ -3815,9 +3811,7 @@
     "request": {
       "method": "GET",
       "path": "/v1/internal/webhooks/deliveries/whd_<id>",
-      "headers": {
-        "Authorization": "Bearer <api-key>"
-      },
+      "headers": {},
       "body": null
     },
     "response": {
@@ -3843,13 +3837,57 @@
     }
   },
   {
+    "name": "sandbox.keys.create",
+    "request": {
+      "method": "POST",
+      "path": "/v1/sandbox/keys",
+      "headers": {
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "tenantId": "tnt_<id>",
+          "secretKey": "<api-key>",
+          "publishableKey": "<api-key>",
+          "expiresAt": "<instant>",
+          "replayed": false
+        }
+      }
+    }
+  },
+  {
+    "name": "sandbox.keys.replay",
+    "request": {
+      "method": "POST",
+      "path": "/v1/sandbox/keys",
+      "headers": {
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "tenantId": "tnt_<id>",
+          "secretKey": null,
+          "publishableKey": null,
+          "expiresAt": "<instant>",
+          "replayed": true
+        }
+      }
+    }
+  },
+  {
     "name": "health",
     "request": {
       "method": "GET",
       "path": "/v1/health",
-      "headers": {
-        "Authorization": "Bearer <api-key>"
-      },
+      "headers": {},
       "body": null
     },
     "response": {
@@ -3858,9 +3896,10 @@
         "data": {
           "status": "ok",
           "sha": "test-sha",
+          "sandboxSelfServe": true,
           "migrations": {
-            "applied": 19,
-            "available": 19,
+            "applied": 21,
+            "available": 21,
             "pending": 0
           },
           "rulesetVersion": "2026.09.1",
@@ -3871,13 +3910,76 @@
     }
   },
   {
+    "name": "status",
+    "request": {
+      "method": "GET",
+      "path": "/v1/status",
+      "headers": {},
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "status": "unknown",
+          "sha": "test-sha",
+          "migrations": {
+            "applied": 21,
+            "available": 21,
+            "pending": 0
+          },
+          "rulesetVersion": "2026.09.1",
+          "sdkVersion": "0.0.1",
+          "invariants": [
+            {
+              "id": "I1",
+              "name": "journal nets to zero per asset",
+              "status": "unknown"
+            },
+            {
+              "id": "I2",
+              "name": "every entry balances",
+              "status": "unknown"
+            },
+            {
+              "id": "I3",
+              "name": "no user wallet is negative",
+              "status": "unknown"
+            },
+            {
+              "id": "I4",
+              "name": "settled contests have zero escrow",
+              "status": "unknown"
+            },
+            {
+              "id": "I5",
+              "name": "settled payouts equal escrowed total",
+              "status": "unknown"
+            },
+            {
+              "id": "I6",
+              "name": "every snapshot equals its derived balance",
+              "status": "unknown"
+            },
+            {
+              "id": "I7",
+              "name": "every entry ledger link is a matching escrow entry",
+              "status": "unknown"
+            }
+          ],
+          "lastRun": null,
+          "runs": [],
+          "generatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
     "name": "internal.reconcile",
     "request": {
       "method": "GET",
       "path": "/v1/internal/reconcile",
-      "headers": {
-        "Authorization": "Bearer <api-key>"
-      },
+      "headers": {},
       "body": null
     },
     "response": {
@@ -4184,6 +4286,132 @@
     }
   },
   {
+    "name": "embed.contests.get",
+    "request": {
+      "method": "GET",
+      "path": "/v1/embed/contests/cnt_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Cookie": "purse_session=<session-cookie>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "cnt_<id>",
+          "externalId": "sideout:doubles-1",
+          "kind": "tournament",
+          "title": "Saturday doubles",
+          "asset": "POINTS",
+          "entryAmount": "100",
+          "maxParticipants": 8,
+          "prizeStructure": {
+            "type": "percentage_split",
+            "percentages": [
+              50,
+              30,
+              20
+            ]
+          },
+          "tieBreak": "split_evenly",
+          "settlementPolicy": "operator_close",
+          "eligibilityRulesetVersion": "2026.09.1",
+          "state": "settled",
+          "opensAt": null,
+          "locksAt": null,
+          "escrowAccountId": "acct_<id>",
+          "escrowBalance": "0",
+          "participantCount": 2,
+          "settledAt": "<instant>",
+          "createdAt": "<instant>",
+          "updatedAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.contests.entries.invalid_state",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/contests/cnt_<id>/entries",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Cookie": "purse_session=<session-cookie>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "not_eligible",
+          "code": "contest_not_open",
+          "message": "Contest cnt_<id> is settled, not open for entries",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "state": "settled",
+            "reasons": [
+              "contest_not_open"
+            ],
+            "rulesetVersion": "2026.09.1"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.identity.already_verified",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/identity/start",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Cookie": "purse_session=<session-cookie>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 409,
+      "body": {
+        "error": {
+          "type": "invalid_state",
+          "code": "already_verified",
+          "message": "User usr_<id> is verified until <instant>",
+          "detail": {
+            "userId": "usr_<id>",
+            "verifiedAt": "<instant>",
+            "reverifyAfter": "<instant>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "embed.signout",
+    "request": {
+      "method": "POST",
+      "path": "/v1/embed/signout",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "authenticated": false,
+          "user": null
+        }
+      }
+    }
+  },
+  {
     "name": "auth.invalid_api_key",
     "request": {
       "method": "GET",
@@ -4285,6 +4513,54 @@
           "type": "internal_error",
           "code": "provider_unavailable",
           "message": "The identity provider dev could not complete the check"
+        }
+      }
+    }
+  },
+  {
+    "name": "sandbox.webhooks.unavailable",
+    "request": {
+      "method": "POST",
+      "path": "/v1/webhooks/endpoints",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "url": "https://example.com/hook",
+        "subscribedEvents": [
+          "contest.opened"
+        ]
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "permission_error",
+          "code": "sandbox_webhooks_unavailable",
+          "message": "Outbound webhooks are unavailable on self-serve sandboxes"
+        }
+      }
+    }
+  },
+  {
+    "name": "auth.api_key_expired",
+    "request": {
+      "method": "GET",
+      "path": "/v1/origins",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 401,
+      "body": {
+        "error": {
+          "type": "authentication_error",
+          "code": "api_key_expired",
+          "message": "This sandbox API key has expired"
         }
       }
     }

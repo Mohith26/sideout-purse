@@ -15,6 +15,7 @@ export function TenantStatus({ tenantId, status, admin }: { tenantId: string; st
   const [reason, setReason] = useState('');
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
+  if (status === 'retired') return <p className="so-field__hint">This sandbox expired and cannot be reinstated.</p>;
   if (!admin) return <p className="so-field__hint">Only an admin can suspend or reinstate a tenant.</p>;
   const next: Status = status === 'active' ? 'suspended' : 'active';
 

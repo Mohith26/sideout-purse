@@ -1840,3 +1840,38 @@ records the scoreline.
 
 The clock-skew and age windows are constants documented in `docs/attestation.md`; nothing
 about the feature needs configuring per environment, and the migrations carry the schema.
+
+## Stretch: Sandbox self-serve decisions
+
+Self-serve minting defaults on outside production and off in production. Firstmate
+approved explicit `SANDBOX_SELF_SERVE=true` on the Purse Railway service for the public
+demo; deployment is separate. `/health` reports the effective `sandboxSelfServe` value.
+
+A visitor receives a fresh tenant, an operator-scoped sandbox secret key (credits and
+close remain tenant-scoped), and a publishable key. Both expire after 24 hours; an
+immutable tenant lease also enforces that deadline on any subsequently created key.
+Minting takes `{}` and an address-scoped idempotency key. A replay returns the same tenant
+with null keys, preserving the return-once rule without storing plaintext credentials.
+Three live leases per address are enforced in PostgreSQL under an advisory lock; process
+and address token buckets reuse the API limiter (ten per process / one per minute, three
+per address / one per hour). Attempts including retries consume tokens.
+
+The allowed append-only fallback is retirement: `db:purge` sets expired sandbox tenants
+to `retired`, revokes keys and origins, disables endpoints and audits the retirement.
+Tenant data and immutable lease receipts, including the minting address, remain. No new
+DELETE grants are introduced. The immutable lease table receives SELECT/INSERT only;
+existing column-level UPDATE grants support retirement. Managed tenants have no lease.
+The console cannot reinstate a retired tenant, and lease expiry still blocks credentials
+before the maintenance command runs.
+
+Firstmate decided self-serve tenants cannot mutate outbound webhook endpoints or replay
+deliveries: they receive `sandbox_webhooks_unavailable`. Reads remain possible. Existing
+tenants keep their behavior. Fleet-wide destination validation and DNS/IP pinning are a
+separate follow-up; this supersedes the initial suggestion to add that work here.
+
+The API serves framework-free `/docs`, with manually applied design-token values and
+examples bundled directly from the contract fixtures. A test compares its examples with
+the registered v1 routes and its provider table with `docs/providers.md`. The browser
+keeps keys in memory, permits requests only to this API's `/v1/` paths, refuses redirects,
+and sends the existing embed routes their publishable key. Other routes use the secret
+key, except public endpoints. Host-only internal reconciliation remains protected.

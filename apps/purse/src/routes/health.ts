@@ -25,6 +25,7 @@ import { lastReconcileRun, type ReconcileSummary } from '../ledger';
 export type HealthReport = {
   status: 'ok' | 'failing';
   sha: string;
+  sandboxSelfServe: boolean;
   migrations: MigrationState;
   rulesetVersion: string | null;
   sdkVersion: string;
@@ -36,6 +37,7 @@ export type HealthDeps = {
   db: Db;
   migrationsFolder: string;
   sha: string;
+  sandboxSelfServe: boolean;
 };
 
 export function healthRoutes(deps: HealthDeps) {
@@ -59,6 +61,7 @@ export function healthRoutes(deps: HealthDeps) {
     const report: HealthReport = {
       status: failing === null ? 'ok' : 'failing',
       sha: deps.sha,
+      sandboxSelfServe: deps.sandboxSelfServe,
       migrations,
       rulesetVersion,
       sdkVersion: SDK_VERSION,

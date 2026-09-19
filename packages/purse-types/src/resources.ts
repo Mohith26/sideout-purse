@@ -252,3 +252,12 @@ export type VoidResource = {
   contest: ContestResource;
   refundJournalEntryIds: string[];
 };
+
+/** Self-serve credentials are revealed once; a mint retry returns null keys. */
+export type SandboxKeysResource = {
+  tenantId: string;
+  secretKey: string | null;
+  publishableKey: string | null;
+  expiresAt: string;
+  replayed: boolean;
+};

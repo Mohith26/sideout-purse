@@ -28,7 +28,7 @@ import type { WebhookDeliveryResource, WebhookEndpointResource } from './webhook
 export const OPERATOR_ROLES = ['admin', 'operator'] as const;
 export type OperatorRole = (typeof OPERATOR_ROLES)[number];
 
-export const TENANT_STATUSES = ['active', 'suspended'] as const;
+export const TENANT_STATUSES = ['active', 'suspended', 'retired'] as const;
 export type TenantStatus = (typeof TENANT_STATUSES)[number];
 
 export const ACCOUNT_KINDS = ['user_wallet', 'contest_escrow', 'sponsor_funding', 'promo_liability', 'platform_fee', 'external_settlement'] as const;

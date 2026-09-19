@@ -35,6 +35,7 @@ describe('GET /health', () => {
       data: {
         status: 'ok',
         sha: 'abc123',
+        sandboxSelfServe: true,
         migrations: { applied: journal.entries.length, available: journal.entries.length, pending: 0 },
         rulesetVersion: null,
         sdkVersion: SDK_VERSION,

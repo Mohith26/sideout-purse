@@ -14,6 +14,7 @@ import {
   type EntryResource,
   type PreviewResource,
   type ResultsResource,
+  type SandboxKeysResource,
   type SettlementResource,
   type UserResource,
   type WebhookDeliveryResource,
@@ -21,7 +22,7 @@ import {
 } from '@purse/types';
 import { type Id } from '@repo/ids';
 
-import { resetAuthCaches } from '../../src/auth';
+import { createApiKey, resetAuthCaches } from '../../src/auth';
 import type { Database } from '../../src/db/client';
 import { eligibilityDecisions } from '../../src/db/schema';
 import { reconcile } from '../../src/ledger';
@@ -398,9 +399,27 @@ describe('v1 contract', () => {
     const secretOnEmbed = await op.record('embed.state.publishable_key_required', 'GET', '/v1/embed/state');
     expect(secretOnEmbed.error).toMatchObject({ type: 'authentication_error', code: 'publishable_key_required' });
 
+    const cookie = session.headers.get('set-cookie')?.split(';')[0] ?? '';
+    await browserKey.record('embed.contests.get', 'GET', `/v1/embed/contests/${contestId}`, undefined, { headers: { Cookie: cookie } });
+    await browserKey.record('embed.contests.entries.invalid_state', 'POST', `/v1/embed/contests/${contestId}/entries`, {}, { headers: { Cookie: cookie } });
+    await browserKey.record('embed.identity.already_verified', 'POST', '/v1/embed/identity/start', {}, { headers: { Cookie: cookie } });
+    await browserKey.record('embed.signout', 'POST', '/v1/embed/signout', {});
+    const sandbox = await anonymous.record<SandboxKeysResource>('sandbox.keys.create', 'POST', '/v1/sandbox/keys', {}, { idempotencyKey: 'contract-sandbox-mint' });
+    expect(sandbox.status).toBe(201);
+    const sandboxReplay = await anonymous.record<SandboxKeysResource>('sandbox.keys.replay', 'POST', '/v1/sandbox/keys', {}, { idempotencyKey: 'contract-sandbox-mint' });
+    expect(sandboxReplay.data?.secretKey).toBeNull();
+    expect(sandboxReplay.data?.tenantId).toBe(sandbox.data?.tenantId);
+    const sandboxApi = new Recorder(client(h, sandbox.data?.secretKey ?? 'missing'));
+    await sandboxApi.record('sandbox.webhooks.unavailable', 'POST', '/v1/webhooks/endpoints', { url: 'https://example.com/hook', subscribedEvents: ['contest.opened'] });
+
+    const expiredKey = await createApiKey(h.database.db, { tenantId: boot.tenantId, kind: 'secret', environment: 'sandbox', expiresAt: new Date(0) });
+    const expired = new Recorder(client(h, expiredKey.plaintext));
+    expect((await expired.record('auth.api_key_expired', 'GET', '/v1/origins')).status).toBe(401);
+
     const health = await anonymous.record<{ rulesetVersion: string }>('health', 'GET', '/v1/health');
     expect(health.status).toBe(200);
     expect(health.data?.rulesetVersion).toBe('2026.09.1');
+    expect((await anonymous.record('status', 'GET', '/v1/status')).status).toBe(200);
     const reconciled = await anonymous.record<{ ok: boolean }>('internal.reconcile', 'GET', '/v1/internal/reconcile');
     expect(reconciled.status).toBe(200);
     expect(reconciled.data?.ok).toBe(true);
@@ -423,7 +442,7 @@ describe('v1 contract', () => {
       expect(JSON.stringify(internal.raw)).not.toContain('vendor down');
 
       // Every sealed type reached, each with its own codes, at its documented status.
-      const all = [op, scopeless, anonymous, browserKey, guess, limited, broken];
+      const all = [op, scopeless, anonymous, browserKey, guess, limited, broken, sandboxApi, expired];
       const seen = new Map<ApiErrorType, Set<string>>();
       const statusOf = new Map<ApiErrorType, Set<number>>();
       for (const recorder of all) {

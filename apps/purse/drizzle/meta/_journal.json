@@ -134,6 +134,20 @@
       "when": 1789797481581,
       "tag": "0018_device_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789819114406,
+      "tag": "0019_sandbox_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1789819127310,
+      "tag": "0020_sandbox_guards",
+      "breakpoints": true
     }
   ]
 }

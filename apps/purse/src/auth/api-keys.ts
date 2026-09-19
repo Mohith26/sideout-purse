@@ -5,7 +5,7 @@ import { and, eq, isNull, lte, or, sql } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
-import { apiKeys, tenants, type ApiKey, type ApiKeyEnvironment, type ApiKeyKind, type ApiKeyScope, type Tenant } from '../db/schema';
+import { apiKeys, sandboxLeases, tenants, type ApiKey, type ApiKeyEnvironment, type ApiKeyKind, type ApiKeyScope, type Tenant } from '../db/schema';
 import { recordAudit, SYSTEM_ACTOR, type Actor } from '../ledger/audit';
 import { AuthError } from './errors';
 
@@ -42,6 +42,7 @@ export type CreateApiKeyInput = {
   environment: ApiKeyEnvironment;
   scopes?: readonly ApiKeyScope[];
   label?: string | null;
+  expiresAt?: Date;
   actor?: Actor;
   requestId?: string;
 };
@@ -94,7 +95,7 @@ export async function createApiKey(db: DbOrTx, input: CreateApiKeyInput): Promis
   return db.transaction(async (tx) => {
     const [key] = await tx
       .insert(apiKeys)
-      .values({ id: newId('key'), tenantId: input.tenantId, kind: input.kind, environment: input.environment, keyPrefix: keyPrefixOf(plaintext), keyHash, scopes, label })
+      .values({ id: newId('key'), tenantId: input.tenantId, kind: input.kind, environment: input.environment, keyPrefix: keyPrefixOf(plaintext), keyHash, scopes, label, expiresAt: input.expiresAt ?? null })
       .returning();
     if (key === undefined) throw new Error('api_keys insert returned no row');
     await recordAudit(tx, {
@@ -144,6 +145,7 @@ export type AuthenticatedKey = {
   tenant: Tenant;
   /** The actor a request on this key acts as: an operator when the key carries the scope, the tenant otherwise. */
   actor: Actor;
+  selfServe: boolean;
 };
 
 export function actorFor(key: ApiKey): Actor {
@@ -224,13 +226,18 @@ export async function authenticateApiKey(db: DbOrTx, presented: string, options:
     verifiedCache.forget(found.key.id);
     throw new AuthError('api_key_revoked', 'This API key was revoked', { keyPrefix: found.key.keyPrefix, revokedAt: found.key.revokedAt.toISOString() });
   }
+  const [lease] = await db.select({ expiresAt: sandboxLeases.expiresAt }).from(sandboxLeases).where(eq(sandboxLeases.tenantId, found.tenant.id));
+  if ((found.key.expiresAt !== null && found.key.expiresAt <= now) || (lease !== undefined && lease.expiresAt <= now)) {
+    verifiedCache.forget(found.key.id);
+    throw new AuthError('api_key_expired', 'This sandbox API key has expired');
+  }
   if (found.tenant.status !== 'active') {
     throw new AuthError('tenant_suspended', 'This tenant is suspended', { tenantId: found.tenant.id });
   }
 
   verifiedCache.set(digest, found.key.id, now.getTime());
   await touchLastUsed(db, found.key, now);
-  return { key: found.key, tenant: found.tenant, actor: actorFor(found.key) };
+  return { key: found.key, tenant: found.tenant, actor: actorFor(found.key), selfServe: lease !== undefined };
 }
 
 /** Write `last_used_at` at most once a minute per key, remembered per process so a hot key costs no write. */

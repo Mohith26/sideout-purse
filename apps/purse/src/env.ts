@@ -71,6 +71,8 @@ const schema = z.object({
   DEV_IDENTITY_ALLOW: commaList,
   DEV_IDENTITY_DENY: commaList,
   DEV_IDENTITY_PENDING: commaList,
+  // Public sandbox minting: opt in explicitly on a production demo.
+  SANDBOX_SELF_SERVE: z.enum(['true', 'false']).optional(),
   // Per-key token bucket for /v1 (spec 4.7 `rate_limited`).
   RATE_LIMIT_BURST: z.coerce.number().int().min(1).max(100_000).default(100),
   RATE_LIMIT_PER_SECOND: z.coerce.number().positive().max(100_000).default(20),
@@ -115,6 +117,7 @@ export type Env = {
   rateLimit: { burst: number; perSecond: number };
   /** Proxies whose `X-Forwarded-For` entry is trusted for the client address; 0 means the socket's address. */
   trustedProxyHops: number;
+  sandboxSelfServe: boolean;
   /** `PURSE_SECRET_KEY`, or the development stand-in outside production (`secretKeyIsDefault`). */
   secretKey: string;
   secretKeyIsDefault: boolean;
@@ -177,6 +180,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     },
     rateLimit: { burst: raw.RATE_LIMIT_BURST, perSecond: raw.RATE_LIMIT_PER_SECOND },
     trustedProxyHops: raw.TRUSTED_PROXY_HOPS,
+    sandboxSelfServe: raw.SANDBOX_SELF_SERVE === undefined ? !production : raw.SANDBOX_SELF_SERVE === 'true',
     secretKey: raw.PURSE_SECRET_KEY ?? DEVELOPMENT_SECRET_KEY,
     secretKeyIsDefault: raw.PURSE_SECRET_KEY === undefined,
     embed: { smsProvider, staticDir: raw.PURSE_EMBED_DIR },
