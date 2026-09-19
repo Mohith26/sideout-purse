@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import { expect, test } from '@playwright/test';
 
@@ -31,6 +32,9 @@ test('an operator signs in, follows a settled contest into its settlement entry,
   await expect(page.getByRole('heading', { name: /opening weekend doubles/ })).toBeVisible();
   await expect(page.getByText('Settled', { exact: true }).first()).toBeVisible();
 
+  const contestUrl = new URL(page.url());
+  const tenantId = contestUrl.pathname.split('/')[2] ?? '';
+
   // The results table links every payout to the one settlement entry; follow it into the ledger.
   const results = page.getByRole('table', { name: 'Results' });
   await expect(results).toBeVisible();
@@ -53,6 +57,40 @@ test('an operator signs in, follows a settled contest into its settlement entry,
   await expect(page.getByTestId('balance-now')).toContainText('0');
   await page.goto(`${page.url()}?asOf=2000-01-01T00:00:00.000Z`);
   await expect(page.getByTestId('balance-as-of')).toContainText('0');
+
+  // Replay has an entry-addressed URL, a native keyboard slider and historical checks.
+  await page.goto(`/tenants/${tenantId}/ledger`);
+  await page.getByRole('link', { name: 'Replay', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Ledger replay' })).toBeVisible();
+  await expect(page).toHaveURL(/\/replay\?at=je_/);
+  const latestReplayUrl = page.url();
+  const balances = page.getByTestId('replay-balances');
+  const latestBalances = await balances.innerText();
+  const slider = page.getByRole('slider', { name: 'Journal position' });
+  await slider.focus();
+  await slider.press('Home');
+  await expect(page.getByRole('status').filter({ hasText: /^Entry 1 of/ })).toBeVisible();
+  await expect.poll(() => balances.innerText()).not.toBe(latestBalances);
+  await expect(page.getByTestId('replay-conservation')).toHaveAttribute('data-status', 'ok');
+  await expect(page.getByTestId('replay-entry-balanced')).toHaveText('Entry balances');
+  await expect(page.getByRole('button', { name: 'Previous entry' })).toBeDisabled();
+  const firstReplayUrl = page.url();
+  await slider.press('ArrowRight');
+  await expect(page.getByRole('status').filter({ hasText: /^Entry 2 of/ })).toBeVisible();
+  await expect(page.getByTestId('replay-conservation')).toHaveAttribute('data-status', 'ok');
+  await page.goBack();
+  await expect(page).toHaveURL(firstReplayUrl);
+  await expect(page.getByRole('status').filter({ hasText: /^Entry 1 of/ })).toBeVisible();
+  await page.getByLabel('Entry ID', { exact: true }).fill(new URL(latestReplayUrl).searchParams.get('at') ?? '');
+  await page.getByRole('button', { name: 'Jump to entry' }).click();
+  await expect(page).toHaveURL(latestReplayUrl);
+  await expect.poll(() => balances.innerText()).toBe(latestBalances);
+  await page.reload();
+  await expect.poll(() => balances.innerText()).toBe(latestBalances);
+  await expect(page.getByTestId('replay-conservation')).toHaveAttribute('data-status', 'ok');
+  const screenshots = path.resolve(import.meta.dirname, '../../../docs/screenshots');
+  mkdirSync(screenshots, { recursive: true });
+  await page.screenshot({ path: path.join(screenshots, 'ledger-replay.png'), fullPage: true });
 
   // The invariant panel runs reconcile and reports green.
   await page.goto('/invariants');

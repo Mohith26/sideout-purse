@@ -142,6 +142,9 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
 
 ## Operator console
 
+- Entry-addressed ledger replay: `docs/ledger-replay.md` documents ordering, pagination,
+  historical conservation and the console smoke screenshot.
+
 - `apps/purse/src/routes/console/` is the console's API, mounted at `/console` behind the
   operator session (`Authorization: Bearer cst_...`, `src/operators/`: argon2id passwords,
   stateful `operator_sessions`, `requireAdmin()` for tenant status, keys and rulesets).

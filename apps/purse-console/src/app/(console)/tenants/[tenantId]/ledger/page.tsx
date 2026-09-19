@@ -32,7 +32,7 @@ export default async function TenantLedgerPage({ params, searchParams }: { param
   if (page.nextCursor !== null) nextQuery.set('cursor', page.nextCursor);
   return (
     <>
-      <PageHead title="Ledger" crumbs={[{ label: 'Ledger', href: '/ledger' }, { label: tenant.name, href: `/tenants/${tenant.id}` }, { label: 'Accounts and journal' }]} lede="Balances are the signed sum of each account's lines relative to its normal side, computed now. Open an account for its history and a point-in-time balance; open an entry to see its lines balance." />
+      <PageHead actions={<Link className="so-button so-button--secondary" href={`${path}/replay`}>Replay</Link>} title="Ledger" crumbs={[{ label: 'Ledger', href: '/ledger' }, { label: tenant.name, href: `/tenants/${tenant.id}` }, { label: 'Accounts and journal' }]} lede="Balances are the signed sum of each account's lines relative to its normal side, computed now. Open an account for its history and a point-in-time balance; open an entry to see its lines balance." />
       <AccountTree accounts={accounts} />
       <Card title={query.has('contestId') ? 'Journal (one contest)' : 'Journal'}>
         <StatusFilter options={JOURNAL_ENTRY_KINDS} current={kindFilter} basePath={path} param="kind" extra={extra} />

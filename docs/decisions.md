@@ -1346,3 +1346,22 @@ its parent and never scrolls.
 - The `.env.example` templates could not be edited from the automated pipeline (writes to
   env files are denied by policy); `apps/*/src/env.ts` and `docs/deploy.md` are the
   variable lists.
+
+## Stretch: ledger replay decisions
+
+- Replay follows the explorer's existing `(posted_at, id)` order, preserving database
+  timestamp precision. Positions are one-based; the default is latest, and an empty
+  journal has position zero. Shareable links use entry IDs so later postings do not
+  retarget the link. Same-timestamp entries are distinguished by ID.
+- One SQL statement provides a consistent read snapshot for position, balances, lines
+  and totals. Balances are derived from the append-only journal, without snapshots or
+  per-account queries. Account pages contain up to 200 rows in ID order; conservation,
+  changed IDs and touched escrows remain complete across pages.
+- A changed balance means the net effect of the selected entry against its immediate
+  predecessor, even when navigating backwards or jumping. Zero-net accounts are not
+  highlighted. Metadata is current; zero-history accounts remain visible at zero.
+- Conservation normalizes account sides (credit positive, debit negative) before summing
+  per asset. The screen also checks the selected entry's balanced lines and lists historical
+  escrows; it does not apply today's contest state to historical balances or claim to run
+  all seven invariants historically. The existing live invariant panel remains authoritative
+  for the current ledger.

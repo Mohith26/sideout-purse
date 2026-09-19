@@ -1,4 +1,5 @@
 import type {
+  LedgerReplayResource,
   AccountDetailResource,
   AccountEntryResource,
   AccountResource,
@@ -22,6 +23,7 @@ import type {
 import type { BrowsedContest } from '../../contests';
 import type { ApiKey, AuditRow, JournalEntry, JournalLine, OperatorFlag, RulesetRow, Tenant, UserRestriction, WebhookEndpoint } from '../../db/schema';
 import type { AccountDetail, AccountEntry, AccountSummary, EntryDetail, EntrySummary } from '../../ledger';
+import type { LedgerReplay } from '../../ledger/replay';
 import type { FoundUser } from '../../users';
 import type { DeliveryWithAttempts } from '../../webhooks';
 import { contestResource, deliveryResource, endpointResource } from '../v1/serialize';
@@ -195,5 +197,16 @@ export function auditRowResource(row: AuditRow): AuditRowResource {
     after: row.after,
     requestId: row.requestId,
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export function ledgerReplayResource(value: LedgerReplay): LedgerReplayResource {
+  const account = (a: LedgerReplay['accounts'][number]) => ({ ...a, balance: a.balance.toString(), delta: a.delta.toString() });
+  return {
+    ...value,
+    accounts: value.accounts.map(account), escrows: value.escrows.map(account),
+    lines: value.lines.map((line) => ({ ...line, amount: line.amount.toString() })),
+    totals: value.totals.map((t) => ({ ...t, net: t.net.toString() })),
+    entryTotals: value.entryTotals.map((t) => ({ ...t, debits: t.debits.toString(), credits: t.credits.toString() })),
   };
 }
