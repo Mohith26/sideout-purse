@@ -16,6 +16,8 @@ export const USERS_ERROR_CODES = {
   restriction_not_found: 'invalid_request',
   restriction_already_lifted: 'invalid_state',
   restriction_lift_forbidden: 'permission_error',
+  // Devices (spec section 12, item 1)
+  device_not_found: 'invalid_request',
 } as const satisfies Record<string, ApiErrorType>;
 
 export type UsersErrorCode = keyof typeof USERS_ERROR_CODES;

@@ -9,6 +9,7 @@ import type { BestOf } from '../../db/schema';
 import type { SetScore } from '../../domain/scoreline';
 import { api, type ApiResult } from '../../lib/api-client';
 import { formatTime } from '../../lib/format';
+import { AttestationBadge } from '../attestation/AttestationBadge';
 import { useLiveHold } from '../motion/live-hold';
 import { MATCH_STATUS_PILL } from '../status/pills';
 import { ScorelineCompare, ScorelineTable } from './ScorelineCompare';
@@ -16,9 +17,11 @@ import { enteredRows, judgeRows, ScorelineEditor, toSetScores, visibleRows, type
 
 /**
  * One disputed match in the organizer queue (spec 5.3, item 6): both scorelines side by
- * side with the differing set marked, and a resolve form built on the same steppers
- * players use. The organizer's scoreline is authoritative and attributed to them; after
- * it lands the card shows who settled it and how far the Purse push got.
+ * side with the differing set marked, whether each was signed by a checked-in phone
+ * (spec section 12, item 1: an unsigned reading is visible during arbitration), and a
+ * resolve form built on the same steppers players use. The organizer's scoreline is
+ * authoritative and attributed to them; after it lands the card shows who settled it and
+ * how far the Purse push got.
  */
 export type DisputeCardData = {
   match: { id: string; bestOf: BestOf; courtLabel: string | null; teamAId: string | null; teamBId: string | null };
@@ -28,7 +31,7 @@ export type DisputeCardData = {
   teamB: { id: string; name: string } | null;
   disputedReason: string | null;
   differences: readonly number[];
-  submissions: Array<{ teamId: string | null; sets: SetScore[]; submittedBy: string; createdAt: string }>;
+  submissions: Array<{ teamId: string | null; sets: SetScore[]; submittedBy: string; createdAt: string; attested: boolean }>;
   timeZone: string;
 };
 
@@ -119,6 +122,17 @@ export function DisputeCard({ dispute, resolve }: DisputeCardProps) {
       ) : (
         <>
           <p className="mt-3 text-text-secondary">{dispute.disputedReason ?? 'The two scorelines differ.'}</p>
+          <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-2" aria-label="Who signed each reading" data-testid="dispute-signatures">
+            {[
+              { team: teamAName, sub: subA, id: match.teamAId },
+              { team: teamBName, sub: subB, id: match.teamBId },
+            ].map(({ team, sub, id }) => (
+              <li key={id ?? team} className="inline-flex items-center gap-2 text-text-secondary" data-team={id ?? ''}>
+                <span>{team}</span>
+                {sub === undefined ? <span className="type-label text-text-tertiary">not submitted</span> : <AttestationBadge attested={sub.attested} who={sub.submittedBy} />}
+              </li>
+            ))}
+          </ul>
           <ScorelineCompare
             className="mt-4"
             teamA={teamAName}

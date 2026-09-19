@@ -1,4 +1,16 @@
-import { IDEMPOTENCY_KEY_HEADER, IDEMPOTENT_REPLAYED_HEADER, REQUEST_ID_HEADER, RETRY_AFTER_HEADER, isIdempotencyKey, type ContestKind, type EmbedFlow, type PrizeStructure, type WebhookEventType } from '@purse/types';
+import {
+  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENT_REPLAYED_HEADER,
+  REQUEST_ID_HEADER,
+  RETRY_AFTER_HEADER,
+  isIdempotencyKey,
+  type ContestKind,
+  type EcPublicJwk,
+  type EmbedFlow,
+  type PrizeStructure,
+  type ScoreAttestationInput,
+  type WebhookEventType,
+} from '@purse/types';
 import type { z } from 'zod';
 
 import { PurseApiError, PurseResponseError, PurseUnreachableError } from './errors';
@@ -6,6 +18,7 @@ import { redact, redactString } from './redact';
 import {
   contestSchema,
   creditSchema,
+  deviceSchema,
   embedTokenSchema,
   entrySchema,
   errorEnvelopeSchema,
@@ -92,7 +105,7 @@ export type CreateContestInput = {
   settlementPolicy?: 'operator_close' | 'auto';
 };
 
-export type ScoreSubmissionInput = { userId: string; score: number | null; attemptFinished: boolean; sourceRef?: string | null };
+export type ScoreSubmissionInput = { userId: string; score: number | null; attemptFinished: boolean; sourceRef?: string | null; attestation?: ScoreAttestationInput | null };
 
 export const DEFAULT_PURSE_TIMEOUT_MS = 10_000;
 /** How many times a rate-limited request is sent before the 429 is the answer. */
@@ -159,6 +172,16 @@ export class PurseClient {
 
   mintEmbedToken(input: { userId: string; flow: EmbedFlow }, ctx: CallContext) {
     return this.call('POST', '/v1/embed/tokens', input, embedTokenSchema, ctx);
+  }
+
+  // ---- Devices (signed score attestation, spec section 12 item 1) ---------------------------
+
+  registerDevice(userId: string, input: { publicKey: EcPublicJwk; label?: string | null }, ctx: CallContext) {
+    return this.call('POST', `/v1/users/${encodeURIComponent(userId)}/devices`, input, deviceSchema, ctx);
+  }
+
+  revokeDevice(userId: string, deviceId: string, input: { reason?: string | null }, ctx: CallContext) {
+    return this.call('POST', `/v1/users/${encodeURIComponent(userId)}/devices/${encodeURIComponent(deviceId)}/revoke`, input, deviceSchema, ctx);
   }
 
   // ---- Contests ---------------------------------------------------------------------------

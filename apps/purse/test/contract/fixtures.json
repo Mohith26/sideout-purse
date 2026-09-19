@@ -339,6 +339,156 @@
     }
   },
   {
+    "name": "users.devices.create",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/devices",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "publicKey": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "r8lq57oQ4z3J_akci3XxcZfjeO7xV2_PG-HWHjqVjaE",
+          "y": "gD8H4FrMv-l3t3Z0DH2Ar6ErHiAXcl47r7Ry2GMW1Qo"
+        },
+        "label": "Ana’s phone"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "udv_<id>",
+          "userId": "usr_<id>",
+          "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+          "algorithm": "ES256",
+          "publicKey": {
+            "x": "r8lq57oQ4z3J_akci3XxcZfjeO7xV2_PG-HWHjqVjaE",
+            "y": "gD8H4FrMv-l3t3Z0DH2Ar6ErHiAXcl47r7Ry2GMW1Qo",
+            "crv": "P-256",
+            "kty": "EC"
+          },
+          "label": "Ana’s phone",
+          "registeredAt": "<instant>",
+          "revokedAt": null,
+          "revokedReason": null
+        }
+      }
+    }
+  },
+  {
+    "name": "users.devices.create.existing",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/devices",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "publicKey": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "r8lq57oQ4z3J_akci3XxcZfjeO7xV2_PG-HWHjqVjaE",
+          "y": "gD8H4FrMv-l3t3Z0DH2Ar6ErHiAXcl47r7Ry2GMW1Qo"
+        }
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "udv_<id>",
+          "userId": "usr_<id>",
+          "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+          "algorithm": "ES256",
+          "publicKey": {
+            "x": "r8lq57oQ4z3J_akci3XxcZfjeO7xV2_PG-HWHjqVjaE",
+            "y": "gD8H4FrMv-l3t3Z0DH2Ar6ErHiAXcl47r7Ry2GMW1Qo",
+            "crv": "P-256",
+            "kty": "EC"
+          },
+          "label": "Ana’s phone",
+          "registeredAt": "<instant>",
+          "revokedAt": null,
+          "revokedReason": null
+        }
+      }
+    }
+  },
+  {
+    "name": "users.devices.create.validation_failed",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/devices",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "publicKey": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "r8lq57oQ4z3J_akci3XxcZfjeO7xV2_PG-HWHjqVjaE",
+          "y": "gD8H4FrMv-l3t3Z0DH2Ar6ErHiAXcl47r7Ry2GMW1Qo",
+          "d": "uMZeDzWLGS0CJ2IYibjta_L_-lUM2D5r1wq_Zddy_RU"
+        }
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "invalid_input",
+          "message": "publicKey must be a P-256 public JWK (kty EC, crv P-256, x, y) and nothing else",
+          "detail": {
+            "field": "publicKey"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.devices.list",
+    "request": {
+      "method": "GET",
+      "path": "/v1/users/usr_<id>/devices",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "devices": [
+            {
+              "id": "udv_<id>",
+              "userId": "usr_<id>",
+              "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+              "algorithm": "ES256",
+              "publicKey": {
+                "x": "r8lq57oQ4z3J_akci3XxcZfjeO7xV2_PG-HWHjqVjaE",
+                "y": "gD8H4FrMv-l3t3Z0DH2Ar6ErHiAXcl47r7Ry2GMW1Qo",
+                "crv": "P-256",
+                "kty": "EC"
+              },
+              "label": "Ana’s phone",
+              "registeredAt": "<instant>",
+              "revokedAt": null,
+              "revokedReason": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
     "name": "users.get.permission_error",
     "request": {
       "method": "GET",
@@ -1687,6 +1837,361 @@
     }
   },
   {
+    "name": "contests.scores.create.attested",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/scores",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "scores": [
+          {
+            "userId": "usr_<id>",
+            "score": 1,
+            "attemptFinished": false,
+            "sourceRef": "mch_<id>",
+            "attestation": {
+              "userId": "usr_<id>",
+              "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+              "algorithm": "ES256",
+              "signature": "<signature>",
+              "timestamp": "<instant>",
+              "refs": {
+                "tournamentId": "trn_<id>",
+                "teamId": "team-a"
+              },
+              "content": {
+                "matchId": "mch_<id>",
+                "sets": [
+                  [
+                    1,
+                    21,
+                    18
+                  ],
+                  [
+                    2,
+                    19,
+                    21
+                  ],
+                  [
+                    3,
+                    15,
+                    11
+                  ]
+                ]
+              }
+            }
+          },
+          {
+            "userId": "usr_<id>",
+            "score": 0,
+            "attemptFinished": false,
+            "sourceRef": "mch_<id>"
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "contest": {
+            "id": "cnt_<id>",
+            "externalId": "sideout:doubles-1",
+            "kind": "tournament",
+            "title": "Saturday doubles",
+            "asset": "POINTS",
+            "entryAmount": "100",
+            "maxParticipants": 8,
+            "prizeStructure": {
+              "type": "percentage_split",
+              "percentages": [
+                50,
+                30,
+                20
+              ]
+            },
+            "tieBreak": "split_evenly",
+            "settlementPolicy": "operator_close",
+            "eligibilityRulesetVersion": "2026.09.1",
+            "state": "in_progress",
+            "opensAt": null,
+            "locksAt": null,
+            "escrowAccountId": "acct_<id>",
+            "escrowBalance": "200",
+            "participantCount": 2,
+            "settledAt": null,
+            "createdAt": "<instant>",
+            "updatedAt": "<instant>"
+          },
+          "scores": [
+            {
+              "id": "sco_<id>",
+              "contestId": "cnt_<id>",
+              "userId": "usr_<id>",
+              "score": 1,
+              "attemptFinished": false,
+              "submittedAt": "<instant>",
+              "sourceRef": "mch_<id>",
+              "attestationState": "verified",
+              "attestation": {
+                "refs": {
+                  "teamId": "team-a",
+                  "tournamentId": "trn_<id>"
+                },
+                "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+                "state": "verified",
+                "userId": "usr_<id>",
+                "content": {
+                  "sets": [
+                    [
+                      1,
+                      21,
+                      18
+                    ],
+                    [
+                      2,
+                      19,
+                      21
+                    ],
+                    [
+                      3,
+                      15,
+                      11
+                    ]
+                  ],
+                  "matchId": "mch_<id>"
+                },
+                "deviceId": "udv_<id>",
+                "algorithm": "ES256",
+                "checkedAt": "<instant>",
+                "signature": "<signature>",
+                "timestamp": "<instant>"
+              }
+            },
+            {
+              "id": "sco_<id>",
+              "contestId": "cnt_<id>",
+              "userId": "usr_<id>",
+              "score": 0,
+              "attemptFinished": false,
+              "submittedAt": "<instant>",
+              "sourceRef": "mch_<id>",
+              "attestationState": "none",
+              "attestation": null
+            }
+          ],
+          "settlement": null
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.scores.invalid_attestation",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/scores",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "scores": [
+          {
+            "userId": "usr_<id>",
+            "score": 2,
+            "attemptFinished": false,
+            "sourceRef": "mch_<id>",
+            "attestation": {
+              "userId": "usr_<id>",
+              "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+              "algorithm": "ES256",
+              "signature": "<signature>",
+              "timestamp": "<instant>",
+              "refs": {
+                "tournamentId": "trn_<id>",
+                "teamId": "team-a"
+              },
+              "content": {
+                "matchId": "mch_<id>",
+                "sets": [
+                  [
+                    1,
+                    21,
+                    18
+                  ],
+                  [
+                    2,
+                    19,
+                    21
+                  ],
+                  [
+                    3,
+                    15,
+                    12
+                  ]
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 422,
+      "body": {
+        "error": {
+          "type": "invalid_attestation",
+          "code": "attestation_signature_invalid",
+          "message": "The signature does not verify against device udv_<id> over this score's canonical form",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "attestingUserId": "usr_<id>",
+            "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+            "reason": "signature_invalid",
+            "deviceId": "udv_<id>",
+            "sourceRef": "mch_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.devices.revoke",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/devices/udv_<id>/revoke",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "reason": "phone lost"
+      }
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "udv_<id>",
+          "userId": "usr_<id>",
+          "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+          "algorithm": "ES256",
+          "publicKey": {
+            "x": "r8lq57oQ4z3J_akci3XxcZfjeO7xV2_PG-HWHjqVjaE",
+            "y": "gD8H4FrMv-l3t3Z0DH2Ar6ErHiAXcl47r7Ry2GMW1Qo",
+            "crv": "P-256",
+            "kty": "EC"
+          },
+          "label": "Ana’s phone",
+          "registeredAt": "<instant>",
+          "revokedAt": "<instant>",
+          "revokedReason": "phone lost"
+        }
+      }
+    }
+  },
+  {
+    "name": "contests.scores.invalid_attestation.revoked",
+    "request": {
+      "method": "POST",
+      "path": "/v1/contests/cnt_<id>/scores",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "scores": [
+          {
+            "userId": "usr_<id>",
+            "score": 2,
+            "attemptFinished": false,
+            "sourceRef": "mch_<id>",
+            "attestation": {
+              "userId": "usr_<id>",
+              "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+              "algorithm": "ES256",
+              "signature": "<signature>",
+              "timestamp": "<instant>",
+              "refs": {
+                "tournamentId": "trn_<id>",
+                "teamId": "team-a"
+              },
+              "content": {
+                "matchId": "mch_<id>",
+                "sets": [
+                  [
+                    1,
+                    21,
+                    18
+                  ],
+                  [
+                    2,
+                    19,
+                    21
+                  ],
+                  [
+                    3,
+                    15,
+                    11
+                  ]
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "response": {
+      "status": 422,
+      "body": {
+        "error": {
+          "type": "invalid_attestation",
+          "code": "attestation_device_revoked",
+          "message": "Device udv_<id> was revoked at <instant>; a score it signed is refused",
+          "detail": {
+            "contestId": "cnt_<id>",
+            "userId": "usr_<id>",
+            "attestingUserId": "usr_<id>",
+            "keyId": "8XbN5630JiGUaVkgMV6bdDTXYOUC485Hd2mumkzF1-o",
+            "reason": "device_revoked",
+            "deviceId": "udv_<id>",
+            "revokedAt": "<instant>"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "users.devices.revoke.not_found",
+    "request": {
+      "method": "POST",
+      "path": "/v1/users/usr_<id>/devices/udv_<id>/revoke",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "device_not_found",
+          "message": "No device udv_<id> for user usr_<id>",
+          "detail": {
+            "deviceId": "udv_<id>",
+            "userId": "usr_<id>"
+          }
+        }
+      }
+    }
+  },
+  {
     "name": "contests.scores.create",
     "request": {
       "method": "POST",
@@ -1753,7 +2258,9 @@
               "score": 21,
               "attemptFinished": true,
               "submittedAt": "<instant>",
-              "sourceRef": "match-1"
+              "sourceRef": "match-1",
+              "attestationState": "none",
+              "attestation": null
             },
             {
               "id": "sco_<id>",
@@ -1762,7 +2269,9 @@
               "score": 18,
               "attemptFinished": true,
               "submittedAt": "<instant>",
-              "sourceRef": "match-1"
+              "sourceRef": "match-1",
+              "attestationState": "none",
+              "attestation": null
             }
           ],
           "settlement": null
@@ -3350,8 +3859,8 @@
           "status": "ok",
           "sha": "test-sha",
           "migrations": {
-            "applied": 17,
-            "available": 17,
+            "applied": 19,
+            "available": 19,
             "pending": 0
           },
           "rulesetVersion": "2026.09.1",

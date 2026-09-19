@@ -1,18 +1,20 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Icons, SectionHeading, StatusPill } from '@sideout/ui';
 
+import { DevicePanel, type DevicePanelRow } from '../../../../components/attestation/DevicePanel';
 import { DrawPanel } from '../../../../components/organizer/DrawPanel';
 import { EventForm, type EventFormValues } from '../../../../components/organizer/EventForm';
 import { centsToDollars, toWallClock } from '../../../../components/organizer/event-form-values';
 import { StatusActions } from '../../../../components/organizer/StatusActions';
 import { TOURNAMENT_STATUS_PILL } from '../../../../components/status/pills';
 import { Stat } from '../../../../components/ui/Stat';
-import { charities, DIVISIONS, sponsors, teams, tournaments } from '../../../../db/schema';
+import { charities, DIVISIONS, sponsors, teams, tournaments, users } from '../../../../db/schema';
 import { DRAWABLE_FORMATS } from '../../../../domain/draw';
 import { formatCents, formatDateRange, sumCents } from '../../../../lib/format';
+import { deviceView, listTeamDevices } from '../../../../server/devices';
 import { confirmedTeamsFilter } from '../../../../server/field';
 import { organizerPageContext, pageContext } from '../../../../server/pages';
 import { listMatchViews, tournamentSummary } from '../../../../server/screens';
@@ -31,7 +33,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 /**
  * Event builder, edit mode (spec 5.3, item 6): the status controls with the validator's
- * allowed targets, the draw section with its live preview, and every editable field.
+ * allowed targets, the draw section with its live preview, the phones checked in to sign
+ * scores with a revoke control (spec section 12, item 1), and every editable field.
  * Reads are server-rendered; writes go through the admin routes from the client
  * components.
  */
@@ -49,6 +52,13 @@ export default async function EventBuilderPage({ params }: { params: Promise<{ i
     db.select({ id: charities.id, name: charities.name }).from(charities).where(eq(charities.status, 'active')).orderBy(asc(charities.name)),
     db.select({ id: teams.id, name: teams.name, seed: teams.seed }).from(teams).where(confirmedTeamsFilter(t.id)).orderBy(asc(teams.seed), asc(teams.createdAt)),
   ]);
+  const deviceRows = await listTeamDevices(db, confirmed.map((team) => team.id));
+  const deviceOwners = deviceRows.length === 0 ? [] : await db.select({ id: users.id, displayName: users.displayName }).from(users).where(inArray(users.id, [...new Set(deviceRows.map((d) => d.userId))]));
+  const devices: DevicePanelRow[] = deviceRows.map((d) => ({
+    ...deviceView(d),
+    teamName: confirmed.find((team) => team.id === d.teamId)?.name ?? 'Team',
+    memberName: deviceOwners.find((u) => u.id === d.userId)?.displayName ?? 'A player',
+  }));
   const started = views.some((v) => v.match.status !== 'scheduled' && v.match.status !== 'bye');
   const poolMatches = views.filter((v) => v.match.poolId !== null);
   const unfinishedPool = poolMatches.filter((v) => !isMatchComplete(v.match.status)).length;
@@ -152,6 +162,15 @@ export default async function EventBuilderPage({ params }: { params: Promise<{ i
           <p className="text-text-tertiary">The draw is generated once registration is closed.</p>
         ) : null}
       </section>
+
+      {t.status === 'draft' ? null : (
+        <section aria-labelledby="devices-heading" className="surface-raised rounded-card p-4 md:p-5">
+          <SectionHeading id="devices-heading" aside={<span className="tabular">{devices.filter((d) => d.revokedAt === null).length} checked in</span>}>
+            Checked-in phones
+          </SectionHeading>
+          <DevicePanel devices={devices} timeZone={t.venueTimezone} />
+        </section>
+      )}
 
       <section aria-labelledby="details-heading">
         <SectionHeading id="details-heading">Details</SectionHeading>

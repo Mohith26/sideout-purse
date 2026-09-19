@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import type { EntryResource, ResultsResource, ScoresResource, VoidResource, WithdrawalResource } from '@purse/types';
+import type { EntryResource, ResultsResource, ScoreAttestationInput, ScoresResource, VoidResource, WithdrawalResource } from '@purse/types';
 import type { Id } from '@repo/ids';
 
 import {
@@ -44,12 +44,26 @@ const entrySchema = z
   })
   .strict();
 
+/** The wire shape only; the strict contract (`@purse/types` `scoreAttestationInputSchema`) is applied by the service. */
+const attestationSchema = z
+  .object({
+    userId: z.string().min(1).max(64),
+    keyId: z.string().min(1).max(64),
+    algorithm: z.string().min(1).max(16),
+    signature: z.string().min(1).max(128),
+    timestamp: z.string().min(1).max(32),
+    refs: z.record(z.string().min(1).max(64), z.string().min(1).max(255)),
+    content: z.unknown(),
+  })
+  .strict();
+
 const scoreSchema = z
   .object({
     userId: userIdSchema,
     score: z.number().finite().nullable(),
     attemptFinished: z.boolean(),
     sourceRef: z.string().trim().min(1).max(255).nullable().optional(),
+    attestation: attestationSchema.nullable().optional(),
   })
   .strict();
 
@@ -158,7 +172,13 @@ export function contestsRoutes(deps: V1Deps) {
     const submitted = await submitScores(c.get('db'), {
       tenantId: auth.tenant.id as Id<'tnt'>,
       contestId,
-      scores: body.scores.map((each) => ({ userId: each.userId, score: each.score, attemptFinished: each.attemptFinished, sourceRef: each.sourceRef ?? null })),
+      scores: body.scores.map((each) => ({
+        userId: each.userId,
+        score: each.score,
+        attemptFinished: each.attemptFinished,
+        sourceRef: each.sourceRef ?? null,
+        attestation: each.attestation === undefined || each.attestation === null ? null : (each.attestation as ScoreAttestationInput),
+      })),
       idempotencyKey: c.get('idempotencyKey') ?? '',
       actor: auth.actor,
       requestId: c.get('requestId'),

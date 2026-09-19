@@ -1,6 +1,8 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { scoreAttestationInputSchema, type ScoreAttestationInput, type ScoreAttestationResource } from '@purse/types';
 import { isId, newId, type Id } from '@repo/ids';
 
+import { checkAttestation, type ParticipantRef } from '../attestation/verify';
 import type { DbOrTx } from '../db/client';
 import { contestParticipants, contestScores, type Contest, type ContestScore } from '../db/schema';
 import { SYSTEM_ACTOR, type Actor } from '../ledger/audit';
@@ -24,6 +26,12 @@ import { transition } from './transition';
  *
  * Scores are accepted in `in_progress` and, as late corrections, in `awaiting_settlement`,
  * which is exactly the window the preview hash exists to guard.
+ *
+ * A submission may carry a signed attestation (spec section 12, item 1). It is checked
+ * under the same lock before anything is written (`src/attestation/verify.ts`): one that
+ * fails a check Purse can make refuses the whole batch with `invalid_attestation`, one
+ * under a key Purse does not hold is recorded `unverified`, and a submission without one
+ * is `none`. The verdict and the material are fixed on the row at insert.
  */
 export type ScoreSubmission = {
   userId: string;
@@ -31,6 +39,7 @@ export type ScoreSubmission = {
   score: number | null;
   attemptFinished: boolean;
   sourceRef?: string | null;
+  attestation?: ScoreAttestationInput | null;
 };
 
 export type SubmitScoresInput = {
@@ -40,6 +49,8 @@ export type SubmitScoresInput = {
   idempotencyKey: string;
   actor?: Actor;
   requestId?: string;
+  /** The clock the attestation timestamps are judged against; defaults to now. */
+  now?: Date;
 };
 
 export type SubmittedScores = {
@@ -60,6 +71,7 @@ export async function submitScores(db: DbOrTx, input: SubmitScoresInput): Promis
   const submissions = validateSubmissions(input.scores);
   const actor = input.actor ?? SYSTEM_ACTOR;
   const requestId = input.requestId === undefined ? {} : { requestId: input.requestId };
+  const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
     const { value, replayed } = await idempotent<Omit<SubmittedScores, 'replayed'>, { contestId: string; scoreIds: string[]; settled: boolean }>(
@@ -77,11 +89,13 @@ export async function submitScores(db: DbOrTx, input: SubmitScoresInput): Promis
           }
 
           const userIds = submissions.map((each) => each.userId);
+          const attesterIds = submissions.flatMap((each) => (each.attestation === null || userIds.includes(each.attestation.userId) ? [] : [each.attestation.userId]));
           const participants = await tx
-            .select({ userId: contestParticipants.userId, state: contestParticipants.state })
+            .select({ userId: contestParticipants.userId, state: contestParticipants.state, teamRef: contestParticipants.teamRef })
             .from(contestParticipants)
-            .where(and(eq(contestParticipants.contestId, contest.id), inArray(contestParticipants.userId, userIds)));
+            .where(and(eq(contestParticipants.contestId, contest.id), inArray(contestParticipants.userId, [...userIds, ...attesterIds])));
           const stateOf = new Map(participants.map((each) => [each.userId, each.state]));
+          const participantOf = new Map<string, ParticipantRef>(participants.map((each) => [each.userId, each]));
           for (const userId of userIds) {
             const state = stateOf.get(userId);
             if (state === undefined) {
@@ -109,21 +123,33 @@ export async function submitScores(db: DbOrTx, input: SubmitScoresInput): Promis
             });
           }
 
+          // Attestations are judged before any row is written; a refusal rolls the batch back.
+          const verdicts = new Map<string, { state: 'verified' | 'unverified'; material: ScoreAttestationResource }>();
+          for (const each of submissions) {
+            if (each.attestation === null) continue;
+            verdicts.set(each.userId, await checkAttestation(tx, { contestId: contest.id, userId: each.userId, sourceRef: each.sourceRef, attestation: each.attestation }, participantOf, now));
+          }
+
           const inserted = await tx
             .insert(contestScores)
             .values(
-              submissions.map((each) => ({
-                id: newId('sco'),
-                contestId: contest.id,
-                userId: each.userId,
-                score: each.score,
-                attemptFinished: each.attemptFinished,
-                sourceRef: each.sourceRef,
-                // The time the row is written, after the contest lock was taken, so for one
-                // contest submission order is lock order: a batch that waited on the lock
-                // must not carry a timestamp older than the score it supersedes.
-                submittedAt: sql`clock_timestamp()`,
-              })),
+              submissions.map((each) => {
+                const verdict = verdicts.get(each.userId);
+                return {
+                  id: newId('sco'),
+                  contestId: contest.id,
+                  userId: each.userId,
+                  score: each.score,
+                  attemptFinished: each.attemptFinished,
+                  sourceRef: each.sourceRef,
+                  // The time the row is written, after the contest lock was taken, so for one
+                  // contest submission order is lock order: a batch that waited on the lock
+                  // must not carry a timestamp older than the score it supersedes.
+                  submittedAt: sql`clock_timestamp()`,
+                  attestationState: verdict?.state ?? ('none' as const),
+                  attestation: verdict?.material ?? null,
+                };
+              }),
             )
             .returning();
           const byUser = new Map(inserted.map((row) => [row.userId, row]));
@@ -231,6 +257,14 @@ function validateSubmissions(scores: readonly ScoreSubmission[]): Array<Required
     if (sourceRef !== null && (typeof sourceRef !== 'string' || sourceRef.trim().length === 0 || sourceRef.length > SOURCE_REF_MAX)) {
       throw new ContestError('invalid_input', `scores[${index}].sourceRef must be 1 to ${SOURCE_REF_MAX} characters when given`, { field: `scores.${index}.sourceRef` });
     }
-    return { userId: each.userId, score: each.score, attemptFinished: each.attemptFinished, sourceRef };
+    let attestation: ScoreAttestationInput | null = null;
+    if (each.attestation !== undefined && each.attestation !== null) {
+      const parsed = scoreAttestationInputSchema.safeParse(each.attestation);
+      if (!parsed.success) {
+        throw new ContestError('invalid_input', `scores[${index}].attestation is not a well-formed attestation: ${parsed.error.issues.map((issue) => `${issue.path.map(String).join('.') || '(root)'}: ${issue.message}`).join('; ')}`, { field: `scores.${index}.attestation` });
+      }
+      attestation = parsed.data;
+    }
+    return { userId: each.userId, score: each.score, attemptFinished: each.attemptFinished, sourceRef, attestation };
   });
 }

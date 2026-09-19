@@ -1,5 +1,6 @@
 import type {
   ContestResource,
+  DeviceResource,
   EmbedTokenResource,
   ParticipantResource,
   PayoutResource,
@@ -20,7 +21,7 @@ import { activeParticipants, getContest } from '../../contests/load';
 import { escrowBalance } from '../../contests/settlement';
 import type { IssuedEmbedToken } from '../../auth/embed-tokens';
 import type { DbOrTx } from '../../db/client';
-import type { Contest, ContestParticipant, ContestResult, ContestScore, UserVerification, WebhookEndpoint } from '../../db/schema';
+import type { Contest, ContestParticipant, ContestResult, ContestScore, UserDevice, UserVerification, WebhookEndpoint } from '../../db/schema';
 import type { Payout } from '../../settlement';
 import { placedByUser, type UserProfile } from '../../users';
 import type { DeliveryWithAttempts } from '../../webhooks';
@@ -128,6 +129,22 @@ export function scoreResource(row: ContestScore): ScoreResource {
     attemptFinished: row.attemptFinished,
     submittedAt: row.submittedAt.toISOString(),
     sourceRef: row.sourceRef,
+    attestationState: row.attestationState,
+    attestation: row.attestation,
+  };
+}
+
+export function deviceResource(row: UserDevice): DeviceResource {
+  return {
+    id: row.id,
+    userId: row.userId,
+    keyId: row.keyId,
+    algorithm: 'ES256',
+    publicKey: row.publicKey,
+    label: row.label,
+    registeredAt: row.createdAt.toISOString(),
+    revokedAt: row.revokedAt?.toISOString() ?? null,
+    revokedReason: row.revokedReason,
   };
 }
 

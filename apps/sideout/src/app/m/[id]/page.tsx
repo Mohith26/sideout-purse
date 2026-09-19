@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { EmptyState, Icons, LinkButton, LiveDot, StatusPill } from '@sideout/ui';
 
+import { AttestationBadge } from '../../../components/attestation/AttestationBadge';
+import { PhoneCheckInStatus } from '../../../components/attestation/PhoneCheckInStatus';
 import { ConsensusBadge } from '../../../components/consensus/ConsensusBadge';
 import { ScorelineCompare, ScorelineTable } from '../../../components/consensus/ScorelineCompare';
 import { ScoreSubmitSheet } from '../../../components/consensus/ScoreSubmitSheet';
@@ -17,6 +19,7 @@ import { formatTime } from '../../../lib/format';
 import { signInHref } from '../../../lib/redirects';
 import { bracketRoundLabel } from '../../../lib/rounds';
 import { consensusView, viewerSide } from '../../../server/consensus';
+import { listTeamDevices } from '../../../server/devices';
 import { matchView } from '../../../server/matches';
 import { pageContext } from '../../../server/pages';
 import { bracketRoundCount, listMatchViews } from '../../../server/screens';
@@ -34,7 +37,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
  * The match (spec 5.3, item 3): who is playing, the sets as they stand (rolling while
  * live), where the consensus is, and the score sheet as a bottom sheet for a player on
  * either team. A disputed match shows the two readings side by side with the differing
- * set marked, neutrally; the organizer settles it from the dispute queue.
+ * set marked, neutrally; the organizer settles it from the dispute queue. Each standing
+ * reading carries whether a checked-in phone signed it (spec section 12, item 1), and a
+ * player sees whether this phone is checked in for their team before they submit.
  */
 export default async function MatchPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -64,6 +69,8 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
   const bestOf = match.bestOf === 3 ? 3 : 1;
   const submittedBy = consensus?.live[0]?.teamName ?? null;
   const waitingOn = submittedBy === null ? null : submittedBy === teamA?.name ? (teamB?.name ?? null) : (teamA?.name ?? null);
+  const liveKeyIds = us === null ? [] : (await listTeamDevices(db, [us.id])).filter((d) => d.revokedAt === null).map((d) => d.keyId);
+  const readings = (consensus?.live ?? []).filter((s) => s.teamId !== null);
 
   return (
     <div className="space-y-8">
@@ -151,6 +158,16 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
           Score consensus
         </h2>
         <ConsensusBadge state={consensus?.state ?? null} submittedBy={submittedBy} waitingOn={waitingOn} resolvedBy={consensus?.resolvedBy?.displayName ?? null} />
+        {readings.length > 0 ? (
+          <ul className="flex flex-wrap gap-x-5 gap-y-2" aria-label="Who signed each reading" data-testid="readings">
+            {readings.map((s) => (
+              <li key={s.id} className="inline-flex items-center gap-2 text-text-secondary" data-team={s.teamId ?? ''}>
+                <span>{s.teamName ?? 'Team'}</span>
+                <AttestationBadge attested={s.attestation !== null} who={s.submittedBy.displayName} />
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
         {match.status === 'disputed' && consensus !== null ? (
           <ScorelineCompare
@@ -179,7 +196,10 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
               <>
                 {mine !== undefined ? (
                   <div className="space-y-2">
-                    <p className="text-text-secondary">Your team’s scoreline as submitted{theirs === undefined ? `; waiting on ${them.name}.` : '.'}</p>
+                    <p className="flex flex-wrap items-center gap-2 text-text-secondary">
+                      <span>Your team’s scoreline as submitted{theirs === undefined ? `; waiting on ${them.name}.` : '.'}</span>
+                      <AttestationBadge attested={mine.attestation !== null} who={mine.submittedBy.displayName} />
+                    </p>
                     <ScorelineTable teamA={teamA?.name ?? 'Team A'} teamB={teamB?.name ?? 'Team B'} sets={mine.sets} winner={null} />
                   </div>
                 ) : theirs !== undefined ? (
@@ -193,7 +213,9 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
                   perspective={side === 'b' ? 'b' : 'a'}
                   existing={mine === undefined ? null : toPerspective(mine.sets, side === 'b' ? 'b' : 'a')}
                   opponentSubmitted={theirs !== undefined}
+                  signing={{ tournamentId: view.tournament.id, liveKeyIds }}
                 />
+                <PhoneCheckInStatus teamName={us.name} liveKeyIds={liveKeyIds} checkInHref={`/t/${view.tournament.slug}/register`} />
               </>
             ) : null}
           </div>

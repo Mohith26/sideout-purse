@@ -1753,3 +1753,90 @@ dot's breath is a keyframe; the halo is a static shadow).
 
 Waiting on a pending donation is not live scoring and emits no event; `LiveRefresh` without
 a `source` is the phase 8 poll, kept for that screen alone.
+
+## Stretch: signed score attestation decisions
+
+The full contract (keys, the canonical form, the checks on each side, what is recorded and
+shown) is `docs/attestation.md`. These are the choices the spec's one-line item left open.
+
+### One shared implementation, in `@purse/types`
+
+The canonical form, the key id derivation and the sign/verify functions live in
+`packages/purse-types/src/attestation.ts`, the one Purse package a partner's browser code
+may import, so the phone that signs, Sideout's server that verifies and Purse that verifies
+again run the same bytes through the same code. `@purse/sdk` would have been the closer
+precedent (it holds the webhook signature for both sides), but Sideout's browser code may
+mount the SDK from `PurseGate` only (phase 8), and the signing key lives in the score
+sheet's path, not the gate's. The package description now names the contract.
+
+### The consensus hash and the signature share one canonical scoreline
+
+`canonicalizeScoreline` now writes its string through `canonicalJson(scorelineContent(…))`,
+the same object the phone signs as `content`. Its output is byte-identical to the phase 7
+form (`{"matchId":"…","sets":[[1,21,18],…]}`; the consensus test still pins the literal), so
+no stored hash changes, and the two mechanisms can never disagree about what a scoreline is.
+
+### `invalid_attestation` is a tenth error type, at 422
+
+The spec's taxonomy (4.7) maps each sealed type to one status, and the brief asked for a
+422. A new type was the honest way to get one: the request was well formed
+(`invalid_request`, 400) and the contest in the right state (`invalid_state`, 409); what
+failed was the proof. Every map over the sealed types (`API_ERROR_STATUS`, the console's
+and the embed's titles, Sideout's `failure` helpers) carries it, and the contract fixtures
+record it. A partner that branches on `type` sees a new value only when it sends an
+attestation, which no partner did before.
+
+### A key Purse does not hold is `unverified`, not refused
+
+Purse refuses what it can prove wrong (a bad signature, a revoked key, a replay onto another
+match, a timestamp from the future, a team the participant did not enter as). A key it has
+never seen it cannot judge: the most likely cause is a mirror that has not landed (the
+player checked in before linking a Purse account, or the mirror call failed), and refusing
+the score would block settlement for a plumbing gap. Such a score is accepted as an
+unattested score would be (decision D5, option A, is unchanged), the attestation is kept
+verbatim as `unverified`, and the console shows the gap. `verified` therefore means exactly
+one thing: Purse checked it against a key registered for that user through the partner's
+authenticated session.
+
+### The key id is the JWK thumbprint, never chosen
+
+RFC 7638 over `{crv, kty, x, y}`. The phone, Sideout and Purse each derive it from the
+public key, so a registration can never claim another key's id and the three copies agree
+without trusting each other. It doubles as the outbox's and the UI's notion of "this phone".
+
+### Check-in is a third step on the register screen; the team's status does not move
+
+The product had a `checked_in` team status but nothing that set it beyond the seed. Device
+registration is where the spec puts check-in, so the register screen grew a third step,
+open from `registration_open` through `live` for a team that holds its place. Registering
+a phone does not change `teams.status` (the seed's `checked_in` teams stay what they are,
+and capacity, the draw and the field never depended on the difference); giving that status
+a real meaning is a product change left to a later decision. A member registers their own
+phone; both members may; a phone is registered per team, and the same key on another of
+the player's teams is another row (Purse holds one registration per user and key, and a
+revocation reaches Purse only when no live Sideout row holds the key for that user).
+
+### Sideout refuses what Purse would; Purse never trusts that it did
+
+Sideout checks the signature before the consensus sees a submission and stores only what
+verified; a submission whose attestation fails is refused (422) rather than accepted
+unsigned, so a stripped or replaced signature is never quietly downgraded. Purse repeats
+every check it can against its own copy of the key. The signature timestamp is bounded at
+Sideout to 72 hours old (the outbox window) and 5 minutes ahead; Purse bounds only the
+future, since how long a partner keeps a queued reading is the partner's rule.
+
+### What travels, and to whom it is attributed
+
+Purse holds scores per user and knows nothing of teams beyond an optional `teamRef`, so
+each team's attestation is attached to both of its players' running scores, attributed to
+the signer's linked Purse user, and Purse checks the attesting user is an entered
+participant. Only the standing submission whose hash is the agreed hash is forwarded: an
+organizer's resolution carries none, and a team whose reading the organizer overrode sends
+none. Purse cannot recompute a running score (a count of wins) from a scoreline; what it
+verifies is that a registered device signed this scoreline for this `sourceRef`, and it
+records the scoreline.
+
+### No new environment variables
+
+The clock-skew and age windows are constants documented in `docs/attestation.md`; nothing
+about the feature needs configuring per environment, and the migrations carry the schema.

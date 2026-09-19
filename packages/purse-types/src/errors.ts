@@ -7,6 +7,11 @@ import type { NotEligibleDetail } from './eligibility';
  * `type` field is sealed: partners branch on it, never on `message`, which is
  * presentation copy that may change. `code` is a stable machine-readable refinement
  * within a type (for example `invalid_request` / `missing_idempotency_key`).
+ *
+ * `invalid_attestation` (422) is the one type added after the spec's list: a score whose
+ * signed attestation is present but fails a check Purse can make (system spec section 12,
+ * item 1; `attestation.ts`). The request was well formed and the contest in the right
+ * state; what was wrong is the proof, and a partner should show that as such.
  */
 
 export const API_ERROR_TYPES = [
@@ -18,6 +23,7 @@ export const API_ERROR_TYPES = [
   'invalid_state',
   'conflict',
   'rate_limited',
+  'invalid_attestation',
   'internal_error',
 ] as const;
 
@@ -33,6 +39,7 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorType, number>> = {
   invalid_state: 409,
   conflict: 409,
   rate_limited: 429,
+  invalid_attestation: 422,
   internal_error: 500,
 };
 

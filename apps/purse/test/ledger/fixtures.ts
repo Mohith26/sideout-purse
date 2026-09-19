@@ -36,6 +36,7 @@ import {
   type AccountKind,
   type Asset,
   type User,
+  userDevices,
 } from '../../src/db/schema';
 import { openAccount } from '../../src/ledger';
 
@@ -60,6 +61,7 @@ export async function wipeLedger(migrator: Database): Promise<void> {
   await migrator.db.delete(identityFingerprints);
   await migrator.db.delete(userLocations);
   await migrator.db.delete(userRestrictions);
+  await migrator.db.delete(userDevices);
   await migrator.db.delete(contestResults);
   await migrator.db.delete(contestScores);
   await migrator.db.delete(contestParticipants);

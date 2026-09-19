@@ -14,8 +14,9 @@ export const metadata: Metadata = { title: 'Contest' };
 
 /**
  * One contest: the resource with its escrow balance from the journal, the entrants with
- * their entry links into the ledger, the current scores, the results, and, in
- * `awaiting_settlement`, the close flow.
+ * their entry links into the ledger, the current scores with whether a registered device
+ * signed each (spec section 12, item 1: `verified`, `unverified` or `none`), the results,
+ * and, in `awaiting_settlement`, the close flow.
  */
 export default async function ContestPage({ params }: { params: Promise<{ tenantId: string; contestId: string }> }) {
   const { tenantId, contestId } = await params;
@@ -103,6 +104,21 @@ export default async function ContestPage({ params }: { params: Promise<{ tenant
             { key: 'team', header: 'Team', render: (row) => row.teamRef ?? '—' },
             { key: 'score', header: 'Score', numeric: true, render: (row) => scoreByUser.get(row.userId)?.score ?? '—' },
             { key: 'finished', header: 'Finished', render: (row) => (scoreByUser.has(row.userId) ? (scoreByUser.get(row.userId)?.attemptFinished ? 'yes' : 'no') : '—') },
+            {
+              key: 'attested',
+              header: 'Attested',
+              render: (row) => {
+                const score = scoreByUser.get(row.userId);
+                if (score === undefined) return '—';
+                const material = score.attestation;
+                return (
+                  <span className="so-actions" title={material === null ? 'No device signature was submitted with this score' : `Signed by device key ${material.keyId} of ${nameByUser.get(material.userId) ?? material.userId} at ${formatInstant(material.timestamp)}`}>
+                    <StateChip value={score.attestationState} />
+                    {material === null ? null : <Mono>{material.keyId.slice(0, 8)}</Mono>}
+                  </span>
+                );
+              },
+            },
             { key: 'joined', header: 'Joined', nowrap: true, render: (row) => formatInstant(row.joinedAt) },
             {
               key: 'entry',

@@ -4,13 +4,14 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { ParsedContest as ContestResource, ParsedScores as ScoresResource } from '../../purse/schemas';
 
 import { matchConsensus, matches, purseEntries, teamMembers, tournaments, users, type Match, type MatchConsensus, type Tournament } from '../../db/schema';
+import { toPurseAttestation } from '../../domain/attestation';
 import { assertMayPushToPurse, assertMayRetryPurse, CONSENSUS_AUDIT, PursePushRefused } from '../../domain/consensus';
 import { finalStandings, FinalStandingsError, type FinalPlacement } from '../../domain/final-standings';
 import { finalScores, runningScore } from '../../domain/purse-score';
 import { describeFailure, isPurseFailure, PurseApiError, type ScoreSubmissionInput } from '../../purse';
 import type { Actor } from '../actor';
 import { writeAudit } from '../audit';
-import { moveConsensus } from '../consensus';
+import { listLiveSubmissions, moveConsensus } from '../consensus';
 import type { DbOrTx } from '../db';
 import { failure } from '../http/errors';
 import { liveTransaction } from '../live/outbox';
@@ -38,6 +39,12 @@ import { idempotencyKey, type PurseDeps } from './deps';
  *
  * Only players Purse holds as entrants are scored: Purse would refuse a batch naming
  * anyone else, and a player who holds no stake has nothing for Purse to settle.
+ *
+ * Each team's device signature travels with its players' running scores (spec section 12,
+ * item 1): a team whose standing submission carries the agreed scoreline's hash and a
+ * verified attestation has that attestation attached, attributed to the signer's linked
+ * Purse user, and Purse verifies it again against its own copy of the key. A team that
+ * submitted unsigned, or whose reading the organizer overrode, sends none.
  */
 
 export type PushOutcome = { consensus: MatchConsensus; purse: 'confirmed' | 'pushed_to_purse' | 'agreed'; error?: ReturnType<typeof describeFailure> };
@@ -93,6 +100,28 @@ function sameBatch(first: ScoresResource, replay: ScoresResource): boolean {
 }
 
 /**
+ * Each team's verified attestation of the agreed scoreline, attributed to the signer's
+ * linked Purse user: the standing submission per team whose hash is the agreed hash and
+ * whose row carries a signature. A signer who never linked a Purse account has nothing
+ * Purse could check the signature against, so that team sends none.
+ */
+async function agreedAttestations(db: DbOrTx, loaded: Loaded): Promise<Map<string, ScoreSubmissionInput['attestation']>> {
+  const out = new Map<string, ScoreSubmissionInput['attestation']>();
+  if (loaded.consensus.agreedHash === null) return out;
+  const live = await listLiveSubmissions(db, loaded.match.id);
+  const signers = live.flatMap((s) => (s.attestation === null ? [] : [s.attestation.userId]));
+  const linked = signers.length === 0 ? [] : await db.select({ id: users.id, purseUserId: users.purseUserId }).from(users).where(inArray(users.id, signers));
+  const purseUserOf = new Map(linked.flatMap((u) => (u.purseUserId === null ? [] : [[u.id, u.purseUserId] as const])));
+  for (const submission of live) {
+    if (submission.submittedForTeamId === null || submission.attestation === null || submission.hash !== loaded.consensus.agreedHash) continue;
+    const purseUserId = purseUserOf.get(submission.attestation.userId);
+    if (purseUserId === undefined) continue;
+    out.set(submission.submittedForTeamId, toPurseAttestation(submission.attestation, purseUserId));
+  }
+  return out;
+}
+
+/**
  * The batch for one agreed match, or `null` when no player of either team holds a Purse
  * entry (nothing for Purse to settle on this match).
  */
@@ -101,7 +130,14 @@ export async function matchScoreBatch(db: DbOrTx, loaded: Loaded): Promise<Score
   const players = await enteredPlayers(db, loaded.tournament.id, teamIds);
   if (players.length === 0) return null;
   const wins = await winsByTeam(db, loaded.tournament.id, teamIds);
-  return players.map((p) => ({ userId: p.purseUserId, score: runningScore(wins.get(p.teamId) ?? 0), attemptFinished: false, sourceRef: loaded.match.id }));
+  const attestations = await agreedAttestations(db, loaded);
+  return players.map((p) => ({
+    userId: p.purseUserId,
+    score: runningScore(wins.get(p.teamId) ?? 0),
+    attemptFinished: false,
+    sourceRef: loaded.match.id,
+    attestation: attestations.get(p.teamId) ?? null,
+  }));
 }
 
 /** Mint a fresh key for a consensus whose batch Purse refuses to match to the old one; audited, and only ever from an organizer's retry. */

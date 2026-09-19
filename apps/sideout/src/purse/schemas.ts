@@ -1,6 +1,8 @@
 import {
   API_ERROR_TYPES,
   ASSETS,
+  ATTESTATION_ALGORITHMS,
+  ATTESTATION_STATES,
   CONTEST_KINDS,
   CONTEST_STATES,
   EMBED_FLOWS,
@@ -12,8 +14,10 @@ import {
   VERIFICATION_STATES,
   WEBHOOK_EVENT_TYPES,
   type ApiError,
+  type CanonicalValue,
   type ContestResource,
   type CreditResource,
+  type DeviceResource,
   type EmbedTokenResource,
   type EntryResource,
   type PreviewResource,
@@ -168,6 +172,26 @@ export const entrySchema = z.looseObject({
   journalEntryId: z.string(),
 }) satisfies Shape<Omit<EntryResource, 'eligibility'> & { eligibility: unknown }>;
 
+/** A P-256 public JWK as Purse echoes it back; the private scalar can never appear here. */
+export const publicJwkSchema = z.strictObject({ kty: z.literal('EC'), crv: z.literal('P-256'), x: z.string(), y: z.string() });
+
+/** The canonical value grammar of a signed payload: JSON with integers only. */
+const canonicalValueSchema: z.ZodType<CanonicalValue> = z.lazy(() => z.union([z.string(), z.int(), z.boolean(), z.null(), z.array(canonicalValueSchema), z.record(z.string(), canonicalValueSchema)]));
+
+/** What Purse recorded about a score's device signature (`@purse/types` `attestation.ts`); read for the record, never re-verified here. */
+export const scoreAttestationSchema = z.looseObject({
+  state: z.enum(['verified', 'unverified']),
+  deviceId: z.string().nullable(),
+  userId: id('usr'),
+  keyId: z.string(),
+  algorithm: z.enum(ATTESTATION_ALGORITHMS),
+  signature: z.string(),
+  timestamp: instant,
+  refs: z.record(z.string(), z.string()),
+  content: canonicalValueSchema,
+  checkedAt: instant,
+});
+
 export const scoreSchema = z.looseObject({
   id: z.string(),
   contestId: id('cnt'),
@@ -176,7 +200,21 @@ export const scoreSchema = z.looseObject({
   attemptFinished: z.boolean(),
   submittedAt: instant,
   sourceRef: z.string().nullable(),
+  attestationState: z.enum(ATTESTATION_STATES),
+  attestation: scoreAttestationSchema.nullable(),
 });
+
+export const deviceSchema = z.looseObject({
+  id: id('udv'),
+  userId: id('usr'),
+  keyId: z.string(),
+  algorithm: z.enum(ATTESTATION_ALGORITHMS),
+  publicKey: publicJwkSchema,
+  label: z.string().nullable(),
+  registeredAt: instant,
+  revokedAt: instant.nullable(),
+  revokedReason: z.string().nullable(),
+}) satisfies Shape<DeviceResource>;
 
 export const resultSchema = z.looseObject({
   id: z.string(),
@@ -250,3 +288,4 @@ export type ParsedPreview = z.output<typeof previewSchema>;
 export type ParsedSettlement = z.output<typeof settlementSchema>;
 export type ParsedEmbedToken = z.output<typeof embedTokenSchema>;
 export type ParsedVerificationStart = z.output<typeof verificationStartSchema>;
+export type ParsedDevice = z.output<typeof deviceSchema>;

@@ -3,8 +3,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   API_ERROR_STATUS,
   API_ERROR_TYPES,
+  ES256_KEY,
+  signAttestation,
   type ApiErrorType,
+  type AttestationPayload,
   type ContestResource,
+  type DeviceResource,
   type EmbedTokenResource,
   type EmbedUserState,
   type EntryResource,
@@ -25,6 +29,7 @@ import { addRestriction } from '../../src/users';
 import { connectMigrator, harness, type TestHarness } from '../helpers';
 import { bootstrapTenant, client, unknownUserId, type Bootstrap } from '../http/client';
 import { key, wipeLedger } from '../ledger/fixtures';
+import { ATTESTATION_VECTORS as vectors } from '../attestation/vectors';
 import { Recorder, verifyFixtures } from './recorder';
 
 /**
@@ -84,6 +89,19 @@ describe('v1 contract', () => {
     expect(missing.error).toMatchObject({ type: 'invalid_request', code: 'user_not_found' });
     const malformed = await op.record('users.get.validation_failed', 'GET', '/v1/users/not-an-id');
     expect(malformed.error).toMatchObject({ type: 'invalid_request', code: 'validation_failed' });
+
+    // ---- devices (signed score attestation, spec section 12 item 1) -------------------
+    const device = await op.record<DeviceResource>('users.devices.create', 'POST', `/v1/users/${anaId}/devices`, { publicKey: vectors.publicJwk, label: 'Ana’s phone' });
+    expect(device.status).toBe(201);
+    expect(device.data).toMatchObject({ userId: anaId, keyId: vectors.keyId, algorithm: 'ES256', publicKey: vectors.publicJwk, label: 'Ana’s phone', revokedAt: null });
+    const deviceId = device.data?.id ?? '';
+    const sameKey = await op.record<DeviceResource>('users.devices.create.existing', 'POST', `/v1/users/${anaId}/devices`, { publicKey: vectors.publicJwk });
+    expect(sameKey.status).toBe(200);
+    expect(sameKey.data?.id).toBe(deviceId);
+    const privateKey = await op.record('users.devices.create.validation_failed', 'POST', `/v1/users/${anaId}/devices`, { publicKey: vectors.privateJwk });
+    expect(privateKey.error).toMatchObject({ type: 'invalid_request', code: 'invalid_input' });
+    const devices = await op.record<{ devices: DeviceResource[] }>('users.devices.list', 'GET', `/v1/users/${anaId}/devices`);
+    expect(devices.data?.devices.map((d) => d.id)).toEqual([deviceId]);
     const other = await bootstrapTenant(h.database.db);
     const theirs = await client(h, other.plainKey).post<UserResource>('/v1/users', { externalId: 'x' });
     const wrongTenant = await op.record('users.get.permission_error', 'GET', `/v1/users/${theirs.data?.id ?? ''}`);
@@ -205,6 +223,37 @@ describe('v1 contract', () => {
     const lateEntry = await op.record('contests.entries.not_eligible.closed', 'POST', `/v1/contests/${contestId}/entries`, { userId: diegoId });
     expect(lateEntry.error).toMatchObject({ type: 'not_eligible', code: 'contest_not_open', detail: { reasons: ['contest_not_open'], rulesetVersion: '2026.09.1' } });
     expect((await op.record<ContestResource>('contests.start', 'POST', `/v1/contests/${contestId}/start`, {})).data?.state).toBe('in_progress');
+
+    // An attested running score: Ana's registered phone (the pinned test key) signs the pinned
+    // canonical form for the pinned match at this moment; Marcus's row carries none.
+    const signedAt = new Date().toISOString();
+    const payload: AttestationPayload = { ...(vectors.payload as unknown as AttestationPayload), timestamp: signedAt, refs: { ...vectors.payload.refs, teamId: 'team-a' } };
+    const signingKey = await crypto.subtle.importKey('jwk', { ...vectors.privateJwk, ext: true }, ES256_KEY, false, ['sign']);
+    const attestation = { userId: anaId, keyId: vectors.keyId, algorithm: 'ES256', signature: await signAttestation(signingKey, payload), timestamp: signedAt, refs: payload.refs, content: payload.content };
+    const attested = await op.record<{ scores: Array<{ attestationState: string; attestation: unknown }> }>('contests.scores.create.attested', 'POST', `/v1/contests/${contestId}/scores`, {
+      scores: [
+        { userId: anaId, score: 1, attemptFinished: false, sourceRef: vectors.payload.sourceRef, attestation },
+        { userId: marcusId, score: 0, attemptFinished: false, sourceRef: vectors.payload.sourceRef },
+      ],
+    });
+    expect(attested.status, JSON.stringify(attested.error)).toBe(201);
+    expect(attested.data?.scores.map((s) => s.attestationState)).toEqual(['verified', 'none']);
+    const forged = await op.record('contests.scores.invalid_attestation', 'POST', `/v1/contests/${contestId}/scores`, {
+      scores: [{ userId: anaId, score: 2, attemptFinished: false, sourceRef: vectors.payload.sourceRef, attestation: { ...attestation, content: { matchId: vectors.payload.sourceRef, sets: [[1, 21, 18], [2, 19, 21], [3, 15, 12]] } } }],
+    });
+    expect(forged.status).toBe(422);
+    expect(forged.error).toMatchObject({ type: 'invalid_attestation', code: 'attestation_signature_invalid' });
+    const revoked = await op.record<DeviceResource>('users.devices.revoke', 'POST', `/v1/users/${anaId}/devices/${deviceId}/revoke`, { reason: 'phone lost' });
+    expect(revoked.status).toBe(200);
+    expect(revoked.data?.revokedAt).not.toBeNull();
+    const afterRevoke = await op.record('contests.scores.invalid_attestation.revoked', 'POST', `/v1/contests/${contestId}/scores`, {
+      scores: [{ userId: anaId, score: 2, attemptFinished: false, sourceRef: vectors.payload.sourceRef, attestation }],
+    });
+    expect(afterRevoke.status).toBe(422);
+    expect(afterRevoke.error).toMatchObject({ type: 'invalid_attestation', code: 'attestation_device_revoked' });
+    const noDevice = await op.record('users.devices.revoke.not_found', 'POST', `/v1/users/${marcusId}/devices/${deviceId}/revoke`, {});
+    expect(noDevice.error).toMatchObject({ type: 'invalid_request', code: 'device_not_found' });
+
     const scored = await op.record<{ contest: ContestResource; scores: unknown[] }>('contests.scores.create', 'POST', `/v1/contests/${contestId}/scores`, {
       scores: [
         { userId: anaId, score: 21, attemptFinished: true, sourceRef: 'match-1' },

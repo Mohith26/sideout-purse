@@ -21,6 +21,9 @@ import { donationStep, type RegistrationState } from './state';
  * 2. Contest entry on Purse: a volt-bordered surface that, once the team holds its place,
  *    holds the Purse entry step: each player's own entry in Purse's frame, read back from
  *    the contest so the page is never trusted. Before that it is locked and says so.
+ * 3. Check in this phone: once the team holds its place, each player registers the phone
+ *    they will score from (`DeviceCheckIn`, spec section 12 item 1), so its scorelines
+ *    arrive signed. Optional, and open until play ends.
  */
 export type RegistrationStepsProps = {
   slug: string;
@@ -35,13 +38,15 @@ export type RegistrationStepsProps = {
   stripePublishableKey: string | null;
   /** Step 2's live content once the team is registered (`PurseEntryStep`), else null. */
   entry?: ReactNode;
+  /** Step 3's live content once the team holds its place (`DeviceCheckIn`), else null. */
+  checkIn?: ReactNode;
 };
 
-function StepCard({ number, title, tone, status, children }: { number: number; title: string; tone: 'ember' | 'purse'; status: ReactNode; children: ReactNode }) {
+function StepCard({ number, title, tone, status, children }: { number: number; title: string; tone: 'ember' | 'purse' | 'device'; status: ReactNode; children: ReactNode }) {
   return (
-    <section aria-labelledby={`step-${number}-heading`} data-testid={`register-step-${number}`} className={cx('rounded-card', tone === 'ember' ? 'surface-raised border-t-2 border-t-ember' : 'border border-volt/40 bg-bg-overlay')}>
+    <section aria-labelledby={`step-${number}-heading`} data-testid={`register-step-${number}`} className={cx('rounded-card', tone === 'ember' ? 'surface-raised border-t-2 border-t-ember' : tone === 'purse' ? 'border border-volt/40 bg-bg-overlay' : 'surface-raised')}>
       <div className="flex items-start gap-4 p-4 md:p-5">
-        <span aria-hidden="true" className={cx('tabular flex size-9 shrink-0 items-center justify-center rounded-pill type-label', tone === 'ember' ? 'bg-ember/15 text-ember' : 'bg-bg-inset text-volt')}>
+        <span aria-hidden="true" className={cx('tabular flex size-9 shrink-0 items-center justify-center rounded-pill type-label', tone === 'ember' ? 'bg-ember/15 text-ember' : tone === 'purse' ? 'bg-bg-inset text-volt' : 'bg-bg-inset text-text-secondary')}>
           {number}
         </span>
         <div className="min-w-0 flex-1">
@@ -59,7 +64,7 @@ function StepCard({ number, title, tone, status, children }: { number: number; t
   );
 }
 
-export function RegistrationSteps({ slug, tournamentName, charityName, entryDonationCents, currency, timeZone, state, teamId, teamName, stripePublishableKey, entry = null }: RegistrationStepsProps) {
+export function RegistrationSteps({ slug, tournamentName, charityName, entryDonationCents, currency, timeZone, state, teamId, teamName, stripePublishableKey, entry = null, checkIn = null }: RegistrationStepsProps) {
   const step1 = donationStep(state, entryDonationCents);
   const amount = formatCents(entryDonationCents, currency);
   const donation = state.kind === 'registered' || state.kind === 'lapsed' ? state.donation : null;
@@ -165,6 +170,32 @@ export function RegistrationSteps({ slug, tournamentName, charityName, entryDona
           <p className="text-text-secondary">
             Entering the contest is a separate step run by Purse, the platform that holds the contest, its rewards and its settlement. Each player confirms a free entry of 100 POINTS in Purse’s own frame. It unlocks once
             the team holds its place; your donation above is never staked.
+          </p>
+        )}
+      </StepCard>
+
+      <StepCard
+        number={3}
+        title="Check in this phone"
+        tone="device"
+        status={
+          checkIn === null ? (
+            <span className="inline-flex items-center gap-1.5 type-label text-text-tertiary">
+              <Icons.lock size={14} />
+              Opens after step 1
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 type-label text-text-secondary">
+              <Icons.signature size={14} />
+              Signs your scores
+            </span>
+          )
+        }
+      >
+        {checkIn ?? (
+          <p className="text-text-secondary">
+            The phone you score from makes a signing key that never leaves it and registers the public half here. Scorelines it sends are then signed and verified before they count, and Purse checks the signature
+            again on its own. It unlocks once the team holds its place.
           </p>
         )}
       </StepCard>

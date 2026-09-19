@@ -49,6 +49,9 @@ describe('every v1 route', () => {
     { method: 'POST', path: `/v1/users/${userId}/verification`, invalidBody: { flow: 'identity' } },
     { method: 'GET', path: `/v1/users/${userId}/wallet` },
     { method: 'POST', path: `/v1/users/${userId}/credits`, invalidBody: { asset: 'USD', amount: '10' } },
+    { method: 'POST', path: `/v1/users/${userId}/devices`, invalidBody: { publicKey: { kty: 'RSA', n: 'x', e: 'AQAB' } } },
+    { method: 'GET', path: `/v1/users/${userId}/devices` },
+    { method: 'POST', path: `/v1/users/${userId}/devices/udv_0192f1a0-0000-7000-8000-000000000001/revoke`, invalidBody: { reason: '' } },
     { method: 'POST', path: '/v1/contests', invalidBody: { externalId: 'c2', kind: 'raffle' } },
     { method: 'GET', path: `/v1/contests/${contestId}` },
     { method: 'POST', path: `/v1/contests/${contestId}/open`, invalidBody: { reason: '' } },
@@ -82,7 +85,8 @@ describe('every v1 route', () => {
       .filter((route) => !route.path.startsWith('/v1/embed/') || route.path === '/v1/embed/tokens')
       .map((route) => `${route.method} ${route.path}`);
     const expected = routes().map(
-      (route) => `${route.method} ${route.path.replace(userId, ':userId').replace(contestId, ':id').replace(endpointId, ':id').replace(deliveryId, ':id').replace('/users/:userId', '/users/:id')}`,
+      (route) =>
+        `${route.method} ${route.path.replace(userId, ':userId').replace(contestId, ':id').replace(endpointId, ':id').replace(deliveryId, ':id').replace('/users/:userId', '/users/:id').replace(/\/devices\/udv_[0-9a-f-]+\/revoke$/, '/devices/:deviceId/revoke')}`,
     );
     for (const each of new Set(mounted)) {
       if (each.includes('/health') || each.includes('/status') || each.includes('/internal/')) continue;

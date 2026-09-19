@@ -40,6 +40,9 @@ const TONES: Record<string, ChipTone> = {
   disqualified: 'fault',
   expired: 'muted',
   lifted: 'muted',
+  // Score attestation (spec section 12, item 1)
+  unverified: 'ember',
+  none: 'muted',
 };
 
 export function StateChip({ value }: { value: string }) {

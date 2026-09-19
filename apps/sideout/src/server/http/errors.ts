@@ -58,5 +58,7 @@ export const failure = {
   invalidState: make('invalid_state'),
   conflict: make('conflict'),
   rateLimited: make('rate_limited'),
+  /** A device signature that fails a check (spec section 12, item 1): 422, the request was well formed and the proof was not. */
+  invalidAttestation: make('invalid_attestation'),
   internal: make('internal_error'),
 };

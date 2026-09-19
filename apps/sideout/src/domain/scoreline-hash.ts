@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { canonicalJson } from '@purse/types';
 
+import { scorelineContent } from './attestation';
 import type { SetScore, Side } from './scoreline';
 
 /**
@@ -8,8 +10,11 @@ import type { SetScore, Side } from './scoreline';
  * legality as the player types: this module needs Node's `crypto`.
  *
  * Canonical form: sets ordered by number, always oriented from team A's side, keys in a
- * fixed order, no whitespace. Two honest submissions of the same result, one typed by each
- * team from its own side of the net, produce byte-identical output and so one hash.
+ * fixed order, no whitespace (`{"matchId":"…","sets":[[1,21,18],…]}`). Two honest
+ * submissions of the same result, one typed by each team from its own side of the net,
+ * produce byte-identical output and so one hash. It is the same `scorelineContent` a
+ * phone signs (`attestation.ts`), written by the same canonical JSON, so the consensus
+ * hash and a device signature never disagree about what a scoreline is.
  *
  * `perspective` says which team the submitter typed as "us": a team-B submitter enters
  * their own points first, and canonicalization flips them back to team A's side.
@@ -17,14 +22,7 @@ import type { SetScore, Side } from './scoreline';
 export type Scoreline = { matchId: string; sets: readonly SetScore[] };
 
 export function canonicalizeScoreline(scoreline: Scoreline, perspective: Side = 'a'): string {
-  const sets = [...scoreline.sets]
-    .sort((x, y) => x.setNumber - y.setNumber)
-    .map((s) => {
-      const a = perspective === 'a' ? s.teamAPoints : s.teamBPoints;
-      const b = perspective === 'a' ? s.teamBPoints : s.teamAPoints;
-      return `[${s.setNumber},${a},${b}]`;
-    });
-  return `{"matchId":${JSON.stringify(scoreline.matchId)},"sets":[${sets.join(',')}]}`;
+  return canonicalJson(scorelineContent(scoreline.matchId, scoreline.sets, perspective));
 }
 
 /** SHA-256 hex of the canonical scoreline: what `score_submissions.hash` and `match_consensus.agreed_hash` store. */

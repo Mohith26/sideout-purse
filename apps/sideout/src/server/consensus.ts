@@ -41,9 +41,11 @@ import {
   type SetDifference,
   type SubmittedScoreline,
 } from '../domain/consensus';
+import type { StoredAttestation, SubmittedAttestation } from '../domain/attestation';
 import type { SetScore, Side } from '../domain/scoreline';
 import { validateMatchTransition } from '../domain/state';
 import { actorFor, SYSTEM_ACTOR, type Actor } from './actor';
+import { verifySubmittedAttestation } from './attestation';
 import { writeAudit } from './audit';
 import type { DbOrTx, Tx } from './db';
 import { failure } from './http/errors';
@@ -58,8 +60,11 @@ import { emitLive, liveTransaction } from './live/outbox';
  * - `submitScoreline`: a player records their team's result. The team is resolved from
  *   `team_members` in the query, never trusted from the client (rule 2); legality is judged
  *   before anything is stored (rule 3); the scoreline is canonicalized to the match
- *   orientation and hashed (rule 1). The first legal submission is what takes a match off
- *   the schedule: `scheduled → in_progress → awaiting_scores`, as the player.
+ *   orientation and hashed (rule 1); a device signature, when the phone sent one, is
+ *   verified against the team's checked-in key before the consensus sees the submission
+ *   (`server/attestation.ts`, spec section 12 item 1) and stored on the row. The first
+ *   legal submission is what takes a match off the schedule: `scheduled → in_progress →
+ *   awaiting_scores`, as the player.
  * - `resolveDispute`: an organizer settles a dispute with an authoritative scoreline,
  *   attributed to them in `resolved_by_user_id` and in the audit row.
  *
@@ -281,6 +286,8 @@ export type SubmitScorelineInput = {
   matchId: string;
   user: User;
   scoreline: SubmittedScoreline;
+  /** The phone's signature over the canonical scoreline, if it is checked in. */
+  attestation?: SubmittedAttestation | null;
   now: Date;
   /** Mints the consensus idempotency key the first time the match is agreed; tests inject a counter. */
   mintKey?: () => string;
@@ -316,6 +323,12 @@ export async function submitScoreline(db: Db, input: SubmitScorelineInput): Prom
       const canonical = canonicalizeSubmission(match.id, input.scoreline.sets, membership.side, bestOf);
       assertLegalScoreline(canonical, bestOf);
 
+      // The phone's signature, checked against the team's checked-in key over the same canonical sets.
+      const attestation: StoredAttestation | null =
+        input.attestation === undefined || input.attestation === null
+          ? null
+          : await verifySubmittedAttestation(tx, { match, team: membership.team, sets: canonical.sets, attestation: input.attestation, now });
+
       const consensus = await ensureConsensus(tx, match.id, loaded.consensus, now);
       const live = await listLiveSubmissions(tx, match.id);
       const mine = live.find((s) => s.submittedForTeamId === membership.team.id) ?? null;
@@ -330,6 +343,7 @@ export async function submitScoreline(db: Db, input: SubmitScorelineInput): Prom
         perspective: membership.side,
         sets: toPerspective(canonical.sets, membership.side),
         hash: canonical.hash,
+        attestation,
         createdAt: now,
       });
       if (mine !== null) {
@@ -349,7 +363,7 @@ export async function submitScoreline(db: Db, input: SubmitScorelineInput): Prom
         action: CONSENSUS_AUDIT.scoreSubmitted,
         subjectType: 'match',
         subjectId: match.id,
-        detail: { submissionId, teamId: membership.team.id, side: membership.side, hash: canonical.hash, replaced: mine !== null },
+        detail: { submissionId, teamId: membership.team.id, side: membership.side, hash: canonical.hash, replaced: mine !== null, attested: attestation !== null, deviceId: attestation?.deviceId ?? null, keyId: attestation?.keyId ?? null },
         at: now,
       });
 
@@ -476,9 +490,13 @@ export type SubmissionView = {
   /** Match-oriented. */
   sets: SetScore[];
   hash: string;
+  /** The verified device signature, public material only, or null for an unsigned submission (and every organizer resolution). */
+  attestation: SubmissionAttestationView | null;
   createdAt: string;
   supersededById: string | null;
 };
+
+export type SubmissionAttestationView = { deviceId: string; keyId: string; userId: string; timestamp: string; verifiedAt: string };
 
 export type ConsensusView = {
   matchId: string;
@@ -516,6 +534,7 @@ async function submissionViews(db: DbOrTx, matchIds: readonly string[]): Promise
       submittedBy: { userId: sub.submittedByUserId, displayName: userName, role: userRole },
       sets: submissionSets(sub),
       hash: sub.hash,
+      attestation: sub.attestation === null ? null : { deviceId: sub.attestation.deviceId, keyId: sub.attestation.keyId, userId: sub.attestation.userId, timestamp: sub.attestation.timestamp, verifiedAt: sub.attestation.verifiedAt },
       createdAt: sub.createdAt.toISOString(),
       supersededById: sub.supersededById,
     });

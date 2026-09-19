@@ -41,6 +41,15 @@ export const CONTEST_ERROR_CODES = {
   // Scores
   scores_not_accepted: 'invalid_state',
   attempt_already_finished: 'conflict',
+  // Signed score attestation (spec section 12, item 1; `src/attestation/verify.ts`): the
+  // request was well formed, the proof was not. One type, a code per check.
+  attestation_source_required: 'invalid_attestation',
+  attestation_user_not_participant: 'invalid_attestation',
+  attestation_timestamp_invalid: 'invalid_attestation',
+  attestation_timestamp_future: 'invalid_attestation',
+  attestation_team_mismatch: 'invalid_attestation',
+  attestation_device_revoked: 'invalid_attestation',
+  attestation_signature_invalid: 'invalid_attestation',
   // Close
   preview_hash_mismatch: 'conflict',
 } as const satisfies Record<string, ApiErrorType>;

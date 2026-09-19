@@ -32,6 +32,7 @@ describe('Sideout never shares a table with contest value', () => {
         'score_submissions',
         'sets',
         'sponsors',
+        'team_devices',
         'team_members',
         'teams',
         'tournaments',
@@ -51,7 +52,7 @@ describe('Sideout never shares a table with contest value', () => {
   });
 
   it('the consensus and Purse tables reference no donation, and the donations table references none of them', () => {
-    const purseSide: PgTable[] = [schema.scoreSubmissions, schema.matchConsensus, schema.purseEntries, schema.purseCalls, schema.purseWebhookEvents];
+    const purseSide: PgTable[] = [schema.scoreSubmissions, schema.matchConsensus, schema.purseEntries, schema.purseCalls, schema.purseWebhookEvents, schema.teamDevices];
     for (const table of purseSide) {
       const referenced = getTableConfig(table).foreignKeys.map((fk) => getTableName(fk.reference().foreignTable));
       expect(referenced, getTableName(table)).not.toContain('donations');

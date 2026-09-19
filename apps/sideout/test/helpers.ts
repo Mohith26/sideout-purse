@@ -23,7 +23,7 @@ export async function truncateAll(database: Database): Promise<void> {
   await database.sql.unsafe(`
     truncate table
       audit_log, purse_calls, purse_webhook_events, purse_entries, score_submissions, match_consensus,
-      donation_provider_events, donations, sets, matches, pool_teams, pools,
+      donation_provider_events, donations, sets, matches, pool_teams, pools, team_devices,
       team_members, teams, sponsors, tournaments, auth_codes, users, charities
     restart identity cascade
   `);

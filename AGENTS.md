@@ -63,8 +63,9 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `db:migrate`, `db:seed`, `db:setup` and the test reset (`PURSE_MIGRATOR_DATABASE_URL`);
   `purse_app` is the runtime (`PURSE_DATABASE_URL`), owns nothing, and holds only what
   `apps/purse/drizzle/0002_ledger_roles.sql`, `0004_ledger_guards.sql`,
-  `0006_contest_guards.sql`, `0008_identity_guards.sql` and
-  `0010_idempotency_reservation_grants.sql` grant. Every new table needs an explicit
+  `0006_contest_guards.sql`, `0008_identity_guards.sql`,
+  `0010_idempotency_reservation_grants.sql`, `0016_reconcile_run_grants.sql` and
+  `0018_device_guards.sql` grant. Every new table needs an explicit
   `GRANT ... TO purse_app` in a custom migration (`db:generate:custom`); an append-only
   table (journal, audit log, `contest_results`, `idempotency_keys`) gets `SELECT, INSERT`
   only, and a table with columns that legitimately change gets column-level `UPDATE`
@@ -73,7 +74,8 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `entry_journal_entry_id`, `team_ref`, `seed` only when a withdrawn entrant re-enters;
   `contest_scores`: `superseded_by`; `idempotency_reservations`: everything but the key;
   the phase 3 tables per the header of `drizzle/0008_identity_guards.sql`; the phase 4
-  tables per `0012_embed_webhook_guards.sql`, `webhook_delivery_attempts` append-only).
+  tables per `0012_embed_webhook_guards.sql`, `webhook_delivery_attempts` append-only;
+  `user_devices`: the `revoked_*` columns and `updated_at`).
   `test/ledger/roles.test.ts` fails on a table with
   no grant and pins the updatable columns of every contest and identity table. A wallet
   needs a `users` row (`accounts.user_id` is a foreign key), so test fixtures create users
@@ -261,6 +263,16 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `docs/decisions.md` (phase 7) records what a score means, the `confirmed` rule and the
   prize mapping. The client never reaches a browser: `test/purse/bundle.test.ts` checks the
   client components and `scripts/check-bundle.ts` greps `.next/static` as part of `pnpm build`.
+- Signed score attestation (stretch 1): `docs/attestation.md` is the contract. The shared
+  canonical form, key id and sign/verify are `packages/purse-types/src/attestation.ts`
+  (pinned by its test vectors); Purse's registry is `apps/purse/src/users/devices.ts`
+  (`user_devices`, `POST /v1/users/:id/devices`) and its intake check
+  `src/attestation/verify.ts` (`contest_scores.attestation_state`, `invalid_attestation` 422);
+  Sideout's are `server/devices.ts` (`team_devices`, `POST /api/teams/:id/devices`, the Purse
+  mirror), `server/attestation.ts` (verified before the consensus in `submitScoreline`),
+  `lib/attestation/device.ts` (the non-extractable key in IndexedDB) and
+  `components/attestation/`. `test/api/attestation.test.ts` and `e2e/attestation.spec.ts`
+  drive it end to end.
 - Purse variables (`src/env.ts`): `PURSE_API_URL`, `SIDEOUT_PURSE_SECRET_KEY`, `PURSE_WEBHOOK_SECRET`
   on the server; `NEXT_PUBLIC_PURSE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_PURSE_ORIGIN`,
   `NEXT_PUBLIC_PURSE_TENANT_ID` for the SDK; all required in production, and outside it a
