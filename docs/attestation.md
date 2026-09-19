@@ -219,8 +219,7 @@ refusals, revocation and the push; `pnpm --filter @sideout/web e2e` (`e2e/attest
 the `mobile` project) runs the browser flow on the Boardwalk seed: check in, sign, the badge,
 the dispute queue, the organizer's device list. `E2E_API_PORT` / `E2E_WEB_PORT` move the two
 local servers when another run holds 4020/3010. The flow reads the match page back with a
-reload after each submission: in a production build of Next 15.5 the in-place
-`router.refresh()` that follows a submission (and `LiveRefresh`'s five-second poll) commits
-only some of the time, on `main` as much as here (a transition whose wake-up is lost; the SSE
-live-scoring work carries the `LiveRefresh` retry that unparks it). Not something this
-feature changes.
+reload after each submission rather than waiting on the in-place refresh: in a production
+build of Next 15.5 the `router.refresh()` that follows a submission is sometimes parked
+(`docs/live.md`, `LiveRefresh`'s parked-refresh retry is the fix), and a reload keeps the
+flow's assertions about the server's state, not the router's.
