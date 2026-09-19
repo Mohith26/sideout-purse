@@ -1446,7 +1446,11 @@ Nothing in today's browser bundle depends on the value: the picker and the pill 
 server-rendered. The check exists so a demo build can never be started as a non-demo
 server or the reverse, and so the Dockerfile's `DEMO_ACCOUNTS` build argument (default
 `false`) and the runtime variable have to be set together on purpose. `NEXT_PUBLIC_DEMO_ACCOUNTS`
-is never set by hand; the host sets `DEMO_ACCOUNTS` and passes it to the build.
+is never set by hand; the host sets `DEMO_ACCOUNTS` and passes it to the build. The
+refusal is a real one: `src/instrumentation.ts` (Next's boot hook, Node runtime only)
+parses the environment before the server serves and exits 1 with one logged line, which
+also turns any missing production variable into a failed boot rather than a 500 on every
+request.
 
 ### Refused beside anything real
 

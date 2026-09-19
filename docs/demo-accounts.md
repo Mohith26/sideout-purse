@@ -13,7 +13,7 @@ button signs the visitor in as that person. Off by default. The decisions behind
 | Variable | Where | Meaning |
 |---|---|---|
 | `DEMO_ACCOUNTS` | the server, **and** the build (`apps/sideout/Dockerfile` build argument, default `false`) | `true` or `1` turns the picker, `POST /api/auth/demo` and the `demoAccounts: true` field on `/health` on. Anything else, or unset, is off. |
-| `NEXT_PUBLIC_DEMO_ACCOUNTS` | derived, never set by hand | `next.config.ts` derives it from `DEMO_ACCOUNTS` at build time and `next build` inlines it; `src/env.ts` compares it with the runtime `DEMO_ACCOUNTS` and refuses to boot a build made for the other setting. |
+| `NEXT_PUBLIC_DEMO_ACCOUNTS` | derived, never set by hand | `next.config.ts` derives it from `DEMO_ACCOUNTS` at build time and `next build` inlines it; `src/env.ts` compares it with the runtime `DEMO_ACCOUNTS` and a build made for the other setting refuses to boot (`src/instrumentation.ts` checks the environment at server start and exits 1). |
 
 `src/env.ts` refuses `DEMO_ACCOUNTS=true` beside anything that is not demo-safe: a live
 Purse key (`sk_live_`, `pk_live_`), a Stripe key that is not test-mode, or an SMS provider
