@@ -10,6 +10,7 @@ import { actorFor, SYSTEM_ACTOR } from '../actor';
 import { writeAudit } from '../audit';
 import type { DbOrTx } from '../db';
 import { failure } from '../http/errors';
+import { liveTransaction } from '../live/outbox';
 import { transitionTournament } from '../tournaments';
 import { contestSubject } from './contests';
 import { idempotencyKey, type PurseDeps } from './deps';
@@ -261,7 +262,7 @@ export async function closeTournament(deps: PurseDeps, input: { tournamentId: st
     }
   }
 
-  const updated = await deps.db.transaction(async (tx) => {
+  const updated = await liveTransaction(deps.db, async (tx) => {
     const [current] = await tx.select().from(tournaments).where(eq(tournaments.id, tournament.id)).for('update');
     if (current === undefined) throw failure.notFound('tournament_not_found', 'No such tournament.');
     if (current.status === 'awaiting_settlement') {

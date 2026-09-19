@@ -13,8 +13,8 @@ export const metadata: Metadata = { title: 'Live play' };
 /**
  * Home opens into the state of play (spec 5.3, item 1): the live strip when an event is in
  * progress, then the featured event, upcoming events, and past events with what each
- * raised. No hero, no marketing. While a strip is showing the page polls (decision D11)
- * so the cards' scores roll as they change.
+ * raised. No hero, no marketing. While a strip is showing the page follows the live feed of
+ * every tournament (decision D11, SSE; docs/live.md) so the cards' scores roll as they change.
  */
 export default async function HomePage() {
   const { app, now, clock } = await pageContext();
@@ -37,7 +37,7 @@ export default async function HomePage() {
   return (
     <>
       <h1 className="sr-only">Live play</h1>
-      {strips.length > 0 ? <LiveRefresh /> : null}
+      {strips.length > 0 ? <LiveRefresh source={{ kind: 'all' }} /> : null}
       {strips.map((strip) => (
         <LiveMatchStrip key={strip.summary.tournament.id} tournamentName={strip.summary.tournament.name} slug={strip.summary.tournament.slug} matches={strip.matches} bracketRounds={strip.bracketRounds} />
       ))}

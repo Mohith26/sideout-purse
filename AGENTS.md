@@ -307,6 +307,12 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `sideoutSdkGate` ESLint block and `test/purse/sdk-gate.test.ts`); screens reach Purse through
   `usePurse()` (link, open a flow into the gate's sheet or a registered slot, the profile) and
   the pure `mapPurseError` in `components/purse/eligibility.ts` maps sealed variants to UI states.
+- Live scoring is SSE (`docs/live.md`): `GET /api/live[/tournaments/:id]` streams from
+  `server/live/` (`bus.ts` LISTEN/NOTIFY fan-out with a per-channel ring, `stream.ts` the
+  response, `outbox.ts` the after-commit seam: writers `emitLive` next to a state write,
+  the transaction's owner uses `liveTransaction`, never `db.transaction`, or `emitLive`
+  throws); `LiveRefresh` takes a `source` and falls back to the D11 poll. Bounds are the
+  four `LIVE_*` variables in `env.ts`.
 - PWA: `public/sw.js` (versioned by `?v=<build sha>`, registered by production builds only,
   `components/offline/ServiceWorkerRegistration.tsx`), `src/app/manifest.ts`, icons rendered by
   `scripts/render-icons.ts`; the score outbox is `src/lib/offline/` (IndexedDB, replayed through

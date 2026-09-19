@@ -853,6 +853,15 @@ a.so-chip:hover {
   height: 6px;
 }
 
+/*
+ * The transport state (docs/live.md): while a screen's live figures arrive over the event
+ * stream the page sets `data-live="stream"` on <html>, and the dot gains a faint halo.
+ * Polling (the fallback) and a plain page keep the plain dot. No size or layout changes.
+ */
+:root[data-live='stream'] .so-live-dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--surf) 18%, transparent);
+}
+
 /* ---- Empty state ------------------------------------------------------------------- */
 
 .so-empty {

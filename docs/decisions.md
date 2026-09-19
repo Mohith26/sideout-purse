@@ -1162,7 +1162,8 @@ stored; the wallet chip shows what Purse says now.
 tournament tabs of a live event and an open match, and stops while the tab is hidden. The
 count-up, the FLIP reorder and the bracket draw animate the difference between two server
 renders: there is no client store, and a refresh that changes nothing moves nothing. SSE
-stays the phase 9 follow-up the spec names.
+stays the phase 9 follow-up the spec names. (Delivered as stretch item 3: "Stretch: SSE
+live scoring decisions" at the end of this file; the poll is now the fallback.)
 
 ### The service worker is a production-build feature
 
@@ -1625,3 +1626,90 @@ consumer proved, and what it exposed.
   `docs/deploy.md`'s pattern) and left to the operator: the brief both asked for the deploy
   and forbade a new service, so the PR ships deployable and the deploy itself is a decision
   above the implementation.
+
+## Stretch: SSE live scoring decisions
+
+Stretch item 3 (spec section 12) replaces the polling D11 chose for v1 with Server-Sent
+Events; `docs/live.md` is the reference. What the spec left open, and what was decided:
+
+### Events carry no figures; the screen re-renders
+
+An event is `{ tournamentId, kind, matchId, seq, at }` and nothing else. The client's only
+reaction is `router.refresh()`, the same call the phase 8 poll made, so every screen keeps
+rendering from the server and the six motion transitions keep animating the difference
+between two server renders. A client store of live data would have been a second copy of
+the truth, and a payload a screen renders directly would have tied the wire format to every
+screen. The cost is one server render per event per open screen, which is what the poll
+already paid every five seconds; refreshes are coalesced so a burst of events (a submission
+emits `score` and `match`, an agreed match `standings` and the next match's `match` too)
+costs at most two.
+
+### Fan-out is Postgres NOTIFY, the in-process bus the local leg
+
+Sideout may run as more than one instance, so an event written by one must reach a stream
+held by another. The options were a broker (a new service, refused by the hosting topology),
+a shared table polled by every instance (a new table and a poll), or Postgres `LISTEN` /
+`NOTIFY` on the database Sideout already has. NOTIFY it is: the publisher runs one statement
+after its transaction commits, on the tournament's channel (`sideout_live:<id>`) and on the
+channel of every tournament (`sideout_live`, for the home strip and the dispute queue);
+each instance's bus listens to a channel while a stream on it is open and for thirty seconds
+after. The bus is fed by notifications only, the publishing instance's own included, so one
+path exists and every instance sees the same order. NOTIFY is not durable across a dropped
+listening connection, and need not be: a reconnected listener tells its streams to `resync`
+(one refresh), and a client that reconnects with an id the server cannot resume gets the
+same answer.
+
+### Sequence and resumption are per process, and a resume that cannot be honoured is a resync
+
+`Last-Event-ID` resumes from a bounded in-memory ring per channel (256 events, thirty
+seconds of linger after the last subscriber). An id is `<epoch>-<seq>`: the epoch is random
+per process and per continuous listening period, so an id minted by another instance, or
+before the listener reconnected, never matches by accident; a gap the ring has evicted
+resyncs too. A database sequence would have made ids global at the cost of a migration and
+a round trip per event, for a property the client does not need: a stale resume costs one
+render, which is exactly what a reconnect deserves.
+
+### After the commit, structurally
+
+The after-commit seam is `liveTransaction` / `emitLive` (`server/live/outbox.ts`). A writer
+emits next to its state change (every consensus move, every match move, the winner's
+advancement, the forfeit, every tournament transition, the Purse push's consensus moves);
+the transaction's owner publishes once it has resolved, so no event precedes its commit and
+a rollback emits nothing. A transaction handle not opened through `liveTransaction` throws
+on `emitLive` rather than publish early or drop the event; on the pool (the Purse push's
+autocommitted moves) `emitLive` publishes at once, the write already being durable. This
+mirrors the phase 7 rule that Purse is called only after Sideout's transaction commits.
+
+### Bounds: a 429 with Retry-After, never an unbounded fan-out
+
+Per process (`LIVE_MAX_STREAMS`, 500) and per address (`LIVE_MAX_STREAMS_PER_ADDRESS`, 8,
+read with `TRUSTED_PROXY_HOPS` like the sign-in limits) the route answers 429 with
+`Retry-After: 5`; the browser's `EventSource` reports that as a failure and the client
+falls back to polling. Every stream is closed with `bye` after `LIVE_STREAM_TTL_SECONDS`
+(fifteen minutes) so no connection outlives a deploy by much and clients spread over the
+instances again, heartbeats every `LIVE_HEARTBEAT_MS` (twenty seconds, the middle of the
+15–25 s window proxies tolerate), and a client that goes away frees its slot on the request's
+abort. None of the four variables is required.
+
+### The client reconnects by hand and keeps polling as the fallback
+
+`EventSource`'s own reconnect is a fixed delay; the client closes and reopens the stream
+itself with exponential backoff (1 s to 30 s, a quarter of jitter), carrying the last id in
+the query string since a hand-made connection sends no `Last-Event-ID`. Three short-lived
+failures in a row (a stream that lived thirty seconds before dropping resets the count, a
+deploy is not a fault) switch the page to the D11 five-second poll for a minute before the
+stream is tried again; a browser with no `EventSource` polls from the start. The stream
+pauses while the tab is hidden and one refresh catches up on return, the same visibility
+rule the poll had.
+
+### The one visible change is the live dot's halo
+
+While the stream is open the page sets `data-live="stream"` on `<html>` and
+`.so-live-dot` gains a faint surf halo; polling shows the plain dot. That is the whole UI
+change: no new element, no layout change, and the reduced-motion twins are untouched (the
+dot's breath is a keyframe; the halo is a static shadow).
+
+### The register screen still polls
+
+Waiting on a pending donation is not live scoring and emits no event; `LiveRefresh` without
+a `source` is the phase 8 poll, kept for that screen alone.

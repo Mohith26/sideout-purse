@@ -1,43 +1,136 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef, useTransition } from 'react';
 
-/** Decision D11: live figures poll at five seconds; invisible to a reader and free of a socket. */
+import { LiveConnection, type LiveSource, type LiveTransport } from './live-stream';
+
+/** Decision D11: live figures poll at five seconds; the cadence the stream falls back to. */
 export const LIVE_POLL_MS = 5_000;
 
+/** A refresh that has not settled after this long is treated as done, so a stuck transition can never stop the next one. */
+const STALE_REFRESH_MS = 15_000;
+
+/** The attribute on `<html>` that tells the design system which transport is carrying live figures (`.so-live-dot` reads it). */
+export const LIVE_TRANSPORT_ATTRIBUTE = 'data-live';
+
+export type { LiveSource };
+
 /**
- * Re-render the server components on a cadence while a page is showing live figures, so
- * standings and scores track the rows without the client holding a second copy of the
- * data (decision D11, polling). Pauses while the tab is hidden and refreshes once on
- * return. Fresh numbers are content, not motion, so reduced-motion preferences do not stop
- * it.
+ * Re-render the server components while a page is showing live figures, so standings and
+ * scores track the rows without the client holding a second copy of the data (decision
+ * D11). With a `source`, a Server-Sent Events stream on `/api/live/*` drives the refresh
+ * (docs/live.md): every event re-renders once, refreshes are coalesced so at most one is
+ * in flight, the stream pauses while the tab is hidden and reconnects (after one refresh)
+ * when it returns, and the phase 8 polling is the fallback when the browser has no
+ * `EventSource` or the stream keeps failing. Without a `source` it polls, as before.
+ * Fresh numbers are content, not motion, so reduced-motion preferences do not stop it.
  */
-export function LiveRefresh({ intervalMs = LIVE_POLL_MS }: { intervalMs?: number }) {
+export function LiveRefresh({ source, intervalMs = LIVE_POLL_MS }: { source?: LiveSource; intervalMs?: number }) {
   const router = useRouter();
+  // The latest router, read from the stream's callbacks; a test's router double is a fresh object per render.
+  const routerRef = useRef(router);
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const start = () => {
-      timer ??= setInterval(() => router.refresh(), intervalMs);
-    };
-    const stop = () => {
-      if (timer !== null) clearInterval(timer);
-      timer = null;
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        router.refresh();
-        start();
-      } else {
-        stop();
-      }
-    };
-    if (document.visibilityState === 'visible') start();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      stop();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [router, intervalMs]);
+    routerRef.current = router;
+  }, [router]);
+  const [isPending, startTransition] = useTransition();
+  const inFlight = useRef(false);
+  const queued = useRef(false);
+  const startedAt = useRef(0);
+
+  const refresh = useCallback(() => {
+    const now = Date.now();
+    if (inFlight.current && now - startedAt.current < STALE_REFRESH_MS) {
+      queued.current = true;
+      return;
+    }
+    inFlight.current = true;
+    queued.current = false;
+    startedAt.current = now;
+    startTransition(() => routerRef.current.refresh());
+  }, []);
+
+  // The transition settled: run the refresh an event asked for meanwhile, if any.
+  useEffect(() => {
+    if (isPending || !inFlight.current) return;
+    inFlight.current = false;
+    if (queued.current) refresh();
+  }, [isPending, refresh]);
+
+  // The source is compared by value: a server component renders a fresh object each time.
+  const sourceKey = source === undefined ? null : source.kind === 'all' ? 'all' : `tournament:${source.id}`;
+  useEffect(() => {
+    const parsed = parseSourceKey(sourceKey);
+    if (parsed === null) return pollingEffect(refresh, intervalMs);
+    return streamEffect(parsed, refresh, intervalMs);
+  }, [sourceKey, refresh, intervalMs]);
+
   return null;
+}
+
+function parseSourceKey(key: string | null): LiveSource | null {
+  if (key === null) return null;
+  if (key === 'all') return { kind: 'all' };
+  return { kind: 'tournament', id: key.slice('tournament:'.length) };
+}
+
+function setTransport(transport: LiveTransport | null): void {
+  if (transport === null) delete document.documentElement.dataset['live'];
+  else document.documentElement.dataset['live'] = transport;
+}
+
+function pollingEffect(refresh: () => void, intervalMs: number): () => void {
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const start = () => {
+    timer ??= setInterval(refresh, intervalMs);
+    setTransport('poll');
+  };
+  const stop = () => {
+    if (timer !== null) clearInterval(timer);
+    timer = null;
+  };
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') {
+      refresh();
+      start();
+    } else {
+      stop();
+    }
+  };
+  if (document.visibilityState === 'visible') start();
+  document.addEventListener('visibilitychange', onVisibility);
+  return () => {
+    stop();
+    document.removeEventListener('visibilitychange', onVisibility);
+    setTransport(null);
+  };
+}
+
+function streamEffect(source: LiveSource, refresh: () => void, pollMs: number): () => void {
+  let connection: LiveConnection | null = null;
+  const start = () => {
+    if (connection !== null) return;
+    connection = new LiveConnection({ source, onEvent: refresh, onTransport: setTransport, pollMs });
+    connection.start();
+  };
+  const stop = () => {
+    connection?.stop();
+    connection = null;
+    setTransport(null);
+  };
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') {
+      // Whatever happened while the tab was hidden, one render catches up; the stream carries on from there.
+      refresh();
+      start();
+    } else {
+      stop();
+    }
+  };
+  if (document.visibilityState === 'visible') start();
+  document.addEventListener('visibilitychange', onVisibility);
+  return () => {
+    stop();
+    document.removeEventListener('visibilitychange', onVisibility);
+  };
 }

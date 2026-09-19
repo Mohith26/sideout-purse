@@ -67,7 +67,7 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
 
   return (
     <div className="space-y-8">
-      {tournamentLive && open ? <LiveRefresh /> : null}
+      {tournamentLive && open ? <LiveRefresh source={{ kind: 'tournament', id: view.tournament.id }} /> : null}
       <header className="space-y-3">
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 type-label text-text-tertiary">
           <Link href={`/t/${view.tournament.slug}`} className="target inline-flex items-center hover:text-text-primary">

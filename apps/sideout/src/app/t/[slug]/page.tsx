@@ -68,7 +68,7 @@ export default async function OverviewPage({ params }: { params: Promise<{ slug:
 
   return (
     <div className="space-y-10">
-      {t.status === 'live' ? <LiveRefresh /> : null}
+      {t.status === 'live' ? <LiveRefresh source={{ kind: 'tournament', id: t.id }} /> : null}
       {t.status === 'registration_open' ? (
         <section aria-labelledby="register-heading" className="surface-raised flex flex-wrap items-center justify-between gap-4 rounded-card p-5 md:p-6">
           <div className="min-w-0">

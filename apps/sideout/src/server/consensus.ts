@@ -47,6 +47,7 @@ import { actorFor, SYSTEM_ACTOR, type Actor } from './actor';
 import { writeAudit } from './audit';
 import type { DbOrTx, Tx } from './db';
 import { failure } from './http/errors';
+import { emitLive, liveTransaction } from './live/outbox';
 
 /**
  * The consensus service: the trust boundary between a phone on the sand and anything that
@@ -66,7 +67,9 @@ import { failure } from './http/errors';
  * consensus records the hash and mints its idempotency key (only if it has none, rule 4),
  * the match becomes `final` as the system, and the winner advances through
  * `domain/bracket.ts`. Nothing here talks to Purse: the push is `server/purse/scores.ts`,
- * which the routes call after these transactions commit.
+ * which the routes call after these transactions commit. Every state write here emits a
+ * live event (`server/live/outbox.ts`), published once the transaction has committed, so
+ * the open screens re-render (docs/live.md).
  */
 
 export type ConsensusOutcome = Extract<ConsensusState, 'awaiting_second' | 'agreed' | 'disputed'>;
@@ -131,16 +134,21 @@ async function ensureConsensus(tx: Tx, matchId: string, existing: MatchConsensus
   return row;
 }
 
-/** Move a consensus row along one edge of the table, auditing it. Shared with the Purse push (`server/purse/scores.ts`). */
+/**
+ * Move a consensus row along one edge of the table, auditing it and emitting a `score`
+ * event (after the commit in a transaction, at once on the pool). Shared with the Purse
+ * push (`server/purse/scores.ts`), which is why the tournament id travels with the row.
+ */
 export async function moveConsensus(
   tx: DbOrTx,
-  consensus: MatchConsensus,
+  subject: { consensus: MatchConsensus; tournamentId: string },
   to: ConsensusState,
   actor: Actor,
   now: Date,
   patch: Partial<typeof matchConsensus.$inferInsert>,
   detail: Record<string, unknown>,
 ): Promise<MatchConsensus> {
+  const { consensus } = subject;
   const verdict = validateConsensusTransition(consensus.state, to, actor.kind);
   if (!verdict.ok) throw new ConsensusError('invalid_transition', verdict.message, { from: consensus.state, to });
   const [updated] = await tx
@@ -157,6 +165,7 @@ export async function moveConsensus(
     detail: { consensusId: consensus.id, from: consensus.state, to, event: consensusEvent(consensus.state, to) ?? null, ...detail },
     at: now,
   });
+  await emitLive(tx, { tournamentId: subject.tournamentId, kind: 'score', matchId: consensus.matchId });
   return updated;
 }
 
@@ -170,6 +179,8 @@ async function moveMatch(tx: Tx, match: Match, to: MatchStatus, actor: Actor, no
     .returning();
   if (updated === undefined) throw new Error('match update returned no row');
   await writeAudit(tx, { actor, action: 'match.status_changed', subjectType: 'match', subjectId: match.id, detail: { from: match.status, to, ...detail }, at: now });
+  await emitLive(tx, { tournamentId: match.tournamentId, kind: 'match', matchId: match.id });
+  if (to === 'final') await emitLive(tx, { tournamentId: match.tournamentId, kind: 'standings', matchId: match.id });
   return updated;
 }
 
@@ -191,7 +202,7 @@ async function enterAgreed(
   const idempotencyKey = idempotencyKeyFor(consensus.idempotencyKey, extra.mintKey);
   const moved = await moveConsensus(
     tx,
-    consensus,
+    { consensus, tournamentId: loaded.match.tournamentId },
     'agreed',
     actor,
     now,
@@ -223,6 +234,7 @@ async function enterAgreed(
       detail: { fromMatchId: loaded.match.id, slot: advancement.slot, teamId: outcome.winnerTeamId, seed: advancement.seed },
       at: now,
     });
+    await emitLive(tx, { tournamentId: loaded.match.tournamentId, kind: 'match', matchId: advancement.nextMatchId });
   }
   return { consensus: moved, match: finalised };
 }
@@ -279,7 +291,7 @@ export async function submitScoreline(db: Db, input: SubmitScorelineInput): Prom
   const actor = actorFor(input.user);
   const mintKey = input.mintKey ?? randomUUID;
   try {
-    return await db.transaction(async (tx) => {
+    return await liveTransaction(db, async (tx) => {
       const loaded = await loadMatchForUpdate(tx, input.matchId);
       const { match } = loaded;
 
@@ -353,10 +365,11 @@ export async function submitScoreline(db: Db, input: SubmitScorelineInput): Prom
         case 'awaiting_second': {
           let current: MatchConsensus;
           if (consensus.state === 'awaiting_first') {
-            current = await moveConsensus(tx, consensus, 'awaiting_second', actor, now, {}, { teamId: membership.team.id, submissionId });
+            current = await moveConsensus(tx, { consensus, tournamentId: match.tournamentId }, 'awaiting_second', actor, now, {}, { teamId: membership.team.id, submissionId });
           } else {
             const [touched] = await tx.update(matchConsensus).set({ updatedAt: now }).where(eq(matchConsensus.id, consensus.id)).returning();
             current = touched ?? consensus;
+            await emitLive(tx, { tournamentId: match.tournamentId, kind: 'score', matchId: match.id });
           }
           await openForScores(tx, loaded, actor, now, { submissionId });
           return { outcome: 'awaiting_second', replaced: decision.replaced, submissionId, perspective: membership.side, consensus: current, match: loaded.match };
@@ -371,7 +384,7 @@ export async function submitScoreline(db: Db, input: SubmitScorelineInput): Prom
           await openForScores(tx, loaded, actor, now, { submissionId });
           const disputed = await moveConsensus(
             tx,
-            consensus,
+            { consensus, tournamentId: match.tournamentId },
             'disputed',
             actor,
             now,
@@ -405,7 +418,7 @@ export async function resolveDispute(db: Db, input: ResolveDisputeInput): Promis
   const actor = actorFor(input.organizer);
   const mintKey = input.mintKey ?? randomUUID;
   try {
-    return await db.transaction(async (tx) => {
+    return await liveTransaction(db, async (tx) => {
       const loaded = await loadMatchForUpdate(tx, input.matchId);
       const { match, consensus } = loaded;
       assertLive(loaded);
