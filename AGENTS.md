@@ -311,8 +311,10 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   `server/live/` (`bus.ts` LISTEN/NOTIFY fan-out with a per-channel ring, `stream.ts` the
   response, `outbox.ts` the after-commit seam: writers `emitLive` next to a state write,
   the transaction's owner uses `liveTransaction`, never `db.transaction`, or `emitLive`
-  throws); `LiveRefresh` takes a `source` and falls back to the D11 poll. Bounds are the
-  four `LIVE_*` variables in `env.ts`.
+  throws); `LiveRefresh` takes a `source`, falls back to the D11 poll, and keeps an unread
+  `setState` ticking while a refresh is pending because a production Next 15.5 build often
+  never wakes the render `router.refresh()` parked (vercel/next.js#98305; `docs/decisions.md`,
+  "Stretch: SSE live scoring decisions"). Bounds are the four `LIVE_*` variables in `env.ts`.
 - PWA: `public/sw.js` (versioned by `?v=<build sha>`, registered by production builds only,
   `components/offline/ServiceWorkerRegistration.tsx`), `src/app/manifest.ts`, icons rendered by
   `scripts/render-icons.ts`; the score outbox is `src/lib/offline/` (IndexedDB, replayed through
