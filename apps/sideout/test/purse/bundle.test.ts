@@ -51,7 +51,8 @@ describe('the secret key never reaches a browser', () => {
 
   it('the build greps the client bundle', () => {
     const pkg = JSON.parse(readFileSync(path.resolve(SRC, '..', 'package.json'), 'utf8')) as { scripts: Record<string, string> };
-    expect(pkg.scripts['build']).toBe('next build && tsx scripts/check-bundle.ts');
+    // The check runs straight after `next build`, before anything else the build does (phase 9 bundles the scripts after it).
+    expect(pkg.scripts['build']).toMatch(/^next build && tsx scripts\/check-bundle\.ts( && |$)/);
     expect(readFileSync(path.resolve(SRC, '..', 'scripts', 'check-bundle.ts'), 'utf8')).toMatch(/sk_\(sandbox\|live\)_/);
   });
 });
