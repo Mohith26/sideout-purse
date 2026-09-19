@@ -10,7 +10,7 @@ import { assertRuntimeRole } from './ledger';
 import { MIGRATIONS_FOLDER } from './paths';
 import { createProviders, type Providers } from './providers';
 import { deriveProcessKeys } from './secrets';
-import { WebhookDispatcher } from './webhooks';
+import { destinationPolicy, WebhookDispatcher } from './webhooks';
 
 const config = env();
 const logger = createLogger({ service: 'purse-api', level: config.logLevel });
@@ -53,6 +53,16 @@ if (config.secretKeyIsDefault) {
 const keys = deriveProcessKeys(config.secretKey);
 const sms = createSmsSender(config.embed.smsProvider, logger.child({ component: 'sms' }));
 
+// Where a webhook may point (docs/webhooks-security.md). Everything but a public unicast
+// address is refused unless this deployment named the host on purpose, which a production
+// process says out loud because it is the one way in to a private network.
+const webhookPolicy = destinationPolicy({ nodeEnv: config.nodeEnv, allowedHosts: config.webhooks.allowedHosts, allowedPorts: config.webhooks.allowedPorts });
+if (config.webhooks.allowedHosts.length > 0) {
+  const fields = { hosts: config.webhooks.allowedHosts, ports: config.webhooks.allowedPorts };
+  if (config.nodeEnv === 'production') logger.warn('WEBHOOK_ALLOWED_HOSTS exempts hosts from webhook destination validation in production', fields);
+  else logger.info('webhook destination allowlist in effect', fields);
+}
+
 const { app, embedDir } = createApp({
   sql: database.sql,
   db: database.db,
@@ -68,6 +78,7 @@ const { app, embedDir } = createApp({
   rateLimit: config.rateLimit,
   trustedProxyHops: config.trustedProxyHops,
   sandboxSelfServe: config.sandboxSelfServe,
+  webhookPolicy,
 });
 if (embedDir === undefined) {
   logger.warn('embed app not found; /embed answers 404 until `pnpm --filter @purse/embed build` runs or PURSE_EMBED_DIR is set', { configured: config.embed.staticDir ?? null });
@@ -77,7 +88,7 @@ if (embedDir === undefined) {
 
 // The webhook dispatcher (spec 4.9) runs in this process unless WEBHOOK_DISPATCHER=off.
 const dispatcher = config.webhooks.dispatcher
-  ? new WebhookDispatcher({ db: database.db, keys, logger, pollIntervalMs: config.webhooks.pollIntervalMs, deliveryTimeoutMs: config.webhooks.deliveryTimeoutMs })
+  ? new WebhookDispatcher({ db: database.db, keys, logger, policy: webhookPolicy, pollIntervalMs: config.webhooks.pollIntervalMs, deliveryTimeoutMs: config.webhooks.deliveryTimeoutMs })
   : undefined;
 dispatcher?.start();
 if (dispatcher === undefined) logger.info('webhook dispatcher is off in this process (WEBHOOK_DISPATCHER=off)');

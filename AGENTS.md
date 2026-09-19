@@ -141,6 +141,12 @@ outside the logger, no floats in the money path, no gradients or emoji iconograp
   (`endpoints.ts`, `src/secrets.ts`). A new event type is a `@purse/types` change, the CHECK
   literal in `schema.ts` and a migration. `test/webhooks/dispatcher.test.ts` is the
   receiver-down demo with a fake clock; `test/webhooks/receiver.ts` is the sample receiver.
+- Where a webhook may point is `docs/webhooks-security.md`: `destination.ts` (public unicast
+  only, checked at registration *and* at every dispatch attempt) and `transport.ts` (the
+  approved address pinned through a custom `lookup`, no redirects, bounded connect, total
+  and response). Endpoint writes take a `DestinationPolicy`; `WEBHOOK_ALLOWED_HOSTS` is the
+  escape hatch, empty by default, and `TEST_WEBHOOK_POLICY` in `test/helpers.ts` is how the
+  tests name their loopback receiver.
 
 ## Operator console
 

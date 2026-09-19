@@ -6,6 +6,7 @@ import type { RequestScope } from '../../http/request-id';
 import type { Actor } from '../../ledger/audit';
 import type { Providers } from '../../providers';
 import type { ProcessKeys } from '../../secrets';
+import type { DestinationPolicy } from '../../webhooks';
 
 /** The signed-in operator, their session, and the audit actor every console write is recorded under. */
 export type OperatorScope = { Variables: { operator: Operator; session: OperatorSession; actor: Actor } };
@@ -19,6 +20,8 @@ export type ConsoleDeps = {
   db: Db;
   /** The derived process keys (`src/secrets.ts`); the webhook routes seal signing secrets with them. */
   keys: ProcessKeys;
+  /** Which destinations a webhook endpoint may name (`webhooks/destination.ts`). */
+  webhookPolicy: DestinationPolicy;
   providers: Providers;
   /** How many proxies append to `X-Forwarded-For`; the sign-in limit is keyed by the address they reveal. */
   trustedProxyHops: number;

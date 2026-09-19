@@ -16,9 +16,14 @@ seam table from `docs/providers.md` appears on the docs page.
 
 Outbound webhooks are unavailable for self-serve tenants. All webhook mutations return
 `403 permission_error / sandbox_webhooks_unavailable`; reads remain available. Managed
-tenants retain their existing behavior. Destination validation for managed webhooks is
-a separate follow-up. The internal reconciliation endpoint requires a host token and is
-not unlocked by a sandbox key. Embed calls require their normal session/token handshake.
+tenants retain their existing behavior. Every webhook destination, on every tenant, is now
+validated and pinned (`docs/webhooks-security.md`), so this refusal no longer stands in for
+a missing check: it stays because an anonymous visitor who could register an endpoint could
+still make the deployment emit signed POSTs to arbitrary public hosts, and the `/docs`
+sandbox runs its examples in the visitor's own browser with no receiver to point at
+(`docs/decisions.md`, "Webhook destination validation"). The internal reconciliation
+endpoint requires a host token and is not unlocked by a sandbox key. Embed calls require
+their normal session/token handshake.
 
 ## Minting and limits
 

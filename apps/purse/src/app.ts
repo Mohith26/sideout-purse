@@ -20,6 +20,7 @@ import { pageRoutes } from './routes/pages';
 import { statusRoutes } from './routes/status';
 import { v1Routes } from './routes/v1';
 import type { ProcessKeys } from './secrets';
+import { destinationPolicy, type DestinationPolicy } from './webhooks';
 
 export type AppDeps = {
   sql: Sql;
@@ -34,6 +35,8 @@ export type AppDeps = {
   keys: ProcessKeys;
   /** The embed sign-in's SMS seam. */
   sms: SmsSender;
+  /** Which destinations a webhook endpoint may name (`webhooks/destination.ts`); defaults to this NODE_ENV with nothing exempted. */
+  webhookPolicy?: DestinationPolicy;
   /** Where the built embed app is served from under `/embed`; `undefined` looks for the sibling app's export. */
   embedDir?: string | undefined;
   rateLimit?: RateLimitConfig;
@@ -63,6 +66,7 @@ export type AppDeps = {
 export function createApp(deps: AppDeps) {
   const app = new Hono<RequestScope>();
   const sandboxSelfServe = deps.sandboxSelfServe ?? deps.nodeEnv !== 'production';
+  const webhookPolicy = deps.webhookPolicy ?? destinationPolicy({ nodeEnv: deps.nodeEnv });
   const buckets = new TokenBuckets(deps.rateLimit ?? DEFAULT_RATE_LIMIT);
 
   app.use(requestId(deps.logger));
@@ -121,6 +125,7 @@ export function createApp(deps: AppDeps) {
       db: deps.db,
       keys: deps.keys,
       providers: deps.providers,
+      webhookPolicy,
       trustedProxyHops: deps.trustedProxyHops ?? 0,
       ...(deps.clock === undefined ? {} : { clock: deps.clock }),
       ...(deps.inProgressWaitMs === undefined ? {} : { inProgressWaitMs: deps.inProgressWaitMs }),
@@ -145,6 +150,7 @@ export function createApp(deps: AppDeps) {
       db: deps.db,
       providers: deps.providers,
       keys: deps.keys,
+      webhookPolicy,
       buckets,
       trustedProxyHops: deps.trustedProxyHops ?? 0,
       ...(deps.clock === undefined ? {} : { clock: deps.clock }),

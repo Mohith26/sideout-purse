@@ -8,9 +8,19 @@ import type { RateLimitConfig, TokenBuckets } from '../src/http/rate-limit';
 import { MIGRATIONS_FOLDER } from '../src/paths';
 import { createProviders, type DevIdentityLists, type Providers } from '../src/providers';
 import { deriveProcessKeys, type ProcessKeys } from '../src/secrets';
+import { destinationPolicy, type DestinationPolicy } from '../src/webhooks';
 
 /** The keys every test process derives, from the same stand-in `pnpm dev` uses. */
 export const TEST_KEYS: ProcessKeys = deriveProcessKeys(DEVELOPMENT_SECRET_KEY);
+
+/**
+ * The webhook destination policy the tests run under: the escape hatch a developer or CI
+ * uses (`WEBHOOK_ALLOWED_HOSTS`), naming the loopback hosts the sample receiver listens
+ * on. Everything else is judged exactly as production judges it, which is what
+ * `test/webhooks/destination.test.ts` and the refusal cases rely on.
+ */
+export const TEST_WEBHOOK_HOSTS = ['localhost', '127.0.0.1', '::1'] as const;
+export const TEST_WEBHOOK_POLICY: DestinationPolicy = destinationPolicy({ nodeEnv: 'test', allowedHosts: TEST_WEBHOOK_HOSTS });
 
 export type TestHarness = {
   app: ReturnType<typeof createApp>['app'];
@@ -52,6 +62,8 @@ export type HarnessOptions = {
   embedDir?: string;
   /** Pool size; the HTTP tests that fire concurrent requests raise it. */
   max?: number;
+  /** Which webhook destinations the app accepts; defaults to `TEST_WEBHOOK_POLICY`. */
+  webhookPolicy?: DestinationPolicy;
 };
 
 /** A generous limit so functional tests never trip it; the rate-limit tests pass their own. */
@@ -86,6 +98,7 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
     keys: TEST_KEYS,
     sms,
     embedDir: overrides.embedDir ?? '/nonexistent/purse-embed-out',
+    webhookPolicy: overrides.webhookPolicy ?? TEST_WEBHOOK_POLICY,
     rateLimit: overrides.rateLimit ?? TEST_RATE_LIMIT,
     ...(overrides.trustedProxyHops === undefined ? {} : { trustedProxyHops: overrides.trustedProxyHops }),
     ...(overrides.clock === undefined ? {} : { clock: overrides.clock }),

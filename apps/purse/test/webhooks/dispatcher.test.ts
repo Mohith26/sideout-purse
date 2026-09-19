@@ -8,9 +8,9 @@ import type { Database } from '../../src/db/client';
 import { webhookDeliveries, webhookDeliveryAttempts, type WebhookDelivery, type WebhookEndpoint } from '../../src/db/schema';
 import { issuePromoPoints } from '../../src/ledger';
 import { findAccount } from '../../src/ledger/accounts';
-import { BACKOFF_SECONDS, WEBHOOK_MAX_ATTEMPTS, WebhookDispatcher, createEndpoint, listDeliveries, replayDelivery, updateEndpoint } from '../../src/webhooks';
+import { BACKOFF_SECONDS, WEBHOOK_MAX_ATTEMPTS, WebhookDispatcher, createEndpoint, destinationPolicy, listDeliveries, replayDelivery, updateEndpoint, type DestinationPolicy, type ResolvedAddress } from '../../src/webhooks';
 import { OPERATOR, buildArena, inProgress, score, type Arena } from '../contests/fixtures';
-import { connectMigrator, connectRuntime, harness, TEST_KEYS, type TestHarness } from '../helpers';
+import { connectMigrator, connectRuntime, harness, TEST_KEYS, TEST_WEBHOOK_POLICY, type TestHarness } from '../helpers';
 import { key, wipeLedger } from '../ledger/fixtures';
 import { SampleReceiver } from './receiver';
 
@@ -38,7 +38,7 @@ describe('webhook dispatcher', () => {
   };
   const logger = createLogger({ service: 'dispatcher-test', level: 'error', write: () => undefined });
   const dispatcher = (instanceId = 'test-a'): WebhookDispatcher =>
-    new WebhookDispatcher({ db: runtime.db, keys: TEST_KEYS, logger, now: clock, random: () => 0.5, deliveryTimeoutMs: 1000, instanceId, batchSize: 50 });
+    new WebhookDispatcher({ db: runtime.db, keys: TEST_KEYS, logger, policy: TEST_WEBHOOK_POLICY, now: clock, random: () => 0.5, deliveryTimeoutMs: 1000, instanceId, batchSize: 50 });
 
   beforeAll(() => {
     migrator = connectMigrator();
@@ -52,7 +52,7 @@ describe('webhook dispatcher', () => {
     arena = await buildArena(runtime.db, { users: 3, funding: 1000n });
     receiver = new SampleReceiver('placeholder', clock);
     const url = await receiver.start();
-    const created = await createEndpoint(runtime.db, TEST_KEYS, { tenantId: arena.tenantId, url, subscribedEvents: WEBHOOK_EVENT_TYPES, description: 'demo receiver' });
+    const created = await createEndpoint(runtime.db, TEST_KEYS, TEST_WEBHOOK_POLICY, { tenantId: arena.tenantId, url, subscribedEvents: WEBHOOK_EVENT_TYPES, description: 'demo receiver' });
     endpoint = created.endpoint;
     secret = created.secret;
     receiver.secret = secret;
@@ -234,7 +234,7 @@ describe('webhook dispatcher', () => {
     const skewed = new SampleReceiver(secret, () => new Date(now.getTime() + 10 * 60_000));
     const url = await skewed.start();
     try {
-      await updateEndpoint(runtime.db, { tenantId: arena.tenantId, endpointId: endpoint.id, url });
+      await updateEndpoint(runtime.db, TEST_WEBHOOK_POLICY, { tenantId: arena.tenantId, endpointId: endpoint.id, url });
       advance((BACKOFF_SECONDS[0] ?? 0) * 1000);
       await worker.runOnce();
       expect(skewed.rejected.length).toBeGreaterThan(0);
@@ -256,14 +256,51 @@ describe('webhook dispatcher', () => {
     // The hanging receiver never answered within the timeout: the attempt is a recorded failure, not a hang.
     const rows = await deliveriesOf();
     expect(rows.every((row) => row.status === 'failed' && row.responseStatus === null)).toBe(true);
-    for (const row of rows) expect((await attemptsOf(row.id))[0]?.error).toMatch(/Timeout|abort/i);
+    for (const row of rows) expect((await attemptsOf(row.id))[0]?.error).toMatch(/did not answer within/i);
 
-    await updateEndpoint(runtime.db, { tenantId: arena.tenantId, endpointId: endpoint.id, status: 'disabled' });
+    await updateEndpoint(runtime.db, TEST_WEBHOOK_POLICY, { tenantId: arena.tenantId, endpointId: endpoint.id, status: 'disabled' });
     advance(3_600_000);
     expect((await a.runOnce()).claimed).toBe(0);
-    await updateEndpoint(runtime.db, { tenantId: arena.tenantId, endpointId: endpoint.id, status: 'enabled' });
+    await updateEndpoint(runtime.db, TEST_WEBHOOK_POLICY, { tenantId: arena.tenantId, endpointId: endpoint.id, status: 'enabled' });
     receiver.mode = 'up';
     expect((await a.runOnce()).delivered).toBe(pending.length);
+  });
+
+  it('re-checks the destination on every attempt, so a hostname that turns private stops being delivered to', async () => {
+    // The hostname answers publicly while the endpoint is registered, and privately by the
+    // time the dispatcher has a delivery for it: the classic rebinding window.
+    let answer: ResolvedAddress = { address: '93.184.216.34', family: 4 };
+    const policy = (): DestinationPolicy => destinationPolicy({ nodeEnv: 'test' }, { resolve: () => Promise.resolve([answer]) });
+    const drifting = await createEndpoint(runtime.db, TEST_KEYS, policy(), { tenantId: arena.tenantId, url: 'https://drifter.example/hooks', subscribedEvents: WEBHOOK_EVENT_TYPES });
+    await updateEndpoint(runtime.db, TEST_WEBHOOK_POLICY, { tenantId: arena.tenantId, endpointId: endpoint.id, status: 'disabled' });
+    // The seeded endpoint is disabled, so the three credits queue for the drifting one alone.
+    await queueCredits();
+
+    answer = { address: '127.0.0.1', family: 4 };
+    const worker = new WebhookDispatcher({ db: runtime.db, keys: TEST_KEYS, logger, policy: policy(), now: clock, random: () => 0.5, deliveryTimeoutMs: 1000, instanceId: 'test-rebind', batchSize: 50 });
+    const report = await worker.runOnce();
+    expect(report).toEqual({ claimed: 3, delivered: 0, retried: 3, dead: 0 });
+
+    // Nothing was sent, and every attempt says why in the delivery log the console renders.
+    expect(receiver.requests).toBe(0);
+    const rows = await runtime.db.select().from(webhookDeliveries).where(eq(webhookDeliveries.endpointId, drifting.endpoint.id));
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.status).toBe('failed');
+      expect(row.responseStatus).toBeNull();
+      const [attempt] = await attemptsOf(row.id);
+      expect(attempt?.error).toContain('destination_refused');
+      expect(attempt?.error).toContain('loopback_address');
+    }
+
+    // Once the hostname answers publicly again the same deliveries drain normally.
+    const address = await receiver.start();
+    answer = { address: '127.0.0.1', family: 4 };
+    await updateEndpoint(runtime.db, TEST_WEBHOOK_POLICY, { tenantId: arena.tenantId, endpointId: drifting.endpoint.id, url: address });
+    advance((BACKOFF_SECONDS[0] ?? 0) * 1000 + 1000);
+    const drained = new WebhookDispatcher({ db: runtime.db, keys: TEST_KEYS, logger, policy: TEST_WEBHOOK_POLICY, now: clock, random: () => 0.5, deliveryTimeoutMs: 1000, instanceId: 'test-rebind-2', batchSize: 50 });
+    receiver.secret = drifting.secret;
+    expect((await drained.runOnce()).delivered).toBe(3);
   });
 
   it('a lease left by a crashed process expires and the delivery is picked up again', async () => {

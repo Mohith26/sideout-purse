@@ -49,6 +49,8 @@ and `PURSE_SECRET_KEY`):
 | `TRUSTED_PROXY_HOPS` | `1` behind Railway's edge |
 | `PURSE_TENANT_ORIGINS` | the Sideout origin: the seed and the reset add it to the tenant's allowlist (`frame-ancestors`, CORS, the handshake) |
 | `WEBHOOK_DISPATCHER` | `on` in the one API process |
+| `WEBHOOK_ALLOWED_HOSTS` | **unset**: it exempts named hosts from webhook destination validation (`docs/webhooks-security.md`), so a production deployment leaves it empty and refuses every private destination. A non-empty list is logged at `warn` on boot. |
+| `WEBHOOK_ALLOWED_PORTS` | **unset**: empty means every port is allowed, which is the default; set it only to pin the ports this deployment will dial. |
 | `BUILD_SHA` | the deployed commit (`railway up` uploads the working tree without `.git`) |
 | `RAILWAY_DOCKERFILE_PATH` | `apps/purse/Dockerfile` |
 

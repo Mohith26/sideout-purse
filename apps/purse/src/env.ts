@@ -91,6 +91,14 @@ const schema = z.object({
   WEBHOOK_DISPATCHER: z.enum(['on', 'off']).default('on'),
   WEBHOOK_POLL_INTERVAL_MS: z.coerce.number().int().min(50).max(60_000).default(1000),
   WEBHOOK_DELIVERY_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(10_000),
+  // Webhook destination validation (docs/webhooks-security.md). Purse refuses to deliver
+  // to anything but a public unicast address; these two are the deployment's own policy.
+  // `WEBHOOK_ALLOWED_HOSTS` exempts named hosts from that check and is empty by default,
+  // so a production deployment refuses every private destination until an operator opts
+  // one in on purpose; local development and CI use it for their loopback receivers.
+  // `WEBHOOK_ALLOWED_PORTS` is empty by default, which allows every port.
+  WEBHOOK_ALLOWED_HOSTS: commaList,
+  WEBHOOK_ALLOWED_PORTS: commaList,
 });
 
 export type Env = {
@@ -130,6 +138,10 @@ export type Env = {
     dispatcher: boolean;
     pollIntervalMs: number;
     deliveryTimeoutMs: number;
+    /** Hosts exempt from destination classification, lowercased. Empty unless a deployment opts in. */
+    allowedHosts: string[];
+    /** Ports deliveries may use; empty means every port. */
+    allowedPorts: number[];
   };
 };
 
@@ -158,6 +170,10 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
   if (production && raw.PURSE_SECRET_KEY === undefined) {
     throw new EnvError('Invalid environment: PURSE_SECRET_KEY is required when NODE_ENV=production');
   }
+  const allowedPorts = raw.WEBHOOK_ALLOWED_PORTS.map((port) => Number.parseInt(port, 10));
+  if (allowedPorts.some((port) => !Number.isInteger(port) || port < 1 || port > 65_535)) {
+    throw new EnvError('Invalid environment: WEBHOOK_ALLOWED_PORTS must be a comma-separated list of port numbers');
+  }
   const smsProvider = raw.EMBED_SMS_PROVIDER ?? (production ? 'none' : 'log');
   if (production && smsProvider === 'log') {
     throw new EnvError('Invalid environment: EMBED_SMS_PROVIDER=log is refused when NODE_ENV=production; sign-in codes must not reach a production log');
@@ -184,7 +200,13 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     secretKey: raw.PURSE_SECRET_KEY ?? DEVELOPMENT_SECRET_KEY,
     secretKeyIsDefault: raw.PURSE_SECRET_KEY === undefined,
     embed: { smsProvider, staticDir: raw.PURSE_EMBED_DIR },
-    webhooks: { dispatcher: raw.WEBHOOK_DISPATCHER === 'on', pollIntervalMs: raw.WEBHOOK_POLL_INTERVAL_MS, deliveryTimeoutMs: raw.WEBHOOK_DELIVERY_TIMEOUT_MS },
+    webhooks: {
+      dispatcher: raw.WEBHOOK_DISPATCHER === 'on',
+      pollIntervalMs: raw.WEBHOOK_POLL_INTERVAL_MS,
+      deliveryTimeoutMs: raw.WEBHOOK_DELIVERY_TIMEOUT_MS,
+      allowedHosts: raw.WEBHOOK_ALLOWED_HOSTS.map((host) => host.toLowerCase().replace(/^\[|\]$/g, '')),
+      allowedPorts,
+    },
   };
 }
 
