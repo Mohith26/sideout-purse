@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { captainOf, matchDetail, ORGANIZER_ID, screens, settled, teamOf } from './helpers';
+import { captainOf, detail, matchDetail, ORGANIZER_ID, settled, SLUGS, teamOf } from './helpers';
 import { signInAs } from './session';
 
 /**
@@ -9,18 +9,19 @@ import { signInAs } from './session';
  * browser), the match page says the phone is checked in, a scoreline submitted from it is
  * signed on the phone and shown as signed once the server verified it, the other team's
  * unchecked phone submits unsigned, and the organizer sees which reading was signed in
- * the dispute queue and the phone on the event page. The match is the seeded live event's
- * last scheduled bracket match with both teams known (the offline spec takes the first);
- * on a reused database it may already be decided, in which case the flow is skipped.
+ * the dispute queue and the phone on the event page. The match is the Boardwalk
+ * Invitational's last scheduled pool match with both teams known (the Player flow takes the
+ * first, in the other pool; the offline spec plays the Sandbar bracket); on a reused
+ * database it may already have readings, in which case the flow is skipped.
  */
 test.describe('signed score attestation', () => {
   test('check in, sign, the badge, the queue', async ({ page, context, request }) => {
     test.skip(test.info().project.name !== 'mobile', 'the check-in flow is the phone flow');
     test.setTimeout(150_000);
-    const { live } = await screens(request);
-    const candidates = (live.bracket?.matches ?? []).filter((m) => m.status === 'scheduled' && m.teamAId !== null && m.teamBId !== null);
+    const live = await detail(request, SLUGS.boardwalk);
+    const candidates = live.pools.flatMap((p) => p.matches).filter((m) => m.status === 'scheduled' && m.teamAId !== null && m.teamBId !== null);
     const match = candidates.at(-1);
-    if (match === undefined) throw new Error('the live seed has no scheduled bracket match with both teams');
+    if (match === undefined) throw new Error('the Boardwalk seed has no scheduled pool match with both teams; run the demo reset before this flow');
     const fresh = await matchDetail(request, match.id);
     test.skip(fresh.consensus !== null && fresh.consensus.state !== 'awaiting_first', 'the match already has readings from an earlier run');
     const us = teamOf(live, match.teamAId);
@@ -60,17 +61,27 @@ test.describe('signed score attestation', () => {
       await box.fill(value);
       await expect(box).toHaveValue(value);
     };
+    // A pool match is best of one; a bracket match would take a second set.
     await points('Your team', 1, '21');
     await points(them.name, 1, '16');
-    await points('Your team', 2, '21');
-    await points(them.name, 2, '19');
+    if (match.bestOf === 3) {
+      await points('Your team', 2, '21');
+      await points(them.name, 2, '19');
+    }
     await sheet.getByRole('button', { name: /^(Submit|Replace) scoreline$/ }).click();
     await expect(sheet.getByRole('heading', { name: `Waiting on ${them.name}` })).toBeVisible({ timeout: 20_000 });
     await sheet.getByRole('button', { name: 'Done' }).click();
     await expect(sheet).toBeHidden();
-    await expect(page.getByTestId('readings').locator(`li[data-team="${us.id}"] [data-testid="attestation-badge"]`)).toHaveAttribute('data-attested', 'true', { timeout: 20_000 });
     const after = await matchDetail(request, match.id);
     expect(after.consensus?.state).toBe('awaiting_second');
+    const mine = after.consensus?.live.find((s) => s.teamId === us.id) as { attestation: { keyId: string } | null } | undefined;
+    expect(mine?.attestation).not.toBeNull();
+    expect(registered.map((d) => d.keyId)).toContain(mine?.attestation?.keyId);
+    // The page is read back fresh: the in-place refresh after a submission is a pre-existing race (docs/attestation.md, "Running it").
+    await page.reload();
+    await settled(page);
+    await expect(page.getByTestId('readings').locator(`li[data-team="${us.id}"] [data-testid="attestation-badge"]`)).toHaveAttribute('data-attested', 'true');
+    await expect(page.getByTestId('submit-panel').locator('[data-testid="attestation-badge"]')).toHaveAttribute('data-attested', 'true');
 
     // The other team, from a phone that is not checked in for it: an unsigned, different reading, and a dispute.
     await signInAs(context, theirCaptain.userId);
@@ -83,12 +94,18 @@ test.describe('signed score attestation', () => {
     // A different reading of set 1 (17, not 16): legal, and not what the other team sent.
     await points('Your team', 1, '17');
     await points(us.name, 1, '21');
-    await points('Your team', 2, '19');
-    await points(us.name, 2, '21');
+    if (match.bestOf === 3) {
+      await points('Your team', 2, '19');
+      await points(us.name, 2, '21');
+    }
     await sheet.getByRole('button', { name: 'Submit scoreline' }).click();
     await expect(sheet.getByRole('heading', { name: 'Scorelines differ' })).toBeVisible({ timeout: 20_000 });
     await sheet.getByRole('button', { name: 'Done' }).click();
-    await expect(page.getByTestId('readings').locator(`li[data-team="${them.id}"] [data-testid="attestation-badge"]`)).toHaveAttribute('data-attested', 'false', { timeout: 20_000 });
+    await expect(sheet).toBeHidden();
+    await page.reload();
+    await settled(page);
+    await expect(page.getByTestId('readings').locator(`li[data-team="${them.id}"] [data-testid="attestation-badge"]`)).toHaveAttribute('data-attested', 'false');
+    await expect(page.getByTestId('readings').locator(`li[data-team="${us.id}"] [data-testid="attestation-badge"]`)).toHaveAttribute('data-attested', 'true');
 
     // The organizer: the dispute queue names which side signed, and the event page lists the phone.
     await signInAs(context, ORGANIZER_ID);

@@ -3859,8 +3859,8 @@
           "status": "ok",
           "sha": "test-sha",
           "migrations": {
-            "applied": 17,
-            "available": 17,
+            "applied": 19,
+            "available": 19,
             "pending": 0
           },
           "rulesetVersion": "2026.09.1",

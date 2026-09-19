@@ -24,6 +24,7 @@ export const ALL_TABLES = [
   'matches',
   'pool_teams',
   'pools',
+  'team_devices',
   'team_members',
   'teams',
   'sponsors',

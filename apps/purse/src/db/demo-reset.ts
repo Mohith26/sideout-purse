@@ -33,6 +33,7 @@ export const DEMO_DATA_TABLES = [
   'identity_fingerprints',
   'user_locations',
   'user_restrictions',
+  'user_devices',
   'contest_results',
   'contest_scores',
   'contest_participants',
