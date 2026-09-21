@@ -213,11 +213,21 @@ export function TabBar({ items, component, label = 'Primary' }: NavProps) {
   );
 }
 
-/** The left rail at 1280px and up. */
-export function NavRail({ items, component, label = 'Primary', brand, foot }: NavProps & { brand: ReactNode; foot?: ReactNode }) {
+/**
+ * The left rail at 1280px and up.
+ *
+ * `brandArt` is the rail's counterpart to `AppShell`'s `headerArt`: decorative art painted
+ * behind the brand block so a tenant's skin reaches the desktop layout too, where the
+ * header (and so the header art) is hidden. A tenant that passes nothing keeps the plain
+ * rail.
+ */
+export function NavRail({ items, component, label = 'Primary', brand, brandArt, foot }: NavProps & { brand: ReactNode; brandArt?: ReactNode; foot?: ReactNode }) {
   return (
     <aside className="so-navrail">
-      <div className="so-navrail__brand">{brand}</div>
+      <div className={brandArt === undefined ? 'so-navrail__brand' : 'so-navrail__brand so-navrail__brand--art'}>
+        {brandArt}
+        {brand}
+      </div>
       <nav aria-label={label} className="so-navrail__nav">
         <ul className="so-navrail__list">
           {items.map((item) => (
@@ -231,3 +241,4 @@ export function NavRail({ items, component, label = 'Primary', brand, foot }: Na
     </aside>
   );
 }
+

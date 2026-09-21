@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import { AppShell, ToastProvider } from '@sideout/ui';
 
+import { SkyBand } from '../art/SkyBand';
+import { WaveDivider } from '../art/WaveDivider';
 import { OfflineStatus } from '../offline/OfflineStatus';
 import { ServiceWorkerRegistration } from '../offline/ServiceWorkerRegistration';
 import { DemoPill } from './DemoPill';
@@ -19,7 +21,24 @@ export function SideoutShell({ role, disputes, buildSha, demo, children }: { rol
   const items = navItemsFor(role, disputes);
   return (
     <ToastProvider>
-      <AppShell brand={<Wordmark />} rail={<PrimaryRail items={items} />} tabBar={<PrimaryTabBar items={items} />} status={<OfflineStatus />}>
+      {/*
+       * The header wears the beach: a sky band with the sun held at the right edge whatever
+       * the width, and a wave in the colour of the page below as the header's bottom edge
+       * instead of a hairline. Both are decorative, hidden from assistive tech, and hold
+       * still under reduced motion.
+       */}
+      <AppShell
+        brand={<Wordmark />}
+        rail={<PrimaryRail items={items} />}
+        tabBar={<PrimaryTabBar items={items} />}
+        status={<OfflineStatus />}
+        headerArt={
+          <div className="so-shell__art">
+            <SkyBand variant="header" />
+            <WaveDivider fill="base" edge="top" height={14} line />
+          </div>
+        }
+      >
         {children}
       </AppShell>
       {demo === null ? null : <DemoPill displayName={demo.displayName} />}

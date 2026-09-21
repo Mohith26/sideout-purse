@@ -1,26 +1,28 @@
-import { Archivo, Instrument_Sans } from 'next/font/google';
+import { Baloo_2, Nunito } from 'next/font/google';
 
 /**
- * The two families from spec 6.2, loaded through next/font so they are self-hosted and
- * exposed as CSS custom properties the token layer reads (`--font-instrument-sans`,
- * `--font-archivo`).
+ * Sideout's two families, loaded through next/font so they are self-hosted and exposed as
+ * the CSS custom properties the beach theme reads (`--font-nunito`, `--font-baloo`).
  *
- * Instrument Sans is the UI face at 400/500/600; it ships as a variable font so a single
- * file covers the range.
+ * The platform's faces (Instrument Sans and Archivo Expanded, spec 6.2) stay with the
+ * platform: the operator console and the ping-pong tenant still load them. Sideout is a
+ * tenant skin (`packages/ui/src/styles/beach.css`) and picks its own.
  *
- * "Archivo Expanded" is not a separate Google Fonts family. Archivo is a variable font with
- * a `wdth` axis from 62 to 125; requesting the axis here and setting `font-stretch: 125%`
- * on display text (the token layer's `--display-stretch`) is what produces Expanded.
+ * Baloo 2 is the display face. It is the rounded, cartoon-adjacent family that still ships
+ * tabular figures, and that is the constraint that decided it: standings, set scores,
+ * points and money are read in columns, and Fredoka and Lilita One — rounder and more
+ * obviously "cartoon" — have proportional digits only, so those columns would not line up.
+ *
+ * Nunito is the UI face, and is tabular by default.
  */
-export const instrumentSans = Instrument_Sans({
+export const nunito = Nunito({
   subsets: ['latin'],
   display: 'swap',
-  variable: '--font-instrument-sans',
+  variable: '--font-nunito',
 });
 
-export const archivo = Archivo({
+export const baloo = Baloo_2({
   subsets: ['latin'],
   display: 'swap',
-  axes: ['wdth'],
-  variable: '--font-archivo',
+  variable: '--font-baloo',
 });

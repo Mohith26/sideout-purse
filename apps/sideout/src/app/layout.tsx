@@ -5,7 +5,7 @@ import { SideoutShell } from '../components/shell/SideoutShell';
 import { buildSha } from '../build-info';
 import { pageContext } from '../server/pages';
 import { countDisputedMatches } from '../server/screens';
-import { archivo, instrumentSans } from './fonts';
+import { baloo, nunito } from './fonts';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -18,8 +18,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#08090B',
-  colorScheme: 'dark',
+  // The beach theme's --bg-base: the browser chrome matches the sand the app opens on.
+  themeColor: '#FBF2DF',
+  colorScheme: 'light',
   viewportFit: 'cover',
   width: 'device-width',
   initialScale: 1,
@@ -33,7 +34,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const role = user?.role ?? null;
   const disputes = role === 'organizer' ? await countDisputedMatches(app.db) : 0;
   return (
-    <html lang="en" className={`${instrumentSans.variable} ${archivo.variable}`}>
+    <html lang="en" className={`${nunito.variable} ${baloo.variable}`}>
       <body>
         <SideoutShell role={role} disputes={disputes} buildSha={buildSha(app.env.buildSha)} demo={demo && user !== null ? { displayName: user.displayName } : null}>
           {children}

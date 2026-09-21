@@ -12,6 +12,13 @@ export type AppShellProps = {
   tabBar?: ReactNode;
   /** A status line above the content (connectivity, a queued submission). */
   status?: ReactNode;
+  /**
+   * Decorative art painted behind the header bar, and an edge drawn under it. A tenant's
+   * skin uses this (Sideout paints its sky band and wave edge here); the operator console
+   * and a tenant that passes nothing get the plain hairline header they had. Whatever is
+   * passed must be decorative only: it is not in the accessibility tree and carries no data.
+   */
+  headerArt?: ReactNode;
   children: ReactNode;
 };
 
@@ -22,8 +29,8 @@ export type AppShellProps = {
  * on a phone, the rail from 1280px, and a skip link to the main landmark first in the tab
  * order (spec 6.4).
  */
-export function AppShell({ brand, nav, footer, rail, tabBar, status, children }: AppShellProps) {
-  const classes = ['so-shell', rail === undefined ? '' : 'so-shell--rail', tabBar === undefined ? '' : 'so-shell--tabs'].filter((c) => c !== '').join(' ');
+export function AppShell({ brand, nav, footer, rail, tabBar, status, headerArt, children }: AppShellProps) {
+  const classes = ['so-shell', rail === undefined ? '' : 'so-shell--rail', tabBar === undefined ? '' : 'so-shell--tabs', headerArt === undefined ? '' : 'so-shell--art'].filter((c) => c !== '').join(' ');
   return (
     <div className={classes}>
       {rail === undefined && tabBar === undefined ? null : (
@@ -33,6 +40,7 @@ export function AppShell({ brand, nav, footer, rail, tabBar, status, children }:
       )}
       {rail}
       <header className="so-shell__header">
+        {headerArt}
         <div className="so-shell__bar">
           {brand}
           {nav === undefined ? null : <nav className="so-shell__nav">{nav}</nav>}

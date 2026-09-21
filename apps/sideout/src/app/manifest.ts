@@ -2,12 +2,13 @@ import type { MetadataRoute } from 'next';
 
 /**
  * The web app manifest (spec 5.3: installable PWA). Colours are the base background token
- * from `packages/ui/src/styles/tokens.css` as a literal, because the manifest cannot read
- * CSS; `test/pwa/manifest.test.ts` pins it to the token. The icons are static files under
- * `public/icons`.
+ * from Sideout's own theme, `packages/ui/src/styles/beach.css`, as a literal, because the
+ * manifest cannot read CSS; `test/pwa/manifest.test.ts` pins it to that token, so a change
+ * to the sand colour that is not carried here fails the build. The icons are static files
+ * under `public/icons`.
  */
-export const MANIFEST_THEME = '#08090b';
-export const MANIFEST_BACKGROUND = '#08090b';
+export const MANIFEST_THEME = '#fbf2df';
+export const MANIFEST_BACKGROUND = '#fbf2df';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {

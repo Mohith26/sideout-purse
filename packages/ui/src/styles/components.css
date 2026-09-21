@@ -88,6 +88,31 @@ body {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/*
+ * A tenant skin may paint behind the header bar (`AppShell`'s `headerArt`). The header
+ * gives up its own translucent fill and hairline so the art is the surface, and the art
+ * layer is allowed to hang a little below the header so an illustrated edge (Sideout's
+ * wave) can break the line rather than sit inside it. The layer never takes pointer
+ * events, so every control in the bar stays clickable.
+ */
+.so-shell--art .so-shell__header {
+  background: transparent;
+  border-bottom: 0;
+}
+
+.so-shell__art {
+  position: absolute;
+  inset: 0 0 -9px 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.so-shell__art > :last-child {
+  position: absolute;
+  inset: auto 0 0 0;
+}
+
 .so-shell__bar {
   display: flex;
   align-items: center;
@@ -693,6 +718,29 @@ a.so-chip:hover {
   align-items: center;
   height: 64px;
   padding: 0 var(--space-5);
+}
+
+/*
+ * The rail's brand block carrying a tenant's art (`NavRail`'s `brandArt`): the art fills
+ * the block behind the wordmark and may hang a little below it so an illustrated edge
+ * breaks the line. The wordmark is lifted above it; the art never takes pointer events.
+ */
+.so-navrail__brand--art {
+  position: relative;
+  isolation: isolate;
+}
+
+.so-navrail__brand--art > :first-child {
+  position: absolute;
+  inset: 0 0 -9px 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.so-navrail__brand--art > :first-child > :last-child {
+  position: absolute;
+  inset: auto 0 0 0;
 }
 
 .so-navrail__nav {

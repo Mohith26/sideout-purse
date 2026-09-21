@@ -1,0 +1,98 @@
+/*
+ * Sideout's cartoon beach theme.
+ *
+ * A tenant skin, not a replacement. `tokens.css` stays the platform's dark sports-tech
+ * scheme and is what the operator console and the ping-pong tenant render in; this file
+ * redefines the same custom properties with a sunny beach palette and is imported by
+ * Sideout alone (`apps/sideout/src/app/globals.css`). Because every primitive in
+ * `components.css` reads the tokens and never a literal, re-declaring the tokens re-skins
+ * every screen, card, pill, bracket and score sheet without touching a component.
+ *
+ * The token names and their roles are unchanged, so the contrast obligations are the same
+ * ones: every text tier clears WCAG AA on every surface, the action colour clears AA with
+ * its foreground, and each semantic colour clears AA as text on its own 10% tint.
+ * `packages/ui/test/contrast.test.ts` asserts it against this file as well as tokens.css,
+ * so the build fails if a prettier colour is chosen that a person cannot read.
+ *
+ * Light only. There is no dark beach theme and no half-built one.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces are sand and foam. Elevation is lightness plus a warm hairline, never shadow. */
+  --bg-base: #fbf2df; /* the app background: warm sand */
+  --bg-raised: #fffbf2; /* cards: a lighter cream */
+  --bg-overlay: #ffffff; /* sheets, popovers */
+  --bg-inset: #e4f3f6; /* wells and inputs: sea foam */
+
+  --border-subtle: #ead9b8; /* hairlines, in a warm sand tone */
+  --border-strong: #cdb589;
+
+  /* The text tiers are inks: a deep navy, then softer ones. Each clears 4.5:1 on every surface above. */
+  --text-primary: #172a45;
+  --text-secondary: #3a5170;
+  --text-tertiary: #556a84;
+
+  /*
+   * Coral is the single action colour, one per screen. A light, friendly coral cannot clear
+   * 4.5:1 against sand, so this is a deep coral carrying white (5.3:1) rather than the dark
+   * ink the platform's volt carries.
+   */
+  --volt: #c33b22;
+  --volt-dim: #a8321d; /* hover and pressed */
+  --on-volt: #ffffff;
+
+  --ember: #9c4706; /* sunset orange: charity and impact only, never a button */
+  --surf: #096a62; /* sea teal: live, agreed, a positive delta */
+  --fault: #b51e34; /* a cartoon red: errors and disputes */
+
+  /* The one backdrop scrim, behind sheets and dialogs: navy rather than black. */
+  --scrim: rgb(23 42 69 / 0.45);
+
+  /*
+   * Illustration colours, read only by the SVG art under `apps/sideout/src/components/art/`.
+   * They are deliberately not mapped into the Tailwind theme: no text, border or button may
+   * take one, so none of them needs to clear a contrast ratio.
+   */
+  --art-sky: #8fd6f4;
+  --art-ocean: #2aa6c1;
+  --art-palm: #3d9a4f;
+  --art-sun: #ffc83d;
+  --art-sand: #f3d999;
+
+  /*
+   * Type. Baloo 2 is the display face: it is the rounded, cartoon-adjacent family that
+   * still ships tabular figures (`tnum`), which the standings, scores and ledger figures
+   * require; Fredoka and Lilita One are rounder still but have proportional digits only,
+   * so a column of scores would not line up. Nunito is the UI face and is tabular by
+   * default. Both are loaded through next/font in `apps/sideout/src/app/fonts.ts`.
+   */
+  --font-ui: var(--font-nunito, 'Nunito'), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-baloo, 'Baloo 2'), var(--font-ui);
+  /* Baloo 2 has no width axis; the platform's Archivo Expanded stretch must not apply. */
+  --display-stretch: normal;
+  /* The rounded display face sets tighter than Archivo Expanded does. */
+  --tracking-display: 0;
+
+  /* A playful radius scale: cards are generous, pills are full. */
+  --radius-chip: 6px;
+  --radius-input: 10px;
+  --radius-card: 16px;
+  --radius-sheet: 22px;
+  --radius-pill: 999px;
+
+  /* How long the wave divider takes to drift once across the header. */
+  --d-drift: 14s;
+}
+
+/*
+ * Reduced motion. The platform's token layer already shortens the shared durations and
+ * limits transitions to opacity; the drift is this theme's own addition, so this theme
+ * reduces it here rather than leaving a loop running for someone who asked for stillness.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --d-drift: 160ms;
+  }
+}

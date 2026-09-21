@@ -13,6 +13,7 @@
       "default": "./src/index.ts"
     },
     "./styles.css": "./src/styles/index.css",
+    "./beach.css": "./src/styles/beach.css",
     "./tokens.css": "./src/styles/tokens.css",
     "./theme.css": "./src/styles/theme.css",
     "./components.css": "./src/styles/components.css"

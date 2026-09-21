@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import type { NextConfig } from 'next';
 import { PHASE_PRODUCTION_BUILD } from 'next/constants';
 
@@ -13,9 +15,23 @@ import { PHASE_PRODUCTION_BUILD } from 'next/constants';
 export const EMBED_BASE_PATH = '/embed';
 export const DEV_API_ORIGIN = process.env['PURSE_API_ORIGIN'] ?? 'http://localhost:4000';
 
+/**
+ * Pin the workspace root to the monorepo.
+ *
+ * Next infers the root by walking up for lockfiles. Any stray lockfile above the repository
+ * (an accidental `npm install` in a home directory leaves one) wins that search, and Next
+ * then treats the whole of that directory as the workspace: in `next dev` it tries to watch
+ * every file under it, exhausts the process's file descriptors (`Watchpack Error: EMFILE`),
+ * and never finishes building the route manifest, so every route answers 404 and only
+ * `/_not-found` compiles. Nothing about the repository is wrong when that happens, which
+ * makes it very hard to diagnose. Naming the root removes the search.
+ */
+const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '..', '..');
+
 export default function nextConfig(phase: string): NextConfig {
   const building = phase === PHASE_PRODUCTION_BUILD;
   return {
+    outputFileTracingRoot: WORKSPACE_ROOT,
     reactStrictMode: true,
     poweredByHeader: false,
     basePath: EMBED_BASE_PATH,

@@ -1,2 +1,8 @@
 @import 'tailwindcss';
 @import '@sideout/ui/styles.css';
+/*
+ * Sideout's own skin, imported last so it wins: the cartoon beach palette redefines the
+ * same tokens the primitives already read. Only this app imports it; the operator console
+ * and the ping-pong tenant keep the platform's dark scheme.
+ */
+@import '@sideout/ui/beach.css';

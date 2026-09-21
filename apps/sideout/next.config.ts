@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import type { NextConfig } from 'next';
 
 import { switchFrom } from './src/lib/switch';
@@ -23,7 +25,22 @@ export function demoAccountsFor(demoAccounts: string | undefined): 'true' | 'fal
   return switchFrom(demoAccounts) ? 'true' : 'false';
 }
 
+
+/**
+ * Pin the workspace root to the monorepo.
+ *
+ * Next infers the root by walking up for lockfiles. Any stray lockfile above the repository
+ * (an accidental `npm install` in a home directory leaves one) wins that search, and Next
+ * then treats the whole of that directory as the workspace: in `next dev` it tries to watch
+ * every file under it, exhausts the process's file descriptors (`Watchpack Error: EMFILE`),
+ * and never finishes building the route manifest, so every route answers 404 and only
+ * `/_not-found` compiles. Nothing about the repository is wrong when that happens, which
+ * makes it very hard to diagnose. Naming the root removes the search.
+ */
+const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '..', '..');
+
 const nextConfig: NextConfig = {
+  outputFileTracingRoot: WORKSPACE_ROOT,
   reactStrictMode: true,
   poweredByHeader: false,
   pageExtensions: pageExtensionsFor(process.env.NODE_ENV),

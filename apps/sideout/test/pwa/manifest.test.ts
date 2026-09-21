@@ -11,7 +11,7 @@ import manifest, { MANIFEST_BACKGROUND, MANIFEST_THEME } from '../../src/app/man
  * caches only what a signed-in player may read offline, and never touches a write.
  */
 const ROOT = path.resolve(import.meta.dirname, '../..');
-const tokens = readFileSync(path.resolve(ROOT, '../../packages/ui/src/styles/tokens.css'), 'utf8');
+const tokens = readFileSync(path.resolve(ROOT, '../../packages/ui/src/styles/beach.css'), 'utf8');
 const sw = readFileSync(path.resolve(ROOT, 'public/sw.js'), 'utf8');
 
 describe('manifest', () => {
