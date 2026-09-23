@@ -1,5 +1,5 @@
 /**
- * The treasury (spec section 13): the fiat rail Purse runs as merchant of record, and the
+ * The treasury (spec section 14): the fiat rail Purse runs as merchant of record, and the
  * platform's rake.
  *
  * This is the only part of Purse that names real currency, and it names it *outside* the

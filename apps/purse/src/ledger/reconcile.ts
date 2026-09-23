@@ -10,7 +10,7 @@ import type { DbOrTx } from '../db/client';
  *
  * Each invariant is a registry entry that returns `{ ok, detail }`; the report lists all
  * nine every time. I4, I5 and I7 are about contests and settlement and read the phase 2
- * tables; I8 and I9 are about the treasury (spec section 13) and read the payments table;
+ * tables; I8 and I9 are about the treasury (spec section 14) and read the payments table;
  * a check that is not yet applicable would be registered with `notApplicableUntil` and
  * reported as such rather than silently passing.
  */
@@ -245,7 +245,7 @@ async function i7(db: DbOrTx): Promise<Outcome> {
 }
 
 /**
- * I8, the custody reconciliation (spec 13.5). The `external_settlement` account's balance
+ * I8, the custody reconciliation (spec 14.5). The `external_settlement` account's balance
  * must equal every funded deposit less every funded withdrawal, converted at one CREDIT to
  * one US cent.
  *
@@ -304,7 +304,7 @@ async function i8(db: DbOrTx): Promise<Outcome> {
 }
 
 /**
- * I9, the rake reconciliation (spec 13.5). Every `platform_fee` account's balance must
+ * I9, the rake reconciliation (spec 14.5). Every `platform_fee` account's balance must
  * equal the sum of the `fee` entries that credited it, and every `fee` entry must name a
  * contest and be exactly two lines: a debit of that contest's escrow and a credit of the
  * platform fee account, in the contest's asset.

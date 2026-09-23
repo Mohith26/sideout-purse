@@ -117,7 +117,7 @@ try {
     contests: seeded.contests.map((contest) => `${contest.externalId}=${contest.state}`),
   });
 
-  // The fiat rail (spec section 13): instruments, real deposits, one declined charge, one
+  // The fiat rail (spec section 14): instruments, real deposits, one declined charge, one
   // withdrawal in flight, and the settled cash contest whose rake funds the fee account.
   // After the contests, because the cash contest is entered with money deposited here.
   const treasury = await seedTreasury(database.db, tenantId);

@@ -48,7 +48,7 @@ export const JOURNAL_ENTRY_KINDS = [
   'void',
   'reversal',
   'adjustment',
-  // Treasury (spec section 13): the in-ledger leg of a payment, and the platform's rake.
+  // Treasury (spec section 14): the in-ledger leg of a payment, and the platform's rake.
   'deposit',
   'withdrawal',
   'fee',

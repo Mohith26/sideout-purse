@@ -214,7 +214,7 @@ export const journalEntryKind = pgEnum('journal_entry_kind', [
   'void',
   'reversal',
   'adjustment',
-  // Treasury (spec section 13). `deposit` and `withdrawal` are the in-ledger leg of a
+  // Treasury (spec section 14). `deposit` and `withdrawal` are the in-ledger leg of a
   // payment on the fiat rail; `fee` is the platform's rake, taken off a contest's escrow
   // immediately before it settles so the settle entry only ever distributes the net pool.
   'deposit',
@@ -415,7 +415,7 @@ export const contests = pgTable(
     eligibilityRulesetVersion: text('eligibility_ruleset_version').references(() => rulesets.version),
     /**
      * The platform's take, in basis points of the escrowed pool, frozen at creation
-     * (spec section 13.3). Held on the contest rather than read from the live ruleset at
+     * (spec section 14.3). Held on the contest rather than read from the live ruleset at
      * settlement so the rake a contest was opened under cannot change underneath its
      * entrants. 0 is the default and every free-to-play contest keeps it, so the rake is
      * additive: a contest created before this column existed behaves exactly as it did.
@@ -1390,7 +1390,7 @@ export const reconcileRuns = pgTable(
 
 export type ReconcileRun = typeof reconcileRuns.$inferSelect;
 
-// ---- Treasury (spec section 13) ------------------------------------------------------
+// ---- Treasury (spec section 14) ------------------------------------------------------
 
 /**
  * The fiat rail, and the one place in this repository where real currency is named.
@@ -1416,7 +1416,7 @@ export const paymentDirection = pgEnum('payment_direction', ['deposit', 'withdra
 export type PaymentDirection = (typeof paymentDirection.enumValues)[number];
 
 /**
- * The payment state machine (spec 13.2). Deposits and withdrawals share one enum because
+ * The payment state machine (spec 14.2). Deposits and withdrawals share one enum because
  * they share one table and one audit trail; which states are reachable depends on the
  * direction, and `paymentsDirectionStates` below is the database's own statement of that.
  *

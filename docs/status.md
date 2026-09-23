@@ -26,7 +26,7 @@ Locally: `pnpm dev`, then http://localhost:4200/status and http://localhost:4000
   when a probe fails keeps showing the last good answer, marked stale, for up to two
   minutes before calling the service down. The visitor's browser fetches nothing from
   either origin.
-- **The seven invariants** (`apps/purse/src/ledger/reconcile.ts`) with the outcome the
+- **The nine invariants** (`apps/purse/src/ledger/reconcile.ts`) with the outcome the
   newest `reconcile_runs` row recorded for each: holds, failing, or not checked.
 - **Recent reconcile runs**: the newest twenty, each with its time, outcome (`clean`, or
   `failing: I3`), source and duration.

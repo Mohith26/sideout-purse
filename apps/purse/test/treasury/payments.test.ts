@@ -24,7 +24,7 @@ import { connectMigrator, connectRuntime } from '../helpers';
 import { createTenant, createUser, key, wipeLedger } from '../ledger/fixtures';
 
 /**
- * The fiat rail end to end (spec section 13).
+ * The fiat rail end to end (spec section 14).
  *
  * These are the tests that matter for the claim the treasury makes: a dollar that enters
  * arrives in the ledger exactly once, a dollar that leaves is debited before it moves, the

@@ -1078,3 +1078,113 @@ plain, no marketing voice.
 
 Point 7 is the one that earns trust. Being precise about what is real and what is a seam
 is more impressive than any claim of completeness.
+
+## 14. Treasury — the fiat rail
+
+**Added after the original brief.** Sections 1 to 13 are the spec I was handed and built
+against; this section is mine, written the same way, because the build had a hole in it
+that the brief did not ask about and that the account-kind enum had been quietly reserving
+space for since phase 1.
+
+Purse could hold value and settle it, but money had no way in or out. `external_settlement`
+and `platform_fee` existed as account kinds and nothing ever posted to either; `CREDIT`
+existed as an asset and nothing ever used it. Value appeared from a promo issuance at
+sign-up, moved around inside the closed loop, and never left. That is exactly the half a
+competition platform is actually bought for.
+
+### 14.1 The currency boundary, restated
+
+Decision D3 and section 4.2.6 are unchanged and still MUST hold. There is no account of
+asset `USD`, the enum cannot express one, and `test/ledger/usd.test.ts` proves the database
+refuses one even to its owner.
+
+The treasury does not weaken that; it is the reason the split is legible. A merchant of
+record holds real dollars in custody at a payment provider and a bank, and its ledger
+tracks each user's *claim* on them. `CREDIT` is that claim, at one minor unit to one US
+cent. A payment is therefore the money leg **outside** the journal, denominated in US
+cents, whose in-ledger effect is one balanced entry in `CREDIT`.
+
+Converting is the identity function and `treasury/money.ts` writes it out anyway, because
+the moment a rate appears there somebody has introduced foreign exchange into a ledger with
+no way to express a gain or a loss on it.
+
+### 14.2 The payment state machine
+
+Two machines, one table, one audit trail. `payment_events` is append-only: the runtime role
+holds `SELECT, INSERT` and nothing else, so the story of a dollar cannot be rewritten.
+
+```
+deposit     requires_action -> authorized -> captured -> settled
+                                 |             |
+                                 +-----> failed / cancelled ; captured -> refunded
+
+withdrawal  requested -> in_review -> approved -> paid
+                 |           |            |
+                 +-----------+--> failed / cancelled ; approved -> returned
+```
+
+The asymmetry is deliberate. A deposit authorizes then captures because that is what a card
+does. A withdrawal passes review because pushing money out is the direction fraud cares
+about, and its wallet leg is posted at **approval**, before the cash moves, because that is
+when the user stops being owed it. `postEntry` refuses to overdraw a wallet, so the balance
+check for a withdrawal is the ledger's rather than a service check that could be skipped.
+
+A funded payment carries its ledger entry and an unfunded one carries none; the database
+holds that pairing (`payments_journal_entry_iff_funded`), a trigger refuses to move a
+terminal payment or to replace a written ledger link, and a deferred constraint trigger
+refuses a payment linked to an entry of the wrong kind.
+
+The rail's fee is recorded on the payment and never deducted from the user. That is what
+the partner this models does, and it keeps I8 a clean equality rather than one with a fee
+term nobody can audit.
+
+### 14.3 The rake
+
+`contests.rake_bps`, frozen at creation, bounded to 5,000 by a CHECK, defaulting to 0 so
+every free-to-play contest is unaffected and a contest created before the column existed
+behaves exactly as it did. It is held on the contest rather than read from the live ruleset
+at settlement so the fee entrants agreed to cannot change underneath them.
+
+The rake is taken as its own `fee` entry, posted immediately before the settlement and in
+the same transaction: `debit contest_escrow / credit platform_fee`. Posting it separately
+rather than as an extra line on the settlement is what leaves the existing invariants true
+without amending either. I4 still finds an empty escrow, because gross less rake less
+payouts is zero. I5 still finds payouts equal to what the contest escrowed, because it
+measures the escrow's non-`settle` movement, which the fee entry has already reduced.
+
+Rounding is down, so the remainder stays in the pool being divided and the rake can never
+exceed the escrow it came from.
+
+### 14.4 The funding seam
+
+A fourth provider seam alongside identity, geolocation and risk, documented in
+`docs/providers.md` and filled by `FUNDING_PROVIDER`. It is told an amount in US cents and
+a provider token, never an instrument: by the time a request reaches it the card is already
+tokenised, which is what keeps this database out of PCI scope. `payment_methods` has no
+column a PAN, a CVV or an account number could be written to.
+
+A brand the rail refuses is present in the enum and refused with a reason
+(`instrument_not_supported`), not absent from it, because a brand missing from an enum
+fails as a validation error nobody can act on. The database enforces the refusal too, so
+the rule survives a bug in the service.
+
+### 14.5 Two more invariants
+
+- **I8, custody.** The `external_settlement` balance MUST equal every funded deposit less
+  every funded withdrawal. The payments table is what the rail did; the ledger is what
+  users are owed. They are written by different code paths, and if they ever disagree then
+  either value was credited with no payment behind it or a payment funded without reaching
+  the ledger.
+- **I9, the rake.** Every `platform_fee` balance MUST equal the `fee` entries that credited
+  it, and every `fee` entry MUST name a contest and be exactly two lines debiting *that*
+  contest's escrow. The second half is the one that matters: a fee sourced from the wrong
+  escrow leaves I4 and I5 both true, because each only ever looks at a contest's own totals.
+
+Both fail the health check the same way the first seven do.
+
+### 14.6 What is deliberately not real, restated
+
+No money moves and Purse is not a licensed operator. The rail is a seam with a
+deterministic implementation behind it, naming the vendor that would fill it, in exactly
+the pattern section 4.5 already established. What is real is the state machine, the
+append-only trail, the database guards, the fee arithmetic and the reconciliation.

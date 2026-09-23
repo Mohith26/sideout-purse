@@ -39,7 +39,7 @@ try {
   const second = await seedSecondTenant(database.db, { extraOrigins: originsFromEnv(PINGPONG_TENANT) });
   const contests = await seedContests(database.db, tenant.id as `tnt_${string}`);
   // The fiat rail, after the contests, because the cash contest is entered with money
-  // deposited here (spec section 13).
+  // deposited here (spec section 14).
   const treasury = await seedTreasury(database.db, tenant.id as `tnt_${string}`);
   const admin = await seedOperatorAdmin(database.db, process.env['PURSE_OPERATOR_ADMIN_EMAIL'] === undefined ? {} : { email: process.env['PURSE_OPERATOR_ADMIN_EMAIL'] });
   logger.info('demo reset complete', {

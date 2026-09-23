@@ -139,7 +139,7 @@ issued 500 POINTS, while the same key is still refused webhooks with
 `sandbox_webhooks_unavailable`; a delivery replayed from the console *after* the deploy
 reached Sideout's real endpoint with HTTP 200 in 123 ms, which is what proves the new
 destination validation and the pinned transport deliver to the deployed receiver; the
-console's public `/status` shows the seven invariants holding; the Sideout demo picker signs
+console's public `/status` shows the nine invariants holding; the Sideout demo picker signs
 in (an organizer session reached `/api/admin/purse/calls`) and the public tournament list
 answers; the ping-pong ladder answers. `WEBHOOK_ALLOWED_HOSTS` is deliberately unset, so the
 deployment refuses every private webhook destination.
@@ -152,7 +152,7 @@ carried the SSE live scoring (`docs/live.md`) and the signed score attestation
 Sideout's to 6 (`team_devices`). Verified on the live origins after the redeploy: every
 `/health` reports the commit with no pending migration and the crons rebuilt at it (a
 scheduled reconcile ran clean four minutes after the API came up); the console's public
-`/status` shows the seven invariants holding; a stream on `/api/live/tournaments/<Sandbar>`
+`/status` shows the nine invariants holding; a stream on `/api/live/tournaments/<Sandbar>`
 opened, heartbeat, and delivered the `score`, `match` and `standings` events the moment a
 scoreline landed; Captain B (a demo account) checked a phone in on the register screen
 (mirrored to Purse), submitted the answering scoreline signed, the match went final and
@@ -232,7 +232,7 @@ exits (a run that exits non-zero shows as failed in `railway logs --service <nam
 dashboard); Railway skips a scheduled run while the previous one is still going.
 
 - **`purse-reconcile`**, schedule `*/15 * * * *`, the Purse image with start command
-  `node dist/reconcile.js --source schedule`: runs the seven ledger invariants
+  `node dist/reconcile.js --source schedule`: runs the nine ledger invariants
   (`apps/purse/src/ledger/reconcile.ts`) as the runtime role, records the run in
   `reconcile_runs`, logs each invariant, and a failing invariant is logged at `error` level
   and exits 1. `GET /health` on Purse reports the newest recorded run (`reconcile`) and

@@ -247,7 +247,7 @@ export function deliveryResource({ delivery, attempts }: DeliveryWithAttempts): 
   };
 }
 
-// ---- Treasury (spec section 13) ------------------------------------------------------
+// ---- Treasury (spec section 14) ------------------------------------------------------
 
 export function paymentMethodResource(method: PaymentMethod): PaymentMethodResource {
   return {

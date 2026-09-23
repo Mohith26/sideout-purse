@@ -226,7 +226,7 @@ export class PurseClient {
     return this.call('GET', `/v1/contests/${encodeURIComponent(contestId)}/results`, undefined, resultsSchema, ctx);
   }
 
-  // ---- Treasury (spec section 13) --------------------------------------------------------
+  // ---- Treasury (spec section 14) --------------------------------------------------------
 
   /**
    * The custody position: what the rail moved, and what the ledger says is owed. Read-only.

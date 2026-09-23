@@ -4,7 +4,7 @@ import type { AppContext } from './context';
 import type { ParsedFundingCapabilities, ParsedPayment, ParsedTreasuryPosition } from '../purse';
 
 /**
- * The treasury, read from Purse (spec section 13).
+ * The treasury, read from Purse (spec section 14).
  *
  * Sideout does not move money on the fiat rail and structurally cannot: it holds no stored
  * instrument, has no column that could contain a US cent, and the schema test

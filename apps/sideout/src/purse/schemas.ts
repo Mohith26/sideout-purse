@@ -293,7 +293,7 @@ export type ParsedEmbedToken = z.output<typeof embedTokenSchema>;
 export type ParsedVerificationStart = z.output<typeof verificationStartSchema>;
 export type ParsedDevice = z.output<typeof deviceSchema>;
 
-// ---- Treasury (spec section 13) ------------------------------------------------------
+// ---- Treasury (spec section 14) ------------------------------------------------------
 
 /**
  * The fiat rail as Sideout reads it. Sideout never moves money itself and holds no column

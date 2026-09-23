@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 };
 
 /**
- * "Follow a dollar" (spec section 13).
+ * "Follow a dollar" (spec section 14).
  *
  * The argument this page makes is that the money path is auditable end to end, so every
  * figure on it is read live from Purse rather than written into the copy. It walks one real

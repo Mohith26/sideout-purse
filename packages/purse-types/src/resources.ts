@@ -49,7 +49,7 @@ export type ApiKeyKind = (typeof API_KEY_KINDS)[number];
 export const API_KEY_ENVIRONMENTS = ['sandbox', 'live'] as const;
 export type ApiKeyEnvironment = (typeof API_KEY_ENVIRONMENTS)[number];
 
-// ---- Treasury (spec section 13) ------------------------------------------------------
+// ---- Treasury (spec section 14) ------------------------------------------------------
 
 /**
  * US cents as a decimal string, `"2500"` for $25.00. The only place in this contract that
@@ -129,7 +129,7 @@ export type PaymentResource = {
 };
 
 /**
- * The custody position (spec 13.5). Two independent descriptions of the same dollars: what
+ * The custody position (spec 14.5). Two independent descriptions of the same dollars: what
  * the rail moved, and what the ledger says is owed. Invariant I8 holds them equal, and
  * `reconciled` is that invariant as a single boolean a partner can poll.
  */

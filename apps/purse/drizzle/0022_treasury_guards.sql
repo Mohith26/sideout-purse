@@ -1,4 +1,4 @@
--- Treasury grants and guards (spec section 13).
+-- Treasury grants and guards (spec section 14).
 --
 -- The split mirrors the ledger's: a payment is a mutable position that advances through a
 -- state machine, but its history is not. The runtime may update `payments`, and may only

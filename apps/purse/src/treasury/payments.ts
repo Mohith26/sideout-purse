@@ -26,7 +26,7 @@ import { centsToCredit } from './money';
 import { assertTransition, INITIAL_STATE } from './states';
 
 /**
- * Money in and money out (spec section 13).
+ * Money in and money out (spec section 14).
  *
  * The shape of every operation here is the same, and it is the shape the rest of Purse
  * already uses: decide, call the seam, then write one transaction that advances the

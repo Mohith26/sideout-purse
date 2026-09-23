@@ -431,7 +431,7 @@ describe('v1 contract', () => {
     expect(reconciled.data?.ok).toBe(true);
     expect((await reconcile(h.database.db)).ok).toBe(true);
 
-    // ---- the fiat rail (spec section 13) ----------------------------------------------
+    // ---- the fiat rail (spec section 14) ----------------------------------------------
     // Ana is verified above, which is what lets money leave her account.
     const capabilities = await op.record<FundingCapabilitiesResource>('payments.capabilities', 'GET', '/v1/payments/capabilities');
     expect(capabilities.status).toBe(200);

@@ -678,7 +678,7 @@ export async function seedSecondTenant(db: Db, options: { rotateKeys?: boolean; 
   return { tenant, created, platform, keys, origins };
 }
 
-// ---- Treasury (spec section 13) ------------------------------------------------------
+// ---- Treasury (spec section 14) ------------------------------------------------------
 
 /**
  * The stored instruments the demo's three verified players pay with. Deliberately one of

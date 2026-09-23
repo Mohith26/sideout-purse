@@ -2,8 +2,9 @@
 
 Sideout is a charity beach volleyball tournament app, and Purse is the competition
 platform I built for it to run on: an immutable ledger, a contest and settlement engine,
-versioned eligibility rules, an embeddable SDK, a webhook dispatcher and an operator
-console, behind a boundary that Sideout can only cross over HTTPS.
+versioned eligibility rules, an embeddable SDK, a webhook dispatcher, an operator
+console and a fiat rail with custody reconciliation, behind a boundary that Sideout can
+only cross over HTTPS.
 
 The public demo runs on Railway and resets itself every night:
 
@@ -69,7 +70,7 @@ Postgres service, then migrates, seeds and reconciles a Purse database (a failin
 invariant fails the build), runs the console's Playwright smoke, and starts the API to run
 Sideout's integration walk and the two end-to-end flows against it.
 
-## The architecture, and the four rules
+## The architecture, and the five rules
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -113,7 +114,17 @@ Sideout's integration walk and the two end-to-end flows against it.
    score is with its own consensus rules and pushes the result; Purse decides what it
    pays, and refuses to settle a contest that a human has not closed behind a frozen
    preview.
-4. **Every Purse mutation is idempotent.** Every write takes an `Idempotency-Key`. A
+4. **Money in and out is reconciled against the ledger, not trusted.** Purse runs the
+   fiat rail as merchant of record (`apps/purse/src/treasury`), and there is still no
+   account of asset `USD`: dollars sit in custody at the payment provider, the ledger
+   records each user's claim in `CREDIT` at one unit to one cent, and
+   `test/ledger/usd.test.ts` proves the database refuses a `USD` account even to its
+   owner. Invariant I8 holds the custody account to every funded deposit less every
+   funded withdrawal; I9 holds each platform-fee account to the `fee` entries that
+   credited it, and holds every fee entry to debiting its own contest's escrow. The
+   platform's rake is frozen on the contest at creation and posted as its own entry
+   immediately before settlement, which is what leaves I4 and I5 true unamended.
+5. **Every Purse mutation is idempotent.** Every write takes an `Idempotency-Key`. A
    replay returns the stored response with `Idempotent-Replayed: true` and creates
    nothing; the same key with a different body is a `conflict`. Sideout's `confirmed`
    state is literally a replay: the proof that Purse durably holds a score is that
@@ -218,7 +229,7 @@ refuses to boot on a role that could. Corrections are reversing entries. The mig
 role that owns the tables never runs in the API process (the container entrypoint drops
 its connection string before the server starts).
 
-`reconcile()` checks the seven invariants of spec 4.2.4 and records every run:
+`reconcile()` checks the nine invariants of spec 4.2.4 and records every run:
 
 | | Invariant |
 |---|---|

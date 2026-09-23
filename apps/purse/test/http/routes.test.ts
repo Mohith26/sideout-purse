@@ -77,7 +77,7 @@ describe('every v1 route', () => {
     { method: 'GET', path: '/v1/origins' },
     { method: 'POST', path: '/v1/origins', invalidBody: { origin: 5 } },
     { method: 'POST', path: '/v1/origins/revoke', invalidBody: { origins: [] } },
-    // The fiat rail (spec section 13).
+    // The fiat rail (spec section 14).
     { method: 'GET', path: '/v1/payments/capabilities' },
     { method: 'POST', path: '/v1/payments/methods', invalidBody: { userId, brand: 'mastercard', last4: '5454', providerRef: 'tok_x' } },
     { method: 'GET', path: `/v1/payments/methods/${userId}` },

@@ -2,7 +2,7 @@ import type { IconName } from '@sideout/ui';
 
 export type PrimaryNavItem = { href: string; label: string; icon: IconName; badge?: number };
 
-/** Primary navigation for everyone. `Money` is the treasury walkthrough (spec section 13). */
+/** Primary navigation for everyone. `Money` is the treasury walkthrough (spec section 14). */
 export const NAV_ITEMS: readonly PrimaryNavItem[] = [
   { href: '/', label: 'Home', icon: 'home' },
   { href: '/events', label: 'Events', icon: 'calendar' },
