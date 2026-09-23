@@ -2,7 +2,7 @@ import { createLogger, errorFields } from '@repo/logger';
 
 import { connect } from '../src/db/client';
 import { clearDemoData, KEPT_TABLES } from '../src/db/demo-reset';
-import { originsFromEnv, PINGPONG_TENANT, seedContests, seedOperatorAdmin, seedPlatformAccounts, seedRuleset, seedSecondTenant, seedSideoutTenant, seedTenantOrigins, seedUsers, SIDEOUT_TENANT } from '../src/db/seed';
+import { originsFromEnv, PINGPONG_TENANT, seedContests, seedOperatorAdmin, seedPlatformAccounts, seedRuleset, seedSecondTenant, seedSideoutTenant, seedTenantOrigins, seedTreasury, seedUsers, SIDEOUT_TENANT } from '../src/db/seed';
 import { env, requireMigratorUrl } from '../src/env';
 
 /**
@@ -38,6 +38,9 @@ try {
   // The second tenant's platform accounts were deleted with everything else; its keys and origins were kept.
   const second = await seedSecondTenant(database.db, { extraOrigins: originsFromEnv(PINGPONG_TENANT) });
   const contests = await seedContests(database.db, tenant.id as `tnt_${string}`);
+  // The fiat rail, after the contests, because the cash contest is entered with money
+  // deposited here (spec section 13).
+  const treasury = await seedTreasury(database.db, tenant.id as `tnt_${string}`);
   const admin = await seedOperatorAdmin(database.db, process.env['PURSE_OPERATOR_ADMIN_EMAIL'] === undefined ? {} : { email: process.env['PURSE_OPERATOR_ADMIN_EMAIL'] });
   logger.info('demo reset complete', {
     tenant: tenant.id,
@@ -46,6 +49,7 @@ try {
     users: users.users.map((user) => `${user.externalId}=${user.verification}`),
     origins: origins.origins,
     contests: contests.contests.map((contest) => `${contest.externalId}=${contest.state}`),
+    treasury: { methods: treasury.methods, deposits: treasury.deposits, withdrawals: treasury.withdrawals, declined: treasury.declined, cashContest: treasury.cashContest?.state ?? 'none' },
     consoleAdmin: admin.operator.email,
     secondTenant: { id: second.tenant.id, platformAccounts: second.platform.accounts.length, origins: second.origins.origins },
     nodeEnv: config.nodeEnv,

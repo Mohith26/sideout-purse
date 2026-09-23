@@ -37,6 +37,10 @@ export const DEMO_DATA_TABLES = [
   'contest_results',
   'contest_scores',
   'contest_participants',
+  // Treasury before the journal: a payment carries the ledger entry that funded it.
+  'payment_events',
+  'payments',
+  'payment_methods',
   'journal_lines',
   'journal_entries',
   'contests',
