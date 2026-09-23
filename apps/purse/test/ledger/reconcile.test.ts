@@ -67,8 +67,8 @@ describe('reconcile()', () => {
     await post();
     const report = await reconcile(runtime.db);
     expect(report.ok).toBe(true);
-    expect(report.invariants.map((r) => r.id)).toEqual(['I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7']);
-    expect(INVARIANTS.map((r) => r.id)).toEqual(['I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7']);
+    expect(report.invariants.map((r) => r.id)).toEqual(['I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7', 'I8', 'I9']);
+    expect(INVARIANTS.map((r) => r.id)).toEqual(['I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7', 'I8', 'I9']);
     for (const result of report.invariants) {
       expect(result.ok).toBe(true);
       expect(result.detail.length).toBeGreaterThan(0);
@@ -120,8 +120,10 @@ describe('reconcile()', () => {
     const i3 = report.invariants.find((r) => r.id === 'I3');
     expect(i3?.ok).toBe(false);
     expect(i3?.detail).toBe(`1 user wallets are negative: ${wallet(1)}=-440`);
-    // The balanced corrupt entry keeps I1 and I2 clean: I3 is its own check.
-    expect(report.invariants.filter((r) => !r.ok).map((r) => r.id)).toEqual(['I3']);
+    // The balanced corrupt entry keeps I1 and I2 clean: I3 is its own check. I9 fires
+    // too, and correctly: the corruption credits the platform fee account outside a `fee`
+    // entry, which is exactly the tampering I9 exists to notice.
+    expect(report.invariants.filter((r) => !r.ok).map((r) => r.id)).toEqual(['I3', 'I9']);
   });
 
   it('I6 compares snapshots to derived balances once a snapshot table exists', async () => {
@@ -171,7 +173,7 @@ describe('GET /internal/reconcile', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as { data: ReconcileReport };
       expect(body.data.ok).toBe(true);
-      expect(body.data.invariants).toHaveLength(7);
+      expect(body.data.invariants).toHaveLength(9);
       expect(h.lines.some((l) => l['msg'] === 'reconcile clean')).toBe(true);
     } finally {
       await h.close();

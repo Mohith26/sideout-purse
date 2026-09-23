@@ -3,12 +3,12 @@ import type { Asset, LocationSource } from '@purse/types';
 import type { Ruleset } from '../eligibility/ruleset';
 
 /**
- * The three provider seams (spec 4.5). Each is an interface Purse calls at one place, with
- * a deterministic dev implementation in `./dev`, and each stands in for a licensed vendor
- * a real platform would plug in here: Persona or Socure for identity, GeoComply for
- * geolocation, Sardine for risk. `docs/providers.md` is the table. Nothing that crosses a
- * seam is a document, an image or a raw location trace: the interfaces carry the minimum
- * a decision needs and return opaque references.
+ * The four provider seams (spec 4.5, 13.1). Each is an interface Purse calls at one place,
+ * with a deterministic dev implementation in `./dev`, and each stands in for a licensed
+ * vendor a real platform would plug in here: Persona or Socure for identity, GeoComply for
+ * geolocation, Sardine for risk, Stripe or Checkout.com for funding. `docs/providers.md`
+ * is the table. Nothing that crosses a seam is a document, an image or a raw location
+ * trace: the interfaces carry the minimum a decision needs and return opaque references.
  */
 
 // ---- Identity ------------------------------------------------------------------------
@@ -96,8 +96,83 @@ export type RiskProvider = {
   assess(transaction: RiskTransaction): Promise<RiskAssessment>;
 };
 
+// ---- Funding -------------------------------------------------------------------------
+
+/**
+ * The fiat rail (spec 13.1). This is the only seam that moves real currency, and it is
+ * the reason no `USD` account exists in the ledger: dollars live at the provider and at
+ * the bank behind it, and Purse records a claim on them in `CREDIT`.
+ *
+ * A provider is told an amount in US cents, a stored instrument token and an idempotency
+ * key, and answers with what the rail did. It is never told, and can never be told, a card
+ * number: the instrument is already a token by the time it reaches here, which is what
+ * keeps this database out of PCI scope.
+ */
+export type FundingInstrument = {
+  paymentMethodId: string;
+  /** The provider's token for the stored instrument. */
+  providerRef: string;
+  brand: string;
+  last4: string;
+};
+
+export type ChargeRequest = {
+  tenantId: string;
+  userId: string;
+  /** US cents, strictly positive. */
+  amountUsdCents: bigint;
+  instrument: FundingInstrument;
+  /** Passed through to the rail so a retry cannot double-charge. */
+  idempotencyKey: string;
+  statementDescriptor: string;
+};
+
+export type PayoutRequest = {
+  tenantId: string;
+  userId: string;
+  amountUsdCents: bigint;
+  instrument: FundingInstrument;
+  idempotencyKey: string;
+};
+
+/** What a rail answers. `pending` means the movement was accepted but is not final yet. */
+export type FundingOutcome = 'succeeded' | 'pending' | 'declined';
+
+export type FundingResult = {
+  outcome: FundingOutcome;
+  /** The provider's opaque reference for the movement. */
+  providerRef: string;
+  /** What the rail charged the platform to move it, in US cents. Never taken from the user. */
+  feeUsdCents: bigint;
+  /** Set only when `declined`; a stable, lower-case code the API can surface verbatim. */
+  declineCode?: string;
+  /** Presentation copy for a receipt or an operator queue, not a contract. */
+  note?: string;
+};
+
+/** What a rail will accept, so the API can refuse an instrument before taking a payment. */
+export type FundingCapabilities = {
+  /** Instrument families the rail accepts, lower-case brand names. */
+  brands: readonly string[];
+  minimumDepositUsdCents: bigint;
+  maximumDepositUsdCents: bigint;
+  minimumWithdrawalUsdCents: bigint;
+  /** How long a withdrawal takes to reach the user once approved, for the receipt copy. */
+  withdrawalSettlementHours: number;
+};
+
+export type FundingProvider = {
+  readonly name: string;
+  readonly capabilities: FundingCapabilities;
+  /** Pull money in. A deposit. */
+  charge(request: ChargeRequest): Promise<FundingResult>;
+  /** Push money out. A withdrawal. */
+  payout(request: PayoutRequest): Promise<FundingResult>;
+};
+
 export type Providers = {
   identity: IdentityProvider;
   geo: GeoProvider;
   risk: RiskProvider;
+  funding: FundingProvider;
 };

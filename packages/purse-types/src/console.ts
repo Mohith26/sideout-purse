@@ -40,7 +40,19 @@ export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
 export const LEDGER_SIDES = ['debit', 'credit'] as const;
 export type LedgerSide = (typeof LEDGER_SIDES)[number];
 
-export const JOURNAL_ENTRY_KINDS = ['issue', 'escrow', 'refund', 'settle', 'void', 'reversal', 'adjustment'] as const;
+export const JOURNAL_ENTRY_KINDS = [
+  'issue',
+  'escrow',
+  'refund',
+  'settle',
+  'void',
+  'reversal',
+  'adjustment',
+  // Treasury (spec section 13): the in-ledger leg of a payment, and the platform's rake.
+  'deposit',
+  'withdrawal',
+  'fee',
+] as const;
 export type JournalEntryKind = (typeof JOURNAL_ENTRY_KINDS)[number];
 
 export const OPERATOR_FLAG_KINDS = ['duplicate_identity', 'collusion_signal', 'risk_review'] as const;

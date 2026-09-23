@@ -65,6 +65,8 @@ const schema = z.object({
   IDENTITY_PROVIDER: z.enum(PROVIDER_IMPLEMENTATIONS).default('dev'),
   GEO_PROVIDER: z.enum(PROVIDER_IMPLEMENTATIONS).default('dev'),
   RISK_PROVIDER: z.enum(PROVIDER_IMPLEMENTATIONS).default('dev'),
+  // The fiat rail (spec 13.1): where Stripe or Checkout.com would plug in.
+  FUNDING_PROVIDER: z.enum(PROVIDER_IMPLEMENTATIONS).default('dev'),
   // Production refuses to start on a dev provider unless this is set on purpose.
   ALLOW_DEV_PROVIDERS: z.enum(['true', 'false']).default('false'),
   // The dev identity provider's seeded lists: comma-separated external ids.
@@ -119,6 +121,7 @@ export type Env = {
     identity: ProviderImplementation;
     geo: ProviderImplementation;
     risk: ProviderImplementation;
+    funding: ProviderImplementation;
     allowDevProviders: boolean;
     devIdentity: { allow: string[]; deny: string[]; pending: string[] };
   };
@@ -191,6 +194,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
       identity: raw.IDENTITY_PROVIDER,
       geo: raw.GEO_PROVIDER,
       risk: raw.RISK_PROVIDER,
+      funding: raw.FUNDING_PROVIDER,
       allowDevProviders: raw.ALLOW_DEV_PROVIDERS === 'true',
       devIdentity: { allow: raw.DEV_IDENTITY_ALLOW, deny: raw.DEV_IDENTITY_DENY, pending: raw.DEV_IDENTITY_PENDING },
     },

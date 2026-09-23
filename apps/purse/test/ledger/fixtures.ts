@@ -21,6 +21,9 @@ import {
   operatorFlags,
   operatorSessions,
   operators,
+  paymentEvents,
+  paymentMethods,
+  payments,
   reconcileRuns,
   rulesets,
   sandboxLeases,
@@ -66,6 +69,10 @@ export async function wipeLedger(migrator: Database): Promise<void> {
   await migrator.db.delete(contestResults);
   await migrator.db.delete(contestScores);
   await migrator.db.delete(contestParticipants);
+  // Treasury before the journal: a payment points at the ledger entry that funded it.
+  await migrator.db.delete(paymentEvents);
+  await migrator.db.delete(payments);
+  await migrator.db.delete(paymentMethods);
   await migrator.db.delete(journalLines);
   await migrator.db.delete(journalEntries);
   await migrator.db.delete(contests);

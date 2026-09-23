@@ -93,11 +93,11 @@ describe('dev RiskProvider (Sardine seam)', () => {
 
 describe('createProviders', () => {
   it('builds the dev seams outside production and refuses them in production unless allowed explicitly', () => {
-    const dev = createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', nodeEnv: 'development', allowDevProviders: false });
+    const dev = createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', funding: 'dev', nodeEnv: 'development', allowDevProviders: false });
     expect([dev.identity.name, dev.geo.name, dev.risk.name]).toEqual(['dev', 'dev', 'dev']);
-    expect(() => createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', nodeEnv: 'production', allowDevProviders: false })).toThrow(ProviderConfigError);
-    expect(() => createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', nodeEnv: 'production', allowDevProviders: false })).toThrow(/identity, geo, risk/);
-    const demo = createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', nodeEnv: 'production', allowDevProviders: true, devIdentity: { deny: ['x'] } });
+    expect(() => createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', funding: 'dev', nodeEnv: 'production', allowDevProviders: false })).toThrow(ProviderConfigError);
+    expect(() => createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', funding: 'dev', nodeEnv: 'production', allowDevProviders: false })).toThrow(/identity, geo, risk/);
+    const demo = createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', funding: 'dev', nodeEnv: 'production', allowDevProviders: true, devIdentity: { deny: ['x'] } });
     expect(demo.identity.name).toBe('dev');
   });
 });

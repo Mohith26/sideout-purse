@@ -151,7 +151,7 @@ describe('console ledger explorer and invariants', () => {
     const clean = await api.get<ReconcileResource>('/console/reconcile');
     expect(clean.status).toBe(200);
     expect(clean.data?.ok).toBe(true);
-    expect(clean.data?.invariants.map((each) => each.id)).toEqual(['I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7']);
+    expect(clean.data?.invariants.map((each) => each.id)).toEqual(['I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7', 'I8', 'I9']);
     expect(clean.data?.invariants.every((each) => each.status === 'ok')).toBe(true);
     expect(Date.parse(clean.data?.ranAt ?? '')).not.toBeNaN();
 

@@ -44,6 +44,8 @@ const API_KEY = /^(sk|pk)_(sandbox|live)_[A-Za-z0-9]{32}$/;
 const WEBHOOK_SECRET = /^whsec_[A-Za-z0-9_-]{43}$/;
 const SIGNIN_CODE = /^\d{6}$/;
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/** The funding rail's reference for a movement: a digest of the idempotency key, so it moves every run. */
+const PROVIDER_REF = /^(ch|po)_[0-9a-f]{24}$/;
 /** An ES256 signature is randomised per signing, so an attestation's signature never pins. */
 const ES256_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
 
@@ -56,11 +58,13 @@ function normaliseString(value: string): string {
   if (API_KEY.test(value)) return '<api-key>';
   if (WEBHOOK_SECRET.test(value)) return '<webhook-secret>';
   if (REQUEST_ID.test(value)) return '<request-id>';
+  if (PROVIDER_REF.test(value)) return '<provider-ref>';
   return value
     .replace(/\b[a-z]+-\d+-[a-z0-9]+-\d+\b/g, '<idempotency-key>')
     .replace(/(sk|pk)_(sandbox|live)_[A-Za-z0-9]{8,32}/g, '<api-key>')
     .replace(/[a-z]{2,4}_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/g, (match) => `${match.split('_')[0] ?? ''}_<id>`)
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z/g, '<instant>')
+    .replace(/\b(ch|po)_[0-9a-f]{24}\b/g, '<provider-ref>')
     .replace(/[0-9a-f]{64}/g, '<sha256>');
 }
 

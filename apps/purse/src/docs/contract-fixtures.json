@@ -3701,6 +3701,524 @@
     }
   },
   {
+    "name": "payments.capabilities",
+    "request": {
+      "method": "GET",
+      "path": "/v1/payments/capabilities",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "provider": "dev",
+          "brands": [
+            "visa",
+            "amex",
+            "discover",
+            "bank_account",
+            "apple_pay"
+          ],
+          "minimumDepositUsdCents": "500",
+          "maximumDepositUsdCents": "250000",
+          "minimumWithdrawalUsdCents": "1000",
+          "withdrawalSettlementHours": 48,
+          "unsupported": [
+            {
+              "brand": "mastercard",
+              "reason": "the acquirer does not support Mastercard for this merchant category"
+            },
+            {
+              "brand": "paypal",
+              "reason": "PayPal is not enabled for this merchant yet"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "payments.methods.add",
+    "request": {
+      "method": "POST",
+      "path": "/v1/payments/methods",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "brand": "visa",
+        "last4": "4242",
+        "expMonth": 11,
+        "expYear": 2029,
+        "providerRef": "tok_contract_visa"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "pmt_<id>",
+          "userId": "usr_<id>",
+          "brand": "visa",
+          "last4": "4242",
+          "expMonth": 11,
+          "expYear": 2029,
+          "status": "active",
+          "isDefault": true,
+          "provider": "dev",
+          "createdAt": "<instant>"
+        }
+      }
+    }
+  },
+  {
+    "name": "payments.methods.add.unsupported",
+    "request": {
+      "method": "POST",
+      "path": "/v1/payments/methods",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "brand": "mastercard",
+        "last4": "5454",
+        "expMonth": 1,
+        "expYear": 2031,
+        "providerRef": "tok_contract_mc"
+      }
+    },
+    "response": {
+      "status": 400,
+      "body": {
+        "error": {
+          "type": "invalid_request",
+          "code": "instrument_not_supported",
+          "message": "mastercard is not accepted by this rail; accepted: visa, amex, discover, bank_account, apple_pay",
+          "detail": {
+            "brand": "mastercard",
+            "accepted": "visa,amex,discover,bank_account,apple_pay"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "payments.methods.list",
+    "request": {
+      "method": "GET",
+      "path": "/v1/payments/methods/usr_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": [
+          {
+            "id": "pmt_<id>",
+            "userId": "usr_<id>",
+            "brand": "visa",
+            "last4": "4242",
+            "expMonth": 11,
+            "expYear": 2029,
+            "status": "active",
+            "isDefault": true,
+            "provider": "dev",
+            "createdAt": "<instant>"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "payments.deposit",
+    "request": {
+      "method": "POST",
+      "path": "/v1/payments/deposits",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "amountUsdCents": "5000",
+        "paymentMethodId": "pmt_<id>"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "pay_<id>",
+          "userId": "usr_<id>",
+          "direction": "deposit",
+          "state": "captured",
+          "amountUsdCents": "5000",
+          "feeUsdCents": "175",
+          "asset": "CREDIT",
+          "paymentMethodId": "pmt_<id>",
+          "provider": "dev",
+          "journalEntryId": "je_<id>",
+          "failureCode": null,
+          "statementDescriptor": "PURSE COMPETITION",
+          "fundedAt": "<instant>",
+          "completedAt": null,
+          "createdAt": "<instant>",
+          "events": [
+            {
+              "id": "pev_<id>",
+              "fromState": null,
+              "toState": "requires_action",
+              "actor": "operator:key_<id>",
+              "detail": {
+                "amountUsdCents": "5000",
+                "idempotencyKey": "<idempotency-key>"
+              },
+              "occurredAt": "<instant>"
+            },
+            {
+              "id": "pev_<id>",
+              "fromState": "requires_action",
+              "toState": "authorized",
+              "actor": "provider",
+              "detail": {
+                "note": "Authorized on the rail for 5000 cents.",
+                "providerRef": "<provider-ref>"
+              },
+              "occurredAt": "<instant>"
+            },
+            {
+              "id": "pev_<id>",
+              "fromState": "authorized",
+              "toState": "captured",
+              "actor": "operator:key_<id>",
+              "detail": {
+                "note": "Captured on visa ending 4242.",
+                "feeUsdCents": "175",
+                "providerRef": "<provider-ref>",
+                "journalEntryId": "je_<id>"
+              },
+              "occurredAt": "<instant>"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "payments.deposit.declined",
+    "request": {
+      "method": "POST",
+      "path": "/v1/payments/deposits",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "amountUsdCents": "666",
+        "paymentMethodId": "pmt_<id>"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "pay_<id>",
+          "userId": "usr_<id>",
+          "direction": "deposit",
+          "state": "failed",
+          "amountUsdCents": "666",
+          "feeUsdCents": "0",
+          "asset": "CREDIT",
+          "paymentMethodId": "pmt_<id>",
+          "provider": "dev",
+          "journalEntryId": null,
+          "failureCode": "card_declined",
+          "statementDescriptor": "PURSE COMPETITION",
+          "fundedAt": null,
+          "completedAt": "<instant>",
+          "createdAt": "<instant>",
+          "events": [
+            {
+              "id": "pev_<id>",
+              "fromState": null,
+              "toState": "requires_action",
+              "actor": "operator:key_<id>",
+              "detail": {
+                "amountUsdCents": "666",
+                "idempotencyKey": "<idempotency-key>"
+              },
+              "occurredAt": "<instant>"
+            },
+            {
+              "id": "pev_<id>",
+              "fromState": "requires_action",
+              "toState": "failed",
+              "actor": "provider",
+              "detail": {
+                "note": "The rail declined this charge: card declined.",
+                "failureCode": "card_declined",
+                "providerRef": "<provider-ref>"
+              },
+              "occurredAt": "<instant>"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "payments.get",
+    "request": {
+      "method": "GET",
+      "path": "/v1/payments/pay_<id>",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "id": "pay_<id>",
+          "userId": "usr_<id>",
+          "direction": "deposit",
+          "state": "captured",
+          "amountUsdCents": "5000",
+          "feeUsdCents": "175",
+          "asset": "CREDIT",
+          "paymentMethodId": "pmt_<id>",
+          "provider": "dev",
+          "journalEntryId": "je_<id>",
+          "failureCode": null,
+          "statementDescriptor": "PURSE COMPETITION",
+          "fundedAt": "<instant>",
+          "completedAt": null,
+          "createdAt": "<instant>",
+          "events": [
+            {
+              "id": "pev_<id>",
+              "fromState": null,
+              "toState": "requires_action",
+              "actor": "operator:key_<id>",
+              "detail": {
+                "amountUsdCents": "5000",
+                "idempotencyKey": "<idempotency-key>"
+              },
+              "occurredAt": "<instant>"
+            },
+            {
+              "id": "pev_<id>",
+              "fromState": "requires_action",
+              "toState": "authorized",
+              "actor": "provider",
+              "detail": {
+                "note": "Authorized on the rail for 5000 cents.",
+                "providerRef": "<provider-ref>"
+              },
+              "occurredAt": "<instant>"
+            },
+            {
+              "id": "pev_<id>",
+              "fromState": "authorized",
+              "toState": "captured",
+              "actor": "operator:key_<id>",
+              "detail": {
+                "note": "Captured on visa ending 4242.",
+                "feeUsdCents": "175",
+                "providerRef": "<provider-ref>",
+                "journalEntryId": "je_<id>"
+              },
+              "occurredAt": "<instant>"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "payments.list",
+    "request": {
+      "method": "GET",
+      "path": "/v1/payments",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": [
+          {
+            "id": "pay_<id>",
+            "userId": "usr_<id>",
+            "direction": "deposit",
+            "state": "failed",
+            "amountUsdCents": "666",
+            "feeUsdCents": "0",
+            "asset": "CREDIT",
+            "paymentMethodId": "pmt_<id>",
+            "provider": "dev",
+            "journalEntryId": null,
+            "failureCode": "card_declined",
+            "statementDescriptor": "PURSE COMPETITION",
+            "fundedAt": null,
+            "completedAt": "<instant>",
+            "createdAt": "<instant>"
+          },
+          {
+            "id": "pay_<id>",
+            "userId": "usr_<id>",
+            "direction": "deposit",
+            "state": "captured",
+            "amountUsdCents": "5000",
+            "feeUsdCents": "175",
+            "asset": "CREDIT",
+            "paymentMethodId": "pmt_<id>",
+            "provider": "dev",
+            "journalEntryId": "je_<id>",
+            "failureCode": null,
+            "statementDescriptor": "PURSE COMPETITION",
+            "fundedAt": "<instant>",
+            "completedAt": null,
+            "createdAt": "<instant>"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "payments.withdrawal",
+    "request": {
+      "method": "POST",
+      "path": "/v1/payments/withdrawals",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "amountUsdCents": "2000",
+        "paymentMethodId": "pmt_<id>"
+      }
+    },
+    "response": {
+      "status": 201,
+      "body": {
+        "data": {
+          "id": "pay_<id>",
+          "userId": "usr_<id>",
+          "direction": "withdrawal",
+          "state": "approved",
+          "amountUsdCents": "2000",
+          "feeUsdCents": "0",
+          "asset": "CREDIT",
+          "paymentMethodId": "pmt_<id>",
+          "provider": "dev",
+          "journalEntryId": "je_<id>",
+          "failureCode": null,
+          "statementDescriptor": "PURSE COMPETITION",
+          "fundedAt": "<instant>",
+          "completedAt": null,
+          "createdAt": "<instant>",
+          "events": [
+            {
+              "id": "pev_<id>",
+              "fromState": null,
+              "toState": "requested",
+              "actor": "operator:key_<id>",
+              "detail": {
+                "amountUsdCents": "2000",
+                "idempotencyKey": "<idempotency-key>"
+              },
+              "occurredAt": "<instant>"
+            },
+            {
+              "id": "pev_<id>",
+              "fromState": "requested",
+              "toState": "approved",
+              "actor": "operator:key_<id>",
+              "detail": {
+                "note": "Submitted to visa ending 4242; ACH settles in about 48 hours.",
+                "feeUsdCents": "0",
+                "providerRef": "<provider-ref>",
+                "journalEntryId": "je_<id>"
+              },
+              "occurredAt": "<instant>"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "payments.withdrawal.not_eligible",
+    "request": {
+      "method": "POST",
+      "path": "/v1/payments/withdrawals",
+      "headers": {
+        "Authorization": "Bearer <api-key>",
+        "Idempotency-Key": "<idempotency-key>"
+      },
+      "body": {
+        "userId": "usr_<id>",
+        "amountUsdCents": "2000",
+        "paymentMethodId": "pmt_<id>"
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": {
+          "type": "not_eligible",
+          "code": "verification_required",
+          "message": "Money can only leave a verified account",
+          "detail": {
+            "userId": "usr_<id>",
+            "state": "unstarted"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "treasury.position",
+    "request": {
+      "method": "GET",
+      "path": "/v1/treasury",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "data": {
+          "depositedUsdCents": "5000",
+          "withdrawnUsdCents": "2000",
+          "netCustodyUsdCents": "3000",
+          "ledgerCustodyCredit": "3000",
+          "railFeesUsdCents": "175",
+          "platformFeeCredit": "0",
+          "reconciled": true
+        }
+      }
+    }
+  },
+  {
     "name": "users.credits.permission_error",
     "request": {
       "method": "POST",
@@ -3899,8 +4417,8 @@
           "sha": "test-sha",
           "sandboxSelfServe": true,
           "migrations": {
-            "applied": 21,
-            "available": 21,
+            "applied": 23,
+            "available": 23,
             "pending": 0
           },
           "rulesetVersion": "2026.09.1",
@@ -3925,8 +4443,8 @@
           "status": "unknown",
           "sha": "test-sha",
           "migrations": {
-            "applied": 21,
-            "available": 21,
+            "applied": 23,
+            "available": 23,
             "pending": 0
           },
           "rulesetVersion": "2026.09.1",
@@ -3965,6 +4483,16 @@
             {
               "id": "I7",
               "name": "every entry ledger link is a matching escrow entry",
+              "status": "unknown"
+            },
+            {
+              "id": "I8",
+              "name": "custody equals deposits less withdrawals",
+              "status": "unknown"
+            },
+            {
+              "id": "I9",
+              "name": "platform fee equals the rake taken",
               "status": "unknown"
             }
           ],
@@ -4039,6 +4567,20 @@
               "ok": true,
               "status": "ok",
               "detail": "every one of 4 participants links to a matching escrow entry"
+            },
+            {
+              "id": "I8",
+              "name": "custody equals deposits less withdrawals",
+              "ok": true,
+              "status": "ok",
+              "detail": "custody matches the ledger for every tenant across 0 funded payments"
+            },
+            {
+              "id": "I9",
+              "name": "platform fee equals the rake taken",
+              "ok": true,
+              "status": "ok",
+              "detail": "every platform fee account equals the 0 fee entries that credited it"
             }
           ]
         }

@@ -214,6 +214,12 @@ export const journalEntryKind = pgEnum('journal_entry_kind', [
   'void',
   'reversal',
   'adjustment',
+  // Treasury (spec section 13). `deposit` and `withdrawal` are the in-ledger leg of a
+  // payment on the fiat rail; `fee` is the platform's rake, taken off a contest's escrow
+  // immediately before it settles so the settle entry only ever distributes the net pool.
+  'deposit',
+  'withdrawal',
+  'fee',
 ]);
 export type JournalEntryKind = (typeof journalEntryKind.enumValues)[number];
 
@@ -407,6 +413,14 @@ export const contests = pgTable(
      * existed, which falls back to the active version at evaluation.
      */
     eligibilityRulesetVersion: text('eligibility_ruleset_version').references(() => rulesets.version),
+    /**
+     * The platform's take, in basis points of the escrowed pool, frozen at creation
+     * (spec section 13.3). Held on the contest rather than read from the live ruleset at
+     * settlement so the rake a contest was opened under cannot change underneath its
+     * entrants. 0 is the default and every free-to-play contest keeps it, so the rake is
+     * additive: a contest created before this column existed behaves exactly as it did.
+     */
+    rakeBps: integer('rake_bps').notNull().default(0),
     state: contestState('state').notNull().default('draft'),
     opensAt: timestamp('opens_at', { withTimezone: true }),
     /** After this instant no entry is accepted even while the state is still `open`. */
@@ -426,6 +440,8 @@ export const contests = pgTable(
       foreignColumns: [accounts.id, accounts.asset],
     }),
     check('contests_entry_amount_positive', sql`${table.entryAmount} > 0`),
+    // A rake over half the pool is a configuration mistake, not a business model.
+    check('contests_rake_bps_range', sql`${table.rakeBps} between 0 and 5000`),
     check('contests_max_participants_positive', sql`${table.maxParticipants} is null or ${table.maxParticipants} >= 1`),
     check('contests_external_id_not_blank', sql`length(trim(${table.externalId})) > 0`),
     // `settled_at` is set exactly when the contest is settled, never before and never on any other terminal state.
@@ -1373,3 +1389,271 @@ export const reconcileRuns = pgTable(
 );
 
 export type ReconcileRun = typeof reconcileRuns.$inferSelect;
+
+// ---- Treasury (spec section 13) ------------------------------------------------------
+
+/**
+ * The fiat rail, and the one place in this repository where real currency is named.
+ *
+ * Decision D3 and spec 4.2.6 are unchanged and still enforced: there is no account of
+ * asset `USD` in Purse, the asset enum cannot express one, and
+ * `test/ledger/usd.test.ts` still proves it. That is deliberate rather than a gap, and it
+ * is the same split a merchant of record actually runs: custodied dollars sit at a payment
+ * service provider and a bank, while the double-entry journal tracks each user's *claim*
+ * on them in a closed-loop asset. `CREDIT` is that claim, one minor unit to one US cent,
+ * so a wallet holding 2,500 CREDIT is a claim on $25.00 held in custody.
+ *
+ * A payment is therefore the money leg **outside** the journal: it records what the rail
+ * did in USD cents. Its in-ledger effect is a single balanced entry in `CREDIT`
+ * (`deposit`: debit `external_settlement`, credit the wallet; `withdrawal`: the mirror),
+ * linked by `journal_entry_id`. Invariant I8 holds the two sides to each other, so the
+ * custody position implied by the rail and the position implied by the ledger can never
+ * quietly diverge.
+ */
+
+/** Which way money moves across the rail, from the user's point of view. */
+export const paymentDirection = pgEnum('payment_direction', ['deposit', 'withdrawal']);
+export type PaymentDirection = (typeof paymentDirection.enumValues)[number];
+
+/**
+ * The payment state machine (spec 13.2). Deposits and withdrawals share one enum because
+ * they share one table and one audit trail; which states are reachable depends on the
+ * direction, and `paymentsDirectionStates` below is the database's own statement of that.
+ *
+ * Deposit:    `requires_action` -> `authorized` -> `captured` -> `settled`
+ * Withdrawal: `requested` -> `in_review` -> `approved` -> `paid`
+ * Either may end `failed`, `cancelled` or (a deposit) `refunded`; a withdrawal the bank
+ * sends back ends `returned`.
+ */
+export const paymentState = pgEnum('payment_state', [
+  'requires_action',
+  'authorized',
+  'captured',
+  'settled',
+  'requested',
+  'in_review',
+  'approved',
+  'paid',
+  'failed',
+  'cancelled',
+  'refunded',
+  'returned',
+]);
+export type PaymentState = (typeof paymentState.enumValues)[number];
+
+/** The states a payment can hold with no further movement expected. */
+export const TERMINAL_PAYMENT_STATES: ReadonlySet<PaymentState> = new Set<PaymentState>([
+  'settled',
+  'paid',
+  'failed',
+  'cancelled',
+  'refunded',
+  'returned',
+]);
+
+/** The state at which a deposit's funds are credited to the wallet, and a withdrawal's are debited. */
+export const FUNDING_STATE: Readonly<Record<PaymentDirection, PaymentState>> = {
+  deposit: 'captured',
+  withdrawal: 'approved',
+};
+
+/**
+ * Instrument families the rail accepts. `mastercard` is present and permanently
+ * unsupported rather than absent: the partner this was modelled on does not accept it, and
+ * a brand that is merely missing from an enum produces a confusing `invalid_request`
+ * instead of an honest, testable `instrument_not_supported`. `UNSUPPORTED_BRANDS` is the
+ * rule, and the database enforces it on the row.
+ */
+export const paymentMethodBrand = pgEnum('payment_method_brand', [
+  'visa',
+  'mastercard',
+  'amex',
+  'discover',
+  'bank_account',
+  'apple_pay',
+  'paypal',
+]);
+export type PaymentMethodBrand = (typeof paymentMethodBrand.enumValues)[number];
+
+/** Brands the rail declines to store, with the reason an API caller is given. */
+export const UNSUPPORTED_BRANDS: Readonly<Partial<Record<PaymentMethodBrand, string>>> = {
+  mastercard: 'the acquirer does not support Mastercard for this merchant category',
+  paypal: 'PayPal is not enabled for this merchant yet',
+};
+
+export const paymentMethodStatus = pgEnum('payment_method_status', ['active', 'expired', 'removed']);
+export type PaymentMethodStatus = (typeof paymentMethodStatus.enumValues)[number];
+
+/**
+ * A stored instrument. Purse holds what a receipt needs and nothing that could move money
+ * on its own: a brand, the last four digits, an expiry month and year, and the provider's
+ * opaque token. There is no column a PAN, a CVV, an IBAN or an account number could be
+ * written to, and a CHECK holds `last4` to exactly four digits and `provider_ref` to a
+ * token shape, so the schema itself is the statement that this database is out of PCI
+ * scope.
+ */
+export const paymentMethods = pgTable(
+  'payment_methods',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    brand: paymentMethodBrand('brand').notNull(),
+    last4: text('last4').notNull(),
+    expMonth: integer('exp_month'),
+    expYear: integer('exp_year'),
+    /** The provider's token for the instrument. Opaque, short, and never a card number. */
+    providerRef: text('provider_ref').notNull(),
+    provider: text('provider').notNull(),
+    status: paymentMethodStatus('status').notNull().default('active'),
+    /** At most one active instrument per user is the default for a new payment. */
+    isDefault: boolean('is_default').notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('payment_methods_id_prefix', table.id, 'pmt'),
+    check('payment_methods_last4_shape', sql`${table.last4} ~ '^[0-9]{4}$'`),
+    check('payment_methods_provider_ref_shape', sql`${table.providerRef} ~ '^[A-Za-z0-9_-]{6,64}$'`),
+    // A brand the rail does not support can never be stored, whatever the service does.
+    check('payment_methods_brand_supported', sql`${table.brand} not in ('mastercard', 'paypal')`),
+    check(
+      'payment_methods_expiry_together',
+      sql`(${table.expMonth} is null) = (${table.expYear} is null) and (${table.expMonth} is null or (${table.expMonth} between 1 and 12 and ${table.expYear} between 2000 and 2100))`,
+    ),
+    // A card must carry an expiry; a bank account or a wallet must not.
+    check(
+      'payment_methods_expiry_by_brand',
+      sql`case when ${table.brand} in ('visa', 'mastercard', 'amex', 'discover') then ${table.expMonth} is not null else true end`,
+    ),
+    unique('payment_methods_tenant_provider_ref_key').on(table.tenantId, table.providerRef),
+    // One default per user, enforced by the database rather than by the service.
+    uniqueIndex('payment_methods_one_default_per_user')
+      .on(table.userId)
+      .where(sql`${table.isDefault} and ${table.status} = 'active'`),
+    index('payment_methods_user_id_idx').on(table.userId),
+  ],
+);
+
+export type PaymentMethod = typeof paymentMethods.$inferSelect;
+export type NewPaymentMethod = typeof paymentMethods.$inferInsert;
+
+/**
+ * One movement across the fiat rail.
+ *
+ * `amount_usd_cents` is what the user moves; `fee_usd_cents` is what the rail charges for
+ * moving it, and is the platform's cost rather than its revenue (the rake is a journal
+ * entry, not a payment). A deposit credits the wallet with `amount_usd_cents` of `CREDIT`
+ * and never the amount less the fee: the processing cost is borne by the platform, which
+ * is both what the partner this models does and the only version that keeps I8 a clean
+ * one-to-one.
+ *
+ * `journal_entry_id` is the in-ledger leg, set exactly when the payment reaches its
+ * funding state (`captured` for a deposit, `approved` for a withdrawal) and never unset;
+ * `payments_journal_entry_iff_funded` is the database holding that rule. A payment that
+ * fails before funding never had a ledger effect and has nothing to reverse.
+ */
+export const payments = pgTable(
+  'payments',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    direction: paymentDirection('direction').notNull(),
+    state: paymentState('state').notNull(),
+    /** US cents. Strictly positive; the direction carries the sign. */
+    amountUsdCents: bigint('amount_usd_cents', { mode: 'bigint' }).notNull(),
+    /** What the rail charged the platform to move it, in US cents. Never taken from the user. */
+    feeUsdCents: bigint('fee_usd_cents', { mode: 'bigint' }).notNull().default(sql`0`),
+    /** The closed-loop asset the wallet leg is denominated in. `CREDIT`, one unit to one cent. */
+    asset: asset('asset').notNull(),
+    paymentMethodId: text('payment_method_id').references(() => paymentMethods.id),
+    provider: text('provider').notNull(),
+    providerRef: text('provider_ref'),
+    /** The in-ledger leg. Present exactly when the payment has funded. */
+    journalEntryId: text('journal_entry_id').references(() => journalEntries.id),
+    /** The risk seam's verdict on this movement, recorded whether or not it held it up. */
+    riskDecision: text('risk_decision'),
+    /** Why a payment ended where it did, for the receipt and the operator queue. */
+    failureCode: text('failure_code'),
+    statementDescriptor: text('statement_descriptor').notNull(),
+    fundedAt: timestamp('funded_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    idCheck('payments_id_prefix', table.id, 'pay'),
+    nullableIdCheck('payments_journal_entry_id_prefix', table.journalEntryId, 'je'),
+    check('payments_amount_positive', sql`${table.amountUsdCents} > 0`),
+    check('payments_fee_non_negative', sql`${table.feeUsdCents} >= 0`),
+    // The wallet leg of a payment is always the cent-denominated closed-loop asset.
+    check('payments_asset_is_credit', sql`${table.asset} = 'CREDIT'`),
+    // Each direction may only hold the states its own machine defines.
+    check(
+      'payments_direction_states',
+      sql`case ${table.direction}
+        when 'deposit' then ${table.state} in ('requires_action', 'authorized', 'captured', 'settled', 'failed', 'cancelled', 'refunded')
+        when 'withdrawal' then ${table.state} in ('requested', 'in_review', 'approved', 'paid', 'failed', 'cancelled', 'returned')
+      end`,
+    ),
+    // A funded payment has its ledger leg, and an unfunded one has none. This is the rule
+    // I8 depends on, so it is the database's to keep rather than the service's.
+    check(
+      'payments_journal_entry_iff_funded',
+      sql`(${table.fundedAt} is not null) = (${table.journalEntryId} is not null)
+        and (${table.fundedAt} is not null) = (case ${table.direction}
+          when 'deposit' then ${table.state} in ('captured', 'settled', 'refunded')
+          when 'withdrawal' then ${table.state} in ('approved', 'paid', 'returned')
+        end)`,
+    ),
+    check('payments_completed_iff_terminal', sql`(${table.completedAt} is not null) = (${table.state} in ('settled', 'paid', 'failed', 'cancelled', 'refunded', 'returned'))`),
+    check('payments_failure_code_shape', sql`${table.failureCode} is null or ${table.failureCode} ~ '^[a-z][a-z0-9_]{2,48}$'`),
+    check('payments_statement_descriptor_shape', sql`length(${table.statementDescriptor}) between 5 and 22`),
+    unique('payments_journal_entry_id_key').on(table.journalEntryId),
+    unique('payments_tenant_provider_ref_key').on(table.tenantId, table.providerRef),
+    index('payments_tenant_created_idx').on(table.tenantId, table.createdAt),
+    index('payments_user_id_idx').on(table.userId),
+    index('payments_state_idx').on(table.state),
+  ],
+);
+
+export type Payment = typeof payments.$inferSelect;
+export type NewPayment = typeof payments.$inferInsert;
+
+/**
+ * Every step a payment took, append-only (the runtime holds `SELECT, INSERT` on this table
+ * and nothing else). This is what makes a single dollar narratable end to end: the row
+ * order is the story, `from_state` is null only for the row that created the payment, and
+ * nothing in it can be rewritten after the fact.
+ */
+export const paymentEvents = pgTable(
+  'payment_events',
+  {
+    id: text('id').primaryKey(),
+    paymentId: text('payment_id')
+      .notNull()
+      .references(() => payments.id),
+    fromState: paymentState('from_state'),
+    toState: paymentState('to_state').notNull(),
+    /** Who moved it: `provider`, `operator:<id>`, `system`, or the partner's key. */
+    actor: text('actor').notNull(),
+    detail: jsonb('detail').$type<Record<string, string | number | boolean | null>>().notNull().default({}),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    idCheck('payment_events_id_prefix', table.id, 'pev'),
+    check('payment_events_moves', sql`${table.fromState} is null or ${table.fromState} <> ${table.toState}`),
+    index('payment_events_payment_id_idx').on(table.paymentId, table.occurredAt),
+  ],
+);
+
+export type PaymentEvent = typeof paymentEvents.$inferSelect;
+export type NewPaymentEvent = typeof paymentEvents.$inferInsert;

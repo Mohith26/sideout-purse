@@ -81,7 +81,7 @@ export type WebhookEventData = {
     /** Signed: negative when the wallet was debited. */
     delta: Money;
     journalEntryId: string;
-    /** The journal entry kind that moved it: `issue`, `escrow`, `refund`, `settle`, `void`, `reversal`, `adjustment`. */
+    /** The journal entry kind that moved it: `issue`, `escrow`, `refund`, `settle`, `void`, `reversal`, `adjustment`, `deposit`, `withdrawal`, `fee`. */
     entryKind: string;
     contestId: string | null;
   };

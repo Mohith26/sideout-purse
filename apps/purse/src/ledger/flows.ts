@@ -85,6 +85,98 @@ export function refundEscrow(db: DbOrTx, input: RefundEscrowInput): Promise<Post
   });
 }
 
+export type DepositFundsInput = Common & {
+  externalSettlementAccountId: string;
+  walletAccountId: string;
+  amount: bigint;
+};
+
+/**
+ * Money in (spec 13.2): `debit external_settlement / credit user_wallet`.
+ *
+ * `external_settlement` is debit-normal, so debiting it *increases* it. That is the point:
+ * its balance is the custody position, what the platform holds at the rail and the bank on
+ * behalf of its users, and it rises as deposits land and falls as withdrawals leave. The
+ * matching credit is the user's claim on that custody, denominated in `CREDIT` at one unit
+ * to one US cent. No account of asset `USD` is involved, or exists (decision D3).
+ *
+ * Invariant I8 holds this account's balance to the payments table's own arithmetic, so the
+ * two descriptions of the same dollars cannot drift apart unnoticed.
+ */
+export function depositFunds(db: DbOrTx, input: DepositFundsInput): Promise<PostedEntry> {
+  return postEntry(db, {
+    tenantId: input.tenantId,
+    kind: 'deposit',
+    description: input.description ?? `Deposit ${input.amount} ${input.asset}`,
+    idempotencyKey: input.idempotencyKey,
+    lines: [
+      { accountId: input.externalSettlementAccountId, direction: 'debit', amount: input.amount, asset: input.asset, expectKind: 'external_settlement' },
+      { accountId: input.walletAccountId, direction: 'credit', amount: input.amount, asset: input.asset, expectKind: 'user_wallet' },
+    ],
+  });
+}
+
+export type WithdrawFundsInput = Common & {
+  walletAccountId: string;
+  externalSettlementAccountId: string;
+  amount: bigint;
+};
+
+/**
+ * Money out (spec 13.2): `debit user_wallet / credit external_settlement`, the mirror of a
+ * deposit. Posted when the withdrawal is approved rather than when the cash actually lands,
+ * because the user's claim is extinguished at approval: `postEntry` refuses to overdraw a
+ * wallet, so this is also the point at which a withdrawal larger than the balance is
+ * rejected by the ledger rather than by a service check that could be forgotten.
+ */
+export function withdrawFunds(db: DbOrTx, input: WithdrawFundsInput): Promise<PostedEntry> {
+  return postEntry(db, {
+    tenantId: input.tenantId,
+    kind: 'withdrawal',
+    description: input.description ?? `Withdrawal ${input.amount} ${input.asset}`,
+    idempotencyKey: input.idempotencyKey,
+    lines: [
+      { accountId: input.walletAccountId, direction: 'debit', amount: input.amount, asset: input.asset, expectKind: 'user_wallet' },
+      { accountId: input.externalSettlementAccountId, direction: 'credit', amount: input.amount, asset: input.asset, expectKind: 'external_settlement' },
+    ],
+  });
+}
+
+export type TakeRakeInput = Common & {
+  escrowAccountId: string;
+  platformFeeAccountId: string;
+  amount: bigint;
+  contestId: Id<'cnt'>;
+};
+
+/**
+ * The platform's take (spec 13.3): `debit contest_escrow / credit platform_fee`, posted
+ * immediately before the settle entry and inside the same transaction.
+ *
+ * Taking the rake as its own entry rather than as an extra line on the settlement is what
+ * keeps the existing invariants true without touching them. I4 still finds an empty escrow
+ * (gross less rake less payouts is zero), and I5 still finds payouts equal to what the
+ * contest escrowed, because it measures the escrow's non-`settle` movement, which this
+ * entry has already reduced by the rake. A settlement therefore only ever distributes the
+ * net pool, and the fee is legible as its own line in the journal rather than inferred.
+ */
+export function takeRake(db: DbOrTx, input: TakeRakeInput): Promise<PostedEntry> {
+  if (input.amount <= 0n) {
+    throw new LedgerError('non_positive_amount', 'A rake entry must move a positive amount');
+  }
+  return postEntry(db, {
+    tenantId: input.tenantId,
+    kind: 'fee',
+    description: input.description ?? `Platform fee of ${input.amount} ${input.asset}`,
+    idempotencyKey: input.idempotencyKey,
+    contestId: input.contestId,
+    lines: [
+      { accountId: input.escrowAccountId, direction: 'debit', amount: input.amount, asset: input.asset, expectKind: 'contest_escrow' },
+      { accountId: input.platformFeeAccountId, direction: 'credit', amount: input.amount, asset: input.asset, expectKind: 'platform_fee' },
+    ],
+  });
+}
+
 export type Payout = { walletAccountId: string; amount: bigint };
 
 export type SettleEscrowInput = Common & {

@@ -10,3 +10,4 @@ export { PurseApiError, PurseUnreachableError, PurseResponseError, PurseNotConfi
 export { databaseCallRecorder, listPurseCalls, toPurseCallView, type PurseCallView, type PurseCallsPage } from './calls';
 export { redact, redactString, REDACTED } from './redact';
 export type { ParsedContest, ParsedEntry, ParsedPreview, ParsedScores, ParsedSettlement, ParsedUser, ParsedWallet, ParsedEmbedToken } from './schemas';
+export type { ParsedPayment, ParsedPaymentEvent, ParsedTreasuryPosition, ParsedFundingCapabilities } from './schemas';

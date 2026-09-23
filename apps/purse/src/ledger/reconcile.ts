@@ -9,11 +9,12 @@ import type { DbOrTx } from '../db/client';
  * hard alarm: the script exits non-zero and the route answers 500.
  *
  * Each invariant is a registry entry that returns `{ ok, detail }`; the report lists all
- * seven every time. I4, I5 and I7 are about contests and settlement and read the phase 2
- * tables; a check that is not yet applicable would be registered with `notApplicableUntil`
- * and reported as such rather than silently passing.
+ * nine every time. I4, I5 and I7 are about contests and settlement and read the phase 2
+ * tables; I8 and I9 are about the treasury (spec section 13) and read the payments table;
+ * a check that is not yet applicable would be registered with `notApplicableUntil` and
+ * reported as such rather than silently passing.
  */
-export type InvariantId = 'I1' | 'I2' | 'I3' | 'I4' | 'I5' | 'I6' | 'I7';
+export type InvariantId = 'I1' | 'I2' | 'I3' | 'I4' | 'I5' | 'I6' | 'I7' | 'I8' | 'I9';
 
 export type InvariantResult = {
   id: InvariantId;
@@ -243,6 +244,147 @@ async function i7(db: DbOrTx): Promise<Outcome> {
   };
 }
 
+/**
+ * I8, the custody reconciliation (spec 13.5). The `external_settlement` account's balance
+ * must equal every funded deposit less every funded withdrawal, converted at one CREDIT to
+ * one US cent.
+ *
+ * This is the invariant that makes the fiat rail honest. The payments table is what the
+ * rail did; the ledger is what users are owed. They are two independent descriptions of the
+ * same dollars, written by different code paths, and if they ever disagree then either
+ * money was credited without a payment behind it or a payment funded without reaching the
+ * ledger. Both are the kind of bug that is invisible until an audit, so it pages instead.
+ *
+ * A database with no payments table yet passes trivially, the same way I6 treats a missing
+ * snapshot table.
+ */
+async function i8(db: DbOrTx): Promise<Outcome> {
+  const [presence] = await db.execute<{ present: boolean }>(sql`select to_regclass('public.payments') is not null as present`);
+  if (presence?.present !== true) return { ok: true, detail: 'no payments table; nothing has moved across the rail' };
+
+  const rows = await db.execute<{ tenant_id: string; expected: string; actual: string; deposits: string; withdrawals: string }>(sql`
+    with moved as (
+      select tenant_id,
+        coalesce(sum(case when direction = 'deposit' then amount_usd_cents else 0 end), 0) as deposited,
+        coalesce(sum(case when direction = 'withdrawal' then amount_usd_cents else 0 end), 0) as withdrawn,
+        count(*) filter (where direction = 'deposit') as deposits,
+        count(*) filter (where direction = 'withdrawal') as withdrawals
+      from payments
+      where funded_at is not null
+      group by tenant_id
+    ),
+    custody as (
+      select a.tenant_id, coalesce(sum(${SIGNED}), 0) as balance
+      from accounts a
+      left join journal_lines l on l.account_id = a.id
+      where a.kind = 'external_settlement'
+      group by a.tenant_id
+    )
+    select coalesce(m.tenant_id, c.tenant_id) as tenant_id,
+      (coalesce(m.deposited, 0) - coalesce(m.withdrawn, 0))::text as expected,
+      coalesce(c.balance, 0)::text as actual,
+      coalesce(m.deposits, 0)::text as deposits,
+      coalesce(m.withdrawals, 0)::text as withdrawals
+    from moved m
+    full outer join custody c on c.tenant_id = m.tenant_id
+    where (coalesce(m.deposited, 0) - coalesce(m.withdrawn, 0)) <> coalesce(c.balance, 0)
+    order by 1
+    limit ${LIMIT}
+  `);
+  const [totals] = await db.execute<{ funded: string }>(sql`select count(*)::text as funded from payments where funded_at is not null`);
+  if (rows.length === 0) {
+    return { ok: true, detail: `custody matches the ledger for every tenant across ${totals?.funded ?? '0'} funded payments` };
+  }
+  return {
+    ok: false,
+    detail: `${rows.length}${rows.length === LIMIT ? '+' : ''} tenants' custody does not match the ledger: ${rows
+      .map((row) => `${row.tenant_id} expected ${row.expected} from ${row.deposits} deposits and ${row.withdrawals} withdrawals, ledger holds ${row.actual}`)
+      .join('; ')}`,
+  };
+}
+
+/**
+ * I9, the rake reconciliation (spec 13.5). Every `platform_fee` account's balance must
+ * equal the sum of the `fee` entries that credited it, and every `fee` entry must name a
+ * contest and be exactly two lines: a debit of that contest's escrow and a credit of the
+ * platform fee account, in the contest's asset.
+ *
+ * The second half is what matters. Without it, a `fee` entry could take value out of some
+ * other contest's escrow, which I4 and I5 would not catch: they only ever look at a
+ * contest's own totals, and a fee sourced from the wrong escrow leaves both of them true.
+ */
+async function i9(db: DbOrTx): Promise<Outcome> {
+  const [count] = await db.execute<{ fees: string }>(sql`select count(*)::text as fees from journal_entries where kind = 'fee'`);
+  const malformed = await db.execute<{ id: string; reason: string }>(sql`
+    select e.id,
+      case
+        when e.contest_id is null then 'names no contest'
+        when (select count(*) from journal_lines l where l.entry_id = e.id) <> 2 then 'does not have exactly two lines'
+        else 'does not debit its own contest''s escrow and credit the platform fee account'
+      end as reason
+    from journal_entries e
+    where e.kind = 'fee'
+      and (
+        e.contest_id is null
+        or (select count(*) from journal_lines l where l.entry_id = e.id) <> 2
+        or not exists (
+          select 1 from journal_lines l
+          join contests c on c.id = e.contest_id
+          where l.entry_id = e.id and l.direction = 'debit'
+            and l.account_id = c.escrow_account_id and l.asset = c.asset
+        )
+        or not exists (
+          select 1 from journal_lines l
+          join accounts a on a.id = l.account_id
+          where l.entry_id = e.id and l.direction = 'credit'
+            and a.kind = 'platform_fee' and a.tenant_id = e.tenant_id
+        )
+      )
+    order by e.id
+    limit ${LIMIT}
+  `);
+  if (malformed.length > 0) {
+    return {
+      ok: false,
+      detail: `${malformed.length}${malformed.length === LIMIT ? '+' : ''} fee entries are malformed: ${malformed
+        .map((row) => `${row.id} ${row.reason}`)
+        .join('; ')}`,
+    };
+  }
+
+  const drifted = await db.execute<{ id: string; balance: string; fees: string }>(sql`
+    select a.id,
+      coalesce(sum(${SIGNED}), 0)::text as balance,
+      coalesce((
+        select sum(case when l2.direction = 'credit' then l2.amount else -l2.amount end)
+        from journal_lines l2
+        join journal_entries e2 on e2.id = l2.entry_id
+        where l2.account_id = a.id and e2.kind = 'fee'
+      ), 0)::text as fees
+    from accounts a
+    left join journal_lines l on l.account_id = a.id
+    where a.kind = 'platform_fee'
+    group by a.id
+    having coalesce(sum(${SIGNED}), 0) <> coalesce((
+      select sum(case when l2.direction = 'credit' then l2.amount else -l2.amount end)
+      from journal_lines l2
+      join journal_entries e2 on e2.id = l2.entry_id
+      where l2.account_id = a.id and e2.kind = 'fee'
+    ), 0)
+    order by a.id
+    limit ${LIMIT}
+  `);
+  if (drifted.length === 0) {
+    return { ok: true, detail: `every platform fee account equals the ${count?.fees ?? '0'} fee entries that credited it` };
+  }
+  return {
+    ok: false,
+    detail: `${drifted.length}${drifted.length === LIMIT ? '+' : ''} platform fee accounts hold something other than their fee entries: ${drifted
+      .map((row) => `${row.id} holds ${row.balance} against ${row.fees} in fees`)
+      .join('; ')}`,
+  };
+}
+
 export const INVARIANTS: readonly InvariantCheck[] = [
   { id: 'I1', name: 'journal nets to zero per asset', check: i1 },
   { id: 'I2', name: 'every entry balances', check: i2 },
@@ -251,6 +393,8 @@ export const INVARIANTS: readonly InvariantCheck[] = [
   { id: 'I5', name: 'settled payouts equal escrowed total', check: i5 },
   { id: 'I6', name: 'every snapshot equals its derived balance', check: i6 },
   { id: 'I7', name: 'every entry ledger link is a matching escrow entry', check: i7 },
+  { id: 'I8', name: 'custody equals deposits less withdrawals', check: i8 },
+  { id: 'I9', name: 'platform fee equals the rake taken', check: i9 },
 ];
 
 /**

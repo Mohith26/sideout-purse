@@ -31,12 +31,18 @@ export {
   refundEscrow,
   settleEscrow,
   voidEscrow,
+  depositFunds,
+  withdrawFunds,
+  takeRake,
   type IssuePromoPointsInput,
   type EscrowEntryInput,
   type RefundEscrowInput,
   type SettleEscrowInput,
   type Payout,
   type VoidEscrowInput,
+  type DepositFundsInput,
+  type WithdrawFundsInput,
+  type TakeRakeInput,
 } from './flows';
 export { reconcile, INVARIANTS, type InvariantId, type InvariantResult, type ReconcileReport } from './reconcile';
 export { recordReconcileRun, reconcileAndRecord, lastReconcileRun, recentReconcileRuns, summarise, type ReconcileSummary } from './reconcile-runs';

@@ -17,8 +17,8 @@ import { Wordmark } from './Wordmark';
  * organizer session; every console page gates itself again on the server. A session opened
  * through the public demo's account picker carries the "Demo" pill on every screen.
  */
-export function SideoutShell({ role, disputes, buildSha, demo, children }: { role: 'player' | 'organizer' | null; disputes: number; buildSha: string; demo: { displayName: string } | null; children: ReactNode }) {
-  const items = navItemsFor(role, disputes);
+export function SideoutShell({ role, disputes, buildSha, demo, framing, children }: { role: 'player' | 'organizer' | null; disputes: number; buildSha: string; demo: { displayName: string } | null; framing: boolean; children: ReactNode }) {
+  const items = navItemsFor(role, disputes, framing);
   return (
     <ToastProvider>
       {/*

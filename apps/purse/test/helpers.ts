@@ -81,7 +81,7 @@ export function harness(overrides: HarnessOptions = {}): TestHarness {
   });
   const database = connectRuntime(overrides.max === undefined ? {} : { max: overrides.max });
   const providers: Providers = {
-    ...createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', nodeEnv: 'test', allowDevProviders: false, ...(overrides.devIdentity === undefined ? {} : { devIdentity: overrides.devIdentity }) }),
+    ...createProviders({ identity: 'dev', geo: 'dev', risk: 'dev', funding: 'dev', nodeEnv: 'test', allowDevProviders: false, ...(overrides.devIdentity === undefined ? {} : { devIdentity: overrides.devIdentity }) }),
     ...overrides.providers,
   };
   const sms = overrides.sms ?? logSmsSender(logger);

@@ -22,10 +22,14 @@ import {
   embedTokenSchema,
   entrySchema,
   errorEnvelopeSchema,
+  fundingCapabilitiesSchema,
+  paymentSchema,
+  paymentsSchema,
   previewSchema,
   resultsSchema,
   scoresSchema,
   settlementSchema,
+  treasuryPositionSchema,
   userSchema,
   verificationStartSchema,
   voidSchema,
@@ -220,6 +224,37 @@ export class PurseClient {
 
   getResults(contestId: string, ctx: CallContext) {
     return this.call('GET', `/v1/contests/${encodeURIComponent(contestId)}/results`, undefined, resultsSchema, ctx);
+  }
+
+  // ---- Treasury (spec section 13) --------------------------------------------------------
+
+  /**
+   * The custody position: what the rail moved, and what the ledger says is owed. Read-only.
+   * Sideout does not, and structurally cannot, move money on the rail: it holds no
+   * instrument, takes no deposit, and has no column that could hold a US cent. These three
+   * reads exist so the treasury screens can show Purse's own answer rather than a number
+   * Sideout worked out for itself.
+   */
+  getTreasuryPosition(ctx: CallContext) {
+    return this.call('GET', '/v1/treasury', undefined, treasuryPositionSchema, ctx);
+  }
+
+  listPayments(query: { userId?: string; direction?: 'deposit' | 'withdrawal' } = {}, ctx: CallContext) {
+    const search = new URLSearchParams();
+    if (query.userId !== undefined) search.set('userId', query.userId);
+    if (query.direction !== undefined) search.set('direction', query.direction);
+    const suffix = search.size === 0 ? '' : `?${search.toString()}`;
+    return this.call('GET', `/v1/payments${suffix}`, undefined, paymentsSchema, ctx);
+  }
+
+  /** One payment with every step it took: the story of a single dollar. */
+  getPayment(paymentId: string, ctx: CallContext) {
+    return this.call('GET', `/v1/payments/${encodeURIComponent(paymentId)}`, undefined, paymentSchema, ctx);
+  }
+
+  /** What the rail accepts and refuses, so the UI can explain a refusal before it happens. */
+  getFundingCapabilities(ctx: CallContext) {
+    return this.call('GET', '/v1/payments/capabilities', undefined, fundingCapabilitiesSchema, ctx);
   }
 
   // ---- Webhooks (the seed and the integration test register Sideout's receiver) ----------

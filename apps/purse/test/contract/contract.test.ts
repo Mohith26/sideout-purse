@@ -11,11 +11,15 @@ import {
   type DeviceResource,
   type EmbedTokenResource,
   type EmbedUserState,
+  type FundingCapabilitiesResource,
   type EntryResource,
+  type PaymentMethodResource,
+  type PaymentResource,
   type PreviewResource,
   type ResultsResource,
   type SandboxKeysResource,
   type SettlementResource,
+  type TreasuryPositionResource,
   type UserResource,
   type WebhookDeliveryResource,
   type WebhookEndpointResource,
@@ -426,6 +430,88 @@ describe('v1 contract', () => {
     expect(reconciled.status).toBe(200);
     expect(reconciled.data?.ok).toBe(true);
     expect((await reconcile(h.database.db)).ok).toBe(true);
+
+    // ---- the fiat rail (spec section 13) ----------------------------------------------
+    // Ana is verified above, which is what lets money leave her account.
+    const capabilities = await op.record<FundingCapabilitiesResource>('payments.capabilities', 'GET', '/v1/payments/capabilities');
+    expect(capabilities.status).toBe(200);
+    expect(capabilities.data?.brands).toContain('visa');
+    expect(capabilities.data?.unsupported.map((entry) => entry.brand)).toContain('mastercard');
+
+    const instrument = await op.record<PaymentMethodResource>('payments.methods.add', 'POST', '/v1/payments/methods', {
+      userId: anaId,
+      brand: 'visa',
+      last4: '4242',
+      expMonth: 11,
+      expYear: 2029,
+      providerRef: 'tok_contract_visa',
+    });
+    expect(instrument.status).toBe(201);
+    expect(instrument.data).toMatchObject({ brand: 'visa', last4: '4242', isDefault: true });
+    const instrumentId = instrument.data?.id ?? '';
+
+    const refusedBrand = await op.record('payments.methods.add.unsupported', 'POST', '/v1/payments/methods', {
+      userId: anaId,
+      brand: 'mastercard',
+      last4: '5454',
+      expMonth: 1,
+      expYear: 2031,
+      providerRef: 'tok_contract_mc',
+    });
+    expect(refusedBrand.status).toBe(400);
+    expect(refusedBrand.error).toMatchObject({ type: 'invalid_request', code: 'instrument_not_supported' });
+
+    const methods = await op.record<PaymentMethodResource[]>('payments.methods.list', 'GET', `/v1/payments/methods/${anaId}`);
+    expect(methods.status).toBe(200);
+    expect(methods.data).toHaveLength(1);
+
+    const funded = await op.record<PaymentResource>('payments.deposit', 'POST', '/v1/payments/deposits', {
+      userId: anaId,
+      amountUsdCents: '5000',
+      paymentMethodId: instrumentId,
+    });
+    expect(funded.status).toBe(201);
+    expect(funded.data).toMatchObject({ direction: 'deposit', state: 'captured', amountUsdCents: '5000', asset: 'CREDIT' });
+    expect(funded.data?.journalEntryId).not.toBeNull();
+    const paymentId = funded.data?.id ?? '';
+
+    const declinedCharge = await op.record<PaymentResource>('payments.deposit.declined', 'POST', '/v1/payments/deposits', {
+      userId: anaId,
+      amountUsdCents: '666',
+      paymentMethodId: instrumentId,
+    });
+    // A decline is a state the payment reached, not an error the API raises: the row
+    // exists and is worth reading, which is why this answers 201 rather than 4xx.
+    expect(declinedCharge.status).toBe(201);
+    expect(declinedCharge.data).toMatchObject({ state: 'failed', failureCode: 'card_declined', journalEntryId: null });
+
+    const readPayment = await op.record<PaymentResource>('payments.get', 'GET', `/v1/payments/${paymentId}`);
+    expect(readPayment.status).toBe(200);
+    expect(readPayment.data?.events?.map((event) => event.toState)).toEqual(['requires_action', 'authorized', 'captured']);
+
+    const listed = await op.record<PaymentResource[]>('payments.list', 'GET', '/v1/payments');
+    expect(listed.status).toBe(200);
+    expect(listed.data?.length).toBeGreaterThanOrEqual(2);
+
+    const payout = await op.record<PaymentResource>('payments.withdrawal', 'POST', '/v1/payments/withdrawals', {
+      userId: anaId,
+      amountUsdCents: '2000',
+      paymentMethodId: instrumentId,
+    });
+    expect(payout.status).toBe(201);
+    expect(payout.data).toMatchObject({ direction: 'withdrawal', state: 'approved' });
+
+    const unverifiedPayout = await op.record('payments.withdrawal.not_eligible', 'POST', '/v1/payments/withdrawals', {
+      userId: marcusId,
+      amountUsdCents: '2000',
+      paymentMethodId: instrumentId,
+    });
+    expect(unverifiedPayout.status).toBe(403);
+    expect(unverifiedPayout.error).toMatchObject({ type: 'not_eligible' });
+
+    const position = await op.record<TreasuryPositionResource>('treasury.position', 'GET', '/v1/treasury');
+    expect(position.status).toBe(200);
+    expect(position.data).toMatchObject({ depositedUsdCents: '5000', withdrawnUsdCents: '2000', netCustodyUsdCents: '3000', reconciled: true });
 
     // ---- rate_limited and internal_error take a harness of their own ------------------
     const limitedHarness = harness({ rateLimit: { burst: 1, perSecond: 0.001 } });

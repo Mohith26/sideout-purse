@@ -4,7 +4,7 @@ import type { Id } from '@repo/ids';
 import { createLogger, errorFields } from '@repo/logger';
 
 import { connect } from '../src/db/client';
-import { originsFromEnv, PINGPONG_TENANT, seedApiKeys, seedContests, seedOperatorAdmin, seedPlatformAccounts, seedRuleset, seedSecondTenant, seedSideoutTenant, seedTenantOrigins, seedUsers, SIDEOUT_TENANT } from '../src/db/seed';
+import { originsFromEnv, PINGPONG_TENANT, seedApiKeys, seedContests, seedOperatorAdmin, seedPlatformAccounts, seedRuleset, seedSecondTenant, seedSideoutTenant, seedTenantOrigins, seedTreasury, seedUsers, SIDEOUT_TENANT } from '../src/db/seed';
 import { env, requireMigratorUrl } from '../src/env';
 
 /**
@@ -115,6 +115,19 @@ try {
     tenant: tenant.id,
     created: seeded.contests.filter((contest) => contest.created).length,
     contests: seeded.contests.map((contest) => `${contest.externalId}=${contest.state}`),
+  });
+
+  // The fiat rail (spec section 13): instruments, real deposits, one declined charge, one
+  // withdrawal in flight, and the settled cash contest whose rake funds the fee account.
+  // After the contests, because the cash contest is entered with money deposited here.
+  const treasury = await seedTreasury(database.db, tenantId);
+  logger.info('seed treasury present', {
+    tenant: tenant.id,
+    methods: treasury.methods,
+    deposits: treasury.deposits,
+    withdrawals: treasury.withdrawals,
+    declined: treasury.declined,
+    cashContest: treasury.cashContest === null ? 'none' : `${treasury.cashContest.externalId}=${treasury.cashContest.state}`,
   });
 
   const admin = await seedOperatorAdmin(database.db, {

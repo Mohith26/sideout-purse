@@ -7,6 +7,7 @@ import { limitAuthFailures, rateLimit, type TokenBuckets } from '../../http/rate
 import { contestsRoutes } from './contests';
 import { embedRoutes } from './embed';
 import { originsRoutes } from './origins';
+import { paymentsRoutes, treasuryRoutes } from './payments';
 import type { V1Deps, V1Scope } from './scope';
 import { usersRoutes } from './users';
 import { webhooksRoutes } from './webhooks';
@@ -40,5 +41,9 @@ export function v1Routes(deps: V1RouterDeps) {
   v1.route('/embed', embedRoutes(deps));
   v1.route('/webhooks', webhooksRoutes(deps));
   v1.route('/origins', originsRoutes(deps));
+  // The fiat rail (spec 13.4). Same middleware stack as every other mutation, so a
+  // deposit is idempotent the same way a contest entry is.
+  v1.route('/payments', paymentsRoutes(deps));
+  v1.route('/treasury', treasuryRoutes());
   return v1;
 }

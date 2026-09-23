@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 import { newId, type Id } from '@repo/ids';
 
 import type { DbOrTx } from '../db/client';
@@ -7,9 +7,10 @@ import { findRulesetForContest, flagCollusion } from '../eligibility';
 import { openAccount } from '../ledger/accounts';
 import type { Actor } from '../ledger/audit';
 import { balanceOf } from '../ledger/balance';
-import { settleEscrow, voidEscrow } from '../ledger/flows';
+import { settleEscrow, takeRake, voidEscrow } from '../ledger/flows';
 import type { PostedEntry } from '../ledger/post';
 import { PAYOUT_HASH_SHAPE, payoutHash, settle, type Payout, type SettleEntry } from '../settlement';
+import { applyBps } from '../treasury/money';
 import { loadEntry } from './entries';
 import { ContestError } from './errors';
 import { idempotent } from './idempotency';
@@ -39,7 +40,16 @@ export type PreviewEntry = SettleEntry & {
 
 export type SettlementPreview = {
   contest: Contest;
+  /**
+   * What the entrants put in: the escrow balance before the rake is taken. The preview
+   * reports the gross so an operator sees the whole pot and where it goes, rather than a
+   * net figure with a missing slice they have to work out.
+   */
   escrowTotal: bigint;
+  /** The platform's take, `rake_bps` of the gross, rounded down (spec 13.3). */
+  rakeAmount: bigint;
+  /** The gross less the rake: what the payouts actually divide. */
+  netPool: bigint;
   entries: PreviewEntry[];
   payouts: Payout[];
   payoutHash: string;
@@ -67,13 +77,32 @@ async function recordedSettlement(tx: DbOrTx, contest: Contest): Promise<Settlem
   const settlement = await loadSettlement(tx, contest);
   const participants = await activeParticipants(tx, contest.id);
   const scores = await currentScores(tx, contest.id);
+  const netPool = settlement.payouts.reduce((sum, payout) => sum + payout.payout, 0n);
+  // The rake that was actually taken is in the journal, not recomputed from the current
+  // `rake_bps`: a contest that settled under one rate must keep reporting that rate's fee
+  // even if the column is later changed.
+  const rakeAmount = await rakeTaken(tx, contest);
   return {
     contest,
-    escrowTotal: settlement.payouts.reduce((sum, payout) => sum + payout.payout, 0n),
+    escrowTotal: netPool + rakeAmount,
+    rakeAmount,
+    netPool,
     entries: toEntries(participants, scores),
     payouts: settlement.payouts,
     payoutHash: settlement.payoutHash,
   };
+}
+
+/** The sum of the `fee` entries posted against this contest. Zero for a free-to-play one. */
+export async function rakeTaken(db: DbOrTx, contest: Contest): Promise<bigint> {
+  const [row] = await db.execute<{ total: string }>(sql`
+    select coalesce(sum(l.amount), 0)::text as total
+    from journal_entries e
+    join journal_lines l on l.entry_id = e.id
+    join accounts a on a.id = l.account_id
+    where e.contest_id = ${contest.id} and e.kind = 'fee' and a.kind = 'platform_fee' and l.direction = 'credit'
+  `);
+  return BigInt(row?.total ?? '0');
 }
 
 /** The one computation both the preview and the close run. Callers that will act on it hold the contest lock. */
@@ -81,15 +110,20 @@ export async function computeSettlement(tx: DbOrTx, contest: Contest): Promise<S
   const participants = await activeParticipants(tx, contest.id);
   const scores = await currentScores(tx, contest.id);
   const escrowTotal = await balanceOf(tx, contest.escrowAccountId);
+  // The rake comes off the top, then the prize structure divides what is left. Rounding is
+  // down (`applyBps`), so the remainder stays in the pool being divided and the rake can
+  // never exceed the escrow it came from.
+  const rakeAmount = applyBps(escrowTotal, contest.rakeBps);
+  const netPool = escrowTotal - rakeAmount;
   const entries = toEntries(participants, scores);
   const payouts = settle({
     asset: contest.asset,
-    escrowTotal,
+    escrowTotal: netPool,
     entries,
     prizeStructure: contest.prizeStructure,
     tieBreak: contest.tieBreak,
   });
-  return { contest, escrowTotal, entries, payouts, payoutHash: payoutHash(payouts) };
+  return { contest, escrowTotal, rakeAmount, netPool, entries, payouts, payoutHash: payoutHash(payouts) };
 }
 
 /**
@@ -121,6 +155,8 @@ export type SettlementOutcome = {
   payoutHash: string;
   /** The `settle` entry, or `null` when nothing was owed (an empty pool). */
   entry: PostedEntry | null;
+  /** The `fee` entry, or `null` when the contest takes no rake. */
+  rake: PostedEntry | null;
 };
 
 export type ExecuteSettlementInput = {
@@ -144,6 +180,33 @@ export async function executeSettlement(tx: DbOrTx, input: ExecuteSettlementInpu
       contestId: settling.id,
       presented: input.expectedHash,
       computed: preview.payoutHash,
+    });
+  }
+
+  // The rake is its own entry, posted before the settlement and inside the same
+  // transaction, so the settle entry only ever distributes the net pool. Doing it this way
+  // rather than as an extra line on the settlement is what leaves I4 and I5 true without
+  // amending either: I5 measures the escrow's non-`settle` movement, which this has
+  // already reduced by the fee.
+  let rake: PostedEntry | null = null;
+  if (preview.rakeAmount > 0n) {
+    const { account: feeAccount } = await openAccount(tx, {
+      tenantId,
+      kind: 'platform_fee',
+      ownerRef: null,
+      asset: settling.asset,
+      actor: input.actor,
+      ...requestId,
+    });
+    rake = await takeRake(tx, {
+      tenantId,
+      asset: settling.asset,
+      escrowAccountId: settling.escrowAccountId,
+      platformFeeAccountId: feeAccount.id,
+      amount: preview.rakeAmount,
+      contestId: settling.id as Id<'cnt'>,
+      idempotencyKey: `contest:${settling.id}:rake`,
+      description: `Platform fee of ${settling.rakeBps} bps on contest ${settling.externalId}`,
     });
   }
 
@@ -195,7 +258,7 @@ export async function executeSettlement(tx: DbOrTx, input: ExecuteSettlementInpu
     const ruleset = await findRulesetForContest(tx, settled);
     if (ruleset !== undefined) await flagCollusion(tx, { tenantId, ruleset, users: results.map((row) => row.userId) });
   }
-  return { contest: settled, results, payouts: preview.payouts, payoutHash: preview.payoutHash, entry };
+  return { contest: settled, results, payouts: preview.payouts, payoutHash: preview.payoutHash, entry, rake };
 }
 
 /** A settlement that already happened, rebuilt from its rows for a replay. */
@@ -203,7 +266,17 @@ export async function loadSettlement(tx: DbOrTx, contest: Contest): Promise<Sett
   const results = await listResults(tx, contest.id);
   const payouts: Payout[] = results.map((row) => ({ userId: row.userId, placement: row.placement, payout: row.payoutAmount }));
   const entryId = results.find((row) => row.payoutJournalEntryId !== null)?.payoutJournalEntryId ?? null;
-  return { contest, results, payouts, payoutHash: payoutHash(payouts), entry: entryId === null ? null : await loadEntry(tx, entryId) };
+  const [feeEntry] = await tx.execute<{ id: string }>(sql`
+    select id from journal_entries where contest_id = ${contest.id} and kind = 'fee' limit 1
+  `);
+  return {
+    contest,
+    results,
+    payouts,
+    payoutHash: payoutHash(payouts),
+    entry: entryId === null ? null : await loadEntry(tx, entryId),
+    rake: feeEntry === undefined ? null : await loadEntry(tx, feeEntry.id),
+  };
 }
 
 export type CloseContestInput = {

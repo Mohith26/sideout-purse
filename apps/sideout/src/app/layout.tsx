@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { SideoutShell } from '../components/shell/SideoutShell';
 import { buildSha } from '../build-info';
+import { lucraFraming } from '../server/framing';
 import { pageContext } from '../server/pages';
 import { countDisputedMatches } from '../server/screens';
 import { baloo, nunito } from './fonts';
@@ -36,7 +37,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   return (
     <html lang="en" className={`${nunito.variable} ${baloo.variable}`}>
       <body>
-        <SideoutShell role={role} disputes={disputes} buildSha={buildSha(app.env.buildSha)} demo={demo && user !== null ? { displayName: user.displayName } : null}>
+        <SideoutShell role={role} disputes={disputes} buildSha={buildSha(app.env.buildSha)} demo={demo && user !== null ? { displayName: user.displayName } : null} framing={lucraFraming().enabled}>
           {children}
         </SideoutShell>
       </body>

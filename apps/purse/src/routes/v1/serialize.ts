@@ -3,6 +3,9 @@ import type {
   DeviceResource,
   EmbedTokenResource,
   ParticipantResource,
+  PaymentEventResource,
+  PaymentMethodResource,
+  PaymentResource,
   PayoutResource,
   PreviewResource,
   PrizeStructure,
@@ -21,7 +24,18 @@ import { activeParticipants, getContest } from '../../contests/load';
 import { escrowBalance } from '../../contests/settlement';
 import type { IssuedEmbedToken } from '../../auth/embed-tokens';
 import type { DbOrTx } from '../../db/client';
-import type { Contest, ContestParticipant, ContestResult, ContestScore, UserDevice, UserVerification, WebhookEndpoint } from '../../db/schema';
+import type {
+  Contest,
+  ContestParticipant,
+  ContestResult,
+  ContestScore,
+  Payment,
+  PaymentEvent,
+  PaymentMethod,
+  UserDevice,
+  UserVerification,
+  WebhookEndpoint,
+} from '../../db/schema';
 import type { Payout } from '../../settlement';
 import { placedByUser, type UserProfile } from '../../users';
 import type { DeliveryWithAttempts } from '../../webhooks';
@@ -230,5 +244,58 @@ export function deliveryResource({ delivery, attempts }: DeliveryWithAttempts): 
       error: attempt.error,
       durationMs: attempt.durationMs,
     })),
+  };
+}
+
+// ---- Treasury (spec section 13) ------------------------------------------------------
+
+export function paymentMethodResource(method: PaymentMethod): PaymentMethodResource {
+  return {
+    id: method.id,
+    userId: method.userId,
+    brand: method.brand,
+    last4: method.last4,
+    expMonth: method.expMonth,
+    expYear: method.expYear,
+    status: method.status,
+    isDefault: method.isDefault,
+    provider: method.provider,
+    createdAt: method.createdAt.toISOString(),
+  };
+}
+
+export function paymentEventResource(event: PaymentEvent): PaymentEventResource {
+  return {
+    id: event.id,
+    fromState: event.fromState,
+    toState: event.toState,
+    actor: event.actor,
+    detail: event.detail,
+    occurredAt: event.occurredAt.toISOString(),
+  };
+}
+
+/**
+ * A payment on the wire. `amountUsdCents` is a decimal string for the same reason every
+ * other amount here is: a number would lose precision, and this one is real money.
+ */
+export function paymentResource(payment: Payment, events?: readonly PaymentEvent[]): PaymentResource {
+  return {
+    id: payment.id,
+    userId: payment.userId,
+    direction: payment.direction,
+    state: payment.state,
+    amountUsdCents: payment.amountUsdCents.toString(),
+    feeUsdCents: payment.feeUsdCents.toString(),
+    asset: payment.asset,
+    paymentMethodId: payment.paymentMethodId,
+    provider: payment.provider,
+    journalEntryId: payment.journalEntryId,
+    failureCode: payment.failureCode,
+    statementDescriptor: payment.statementDescriptor,
+    fundedAt: iso(payment.fundedAt),
+    completedAt: iso(payment.completedAt),
+    createdAt: payment.createdAt.toISOString(),
+    ...(events === undefined ? {} : { events: events.map(paymentEventResource) }),
   };
 }

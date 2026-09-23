@@ -61,7 +61,7 @@ describe('env', () => {
 
   it('selects the provider seams, reads the dev identity lists, and sizes the rate limit', () => {
     const defaults = loadEnv({ PURSE_DATABASE_URL: DEV_URL });
-    expect(defaults.providers).toEqual({ identity: 'dev', geo: 'dev', risk: 'dev', allowDevProviders: false, devIdentity: { allow: [], deny: [], pending: [] } });
+    expect(defaults.providers).toEqual({ identity: 'dev', geo: 'dev', risk: 'dev', funding: 'dev', allowDevProviders: false, devIdentity: { allow: [], deny: [], pending: [] } });
     expect(defaults.rateLimit).toEqual({ burst: 100, perSecond: 20 });
     expect(defaults.trustedProxyHops).toBe(0);
     const configured = loadEnv({

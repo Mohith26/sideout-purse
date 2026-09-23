@@ -55,7 +55,7 @@ describe('GET /status', () => {
       runs: [],
       generatedAt: '2026-09-19T10:00:00.000Z',
     });
-    expect(body.invariants).toHaveLength(7);
+    expect(body.invariants).toHaveLength(9);
   });
 
   it('serves one assembled answer for the TTL, then the stored runs newest first, and never runs reconcile itself', async () => {
@@ -91,7 +91,7 @@ describe('GET /status', () => {
     expect(body.status).toBe('failing');
     expect(body.lastRun).toMatchObject({ ok: false, source: 'console', failed: ['I3'] });
     expect(body.invariants.find((each) => each.id === 'I3')).toEqual({ id: 'I3', name: 'no user wallet is negative', status: 'failed' });
-    expect(body.invariants.filter((each) => each.status === 'ok')).toHaveLength(6);
+    expect(body.invariants.filter((each) => each.status === 'ok')).toHaveLength(8);
     expect(body.runs.map((each) => each.ranAt)).toEqual(['2026-09-19T10:00:00.000Z', '2026-09-19T09:45:00.000Z']);
     for (const run of body.runs) expect(Object.keys(run).sort()).toEqual(['durationMs', 'failed', 'ok', 'ranAt', 'source']);
     for (const invariant of body.invariants) expect(Object.keys(invariant).sort()).toEqual(['id', 'name', 'status']);

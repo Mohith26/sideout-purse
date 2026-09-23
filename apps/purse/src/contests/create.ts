@@ -32,6 +32,12 @@ const definition = {
   settlementPolicy: z.enum(settlementPolicy.enumValues).optional(),
   opensAt: timestampInput.nullable().optional(),
   locksAt: timestampInput.nullable().optional(),
+  /**
+   * The platform's take, in basis points of the escrowed pool (spec 13.3). Frozen on the
+   * contest at creation so the rake its entrants agreed to cannot change underneath them.
+   * Defaults to 0, which is what every free-to-play contest keeps.
+   */
+  rakeBps: z.number().int().min(0).max(5_000).optional(),
 };
 
 const lockAfterOpen = (value: { opensAt?: Date | null | undefined; locksAt?: Date | null | undefined }) =>
@@ -57,6 +63,7 @@ export const updateContestSchema = z
     settlementPolicy: definition.settlementPolicy,
     opensAt: definition.opensAt,
     locksAt: definition.locksAt,
+    rakeBps: definition.rakeBps,
   })
   .strict()
   .refine((patch) => Object.values(patch).some((value) => value !== undefined), { message: 'nothing to update' });
@@ -128,6 +135,7 @@ export async function createContest(db: DbOrTx, input: CreateContestInput): Prom
                 settlementPolicy: parsed.settlementPolicy ?? 'operator_close',
                 opensAt: parsed.opensAt ?? null,
                 locksAt: parsed.locksAt ?? null,
+                rakeBps: parsed.rakeBps ?? 0,
                 eligibilityRulesetVersion: ruleset?.version ?? null,
                 escrowAccountId: account.id,
               })
@@ -200,6 +208,7 @@ export async function updateContest(db: DbOrTx, input: UpdateContestInput): Prom
               ...(patch.prizeStructure === undefined ? {} : { prizeStructure: patch.prizeStructure }),
               ...(patch.tieBreak === undefined ? {} : { tieBreak: patch.tieBreak }),
               ...(patch.settlementPolicy === undefined ? {} : { settlementPolicy: patch.settlementPolicy }),
+              ...(patch.rakeBps === undefined ? {} : { rakeBps: patch.rakeBps }),
               ...(patch.opensAt === undefined ? {} : { opensAt: patch.opensAt }),
               ...(patch.locksAt === undefined ? {} : { locksAt: patch.locksAt }),
               updatedAt: sql`now()`,

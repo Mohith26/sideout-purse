@@ -77,6 +77,15 @@ describe('every v1 route', () => {
     { method: 'GET', path: '/v1/origins' },
     { method: 'POST', path: '/v1/origins', invalidBody: { origin: 5 } },
     { method: 'POST', path: '/v1/origins/revoke', invalidBody: { origins: [] } },
+    // The fiat rail (spec section 13).
+    { method: 'GET', path: '/v1/payments/capabilities' },
+    { method: 'POST', path: '/v1/payments/methods', invalidBody: { userId, brand: 'mastercard', last4: '5454', providerRef: 'tok_x' } },
+    { method: 'GET', path: `/v1/payments/methods/${userId}` },
+    { method: 'POST', path: '/v1/payments/deposits', invalidBody: { userId, amountUsdCents: '0', paymentMethodId: 'pmt_bad' } },
+    { method: 'POST', path: '/v1/payments/withdrawals', invalidBody: { userId, amountUsdCents: '-1', paymentMethodId: 'pmt_bad' } },
+    { method: 'GET', path: '/v1/payments' },
+    { method: 'GET', path: '/v1/payments/pay_0192f1a0-0000-7000-8000-000000000001' },
+    { method: 'GET', path: '/v1/treasury' },
   ];
 
   it('is listed here', () => {
@@ -87,7 +96,7 @@ describe('every v1 route', () => {
       .map((route) => `${route.method} ${route.path}`);
     const expected = routes().map(
       (route) =>
-        `${route.method} ${route.path.replace(userId, ':userId').replace(contestId, ':id').replace(endpointId, ':id').replace(deliveryId, ':id').replace('/users/:userId', '/users/:id').replace(/\/devices\/udv_[0-9a-f-]+\/revoke$/, '/devices/:deviceId/revoke')}`,
+        `${route.method} ${route.path.replace(userId, ':userId').replace(contestId, ':id').replace(endpointId, ':id').replace(deliveryId, ':id').replace('/users/:userId', '/users/:id').replace(/\/devices\/udv_[0-9a-f-]+\/revoke$/, '/devices/:deviceId/revoke').replace(/\/payments\/pay_[0-9a-f-]+$/, '/payments/:id').replace(/\/payments\/methods\/usr_[0-9a-f-]+$/, '/payments/methods/:userId')}`,
     );
     for (const each of new Set(mounted)) {
       if (each.includes('/health') || each.includes('/status') || each.includes('/internal/')) continue;

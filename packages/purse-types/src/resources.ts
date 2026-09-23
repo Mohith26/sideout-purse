@@ -49,6 +49,114 @@ export type ApiKeyKind = (typeof API_KEY_KINDS)[number];
 export const API_KEY_ENVIRONMENTS = ['sandbox', 'live'] as const;
 export type ApiKeyEnvironment = (typeof API_KEY_ENVIRONMENTS)[number];
 
+// ---- Treasury (spec section 13) ------------------------------------------------------
+
+/**
+ * US cents as a decimal string, `"2500"` for $25.00. The only place in this contract that
+ * refers to real currency, and it refers to it *outside* the ledger: dollars sit in custody
+ * at a payment provider, and the ledger records a claim on them in `CREDIT` at one unit to
+ * one cent. There is no `USD` asset, and `ASSETS` above is the whole list.
+ */
+export type UsdCents = string;
+
+export const PAYMENT_DIRECTIONS = ['deposit', 'withdrawal'] as const;
+export type PaymentDirection = (typeof PAYMENT_DIRECTIONS)[number];
+
+export const PAYMENT_STATES = [
+  'requires_action',
+  'authorized',
+  'captured',
+  'settled',
+  'requested',
+  'in_review',
+  'approved',
+  'paid',
+  'failed',
+  'cancelled',
+  'refunded',
+  'returned',
+] as const;
+export type PaymentState = (typeof PAYMENT_STATES)[number];
+
+export const PAYMENT_METHOD_BRANDS = ['visa', 'mastercard', 'amex', 'discover', 'bank_account', 'apple_pay', 'paypal'] as const;
+export type PaymentMethodBrand = (typeof PAYMENT_METHOD_BRANDS)[number];
+
+export type PaymentMethodResource = {
+  id: string;
+  userId: string;
+  brand: PaymentMethodBrand;
+  last4: string;
+  expMonth: number | null;
+  expYear: number | null;
+  status: 'active' | 'expired' | 'removed';
+  isDefault: boolean;
+  provider: string;
+  createdAt: string;
+};
+
+/** One step of a payment's state machine. The list of these is the story of one dollar. */
+export type PaymentEventResource = {
+  id: string;
+  fromState: PaymentState | null;
+  toState: PaymentState;
+  actor: string;
+  detail: Record<string, string | number | boolean | null>;
+  occurredAt: string;
+};
+
+export type PaymentResource = {
+  id: string;
+  userId: string;
+  direction: PaymentDirection;
+  state: PaymentState;
+  /** What the user moved, in US cents. */
+  amountUsdCents: UsdCents;
+  /** What the rail charged the platform to move it. A cost, never deducted from the user. */
+  feeUsdCents: UsdCents;
+  /** The closed-loop asset the wallet leg is denominated in. Always `CREDIT`. */
+  asset: Asset;
+  paymentMethodId: string | null;
+  provider: string;
+  /** The ledger entry that credited or debited the wallet. Present once the payment funded. */
+  journalEntryId: string | null;
+  failureCode: string | null;
+  statementDescriptor: string;
+  fundedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  /** Present on a single-payment read: every step it took, oldest first. */
+  events?: PaymentEventResource[];
+};
+
+/**
+ * The custody position (spec 13.5). Two independent descriptions of the same dollars: what
+ * the rail moved, and what the ledger says is owed. Invariant I8 holds them equal, and
+ * `reconciled` is that invariant as a single boolean a partner can poll.
+ */
+export type TreasuryPositionResource = {
+  depositedUsdCents: UsdCents;
+  withdrawnUsdCents: UsdCents;
+  netCustodyUsdCents: UsdCents;
+  /** The `external_settlement` account's balance, in CREDIT. */
+  ledgerCustodyCredit: Money;
+  railFeesUsdCents: UsdCents;
+  /** The `platform_fee` account's balance, in CREDIT: the rake taken. */
+  platformFeeCredit: Money;
+  reconciled: boolean;
+};
+
+/** What the fiat rail will accept, so a partner can shape its own UI before taking a payment. */
+export type FundingCapabilitiesResource = {
+  provider: string;
+  brands: string[];
+  minimumDepositUsdCents: UsdCents;
+  maximumDepositUsdCents: UsdCents;
+  minimumWithdrawalUsdCents: UsdCents;
+  withdrawalSettlementHours: number;
+  /** Brands this rail explicitly refuses, with the reason a user can be shown. */
+  unsupported: Array<{ brand: PaymentMethodBrand; reason: string }>;
+};
+
 /**
  * A prize structure as it appears in JSON (spec 4.4, decision D10). The API validates it
  * with the settlement engine's own schema; this is the same shape written down as a type.

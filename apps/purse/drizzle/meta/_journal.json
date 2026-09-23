@@ -148,6 +148,20 @@
       "when": 1789819127310,
       "tag": "0020_sandbox_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790137934296,
+      "tag": "0021_treasury",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790137935296,
+      "tag": "0022_treasury_guards",
+      "breakpoints": true
     }
   ]
 }

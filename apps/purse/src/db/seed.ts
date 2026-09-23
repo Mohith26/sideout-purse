@@ -9,7 +9,8 @@ import { findAccount, openAccount } from '../ledger/accounts';
 import type { Actor } from '../ledger/audit';
 import { issuePromoPoints } from '../ledger/flows';
 import { createOperator, generatePassword, revokeOtherSessions, setPassword } from '../operators';
-import { devIdentityProvider } from '../providers';
+import { devFundingProvider, devIdentityProvider } from '../providers';
+import { addPaymentMethod, confirmPayment, deposit, listPaymentMethods, requestWithdrawal } from '../treasury';
 import { addRestriction, getVerification, recordLocation, refreshFingerprint, startVerification } from '../users';
 import type { Db, DbOrTx } from './client';
 import {
@@ -675,4 +676,172 @@ export async function seedSecondTenant(db: Db, options: { rotateKeys?: boolean; 
   const keys = await seedApiKeys(db, tenantId, { slug: PINGPONG_TENANT.slug, ...(options.rotateKeys === undefined ? {} : { rotate: options.rotateKeys }) });
   const origins = await seedTenantOrigins(db, tenantId, options.extraOrigins ?? [], PINGPONG_TENANT.devOrigins);
   return { tenant, created, platform, keys, origins };
+}
+
+// ---- Treasury (spec section 13) ------------------------------------------------------
+
+/**
+ * The stored instruments the demo's three verified players pay with. Deliberately one of
+ * each family the rail accepts, so the treasury screens show a card, a charge card and a
+ * bank debit side by side with their genuinely different processing costs.
+ */
+export const SEED_PAYMENT_METHODS = [
+  { userIndex: 0, brand: 'visa' as const, last4: '4242', expMonth: 11, expYear: 2029, providerRef: 'tok_seed_visa_ana' },
+  { userIndex: 1, brand: 'amex' as const, last4: '0005', expMonth: 4, expYear: 2028, providerRef: 'tok_seed_amex_marcus' },
+  { userIndex: 2, brand: 'bank_account' as const, last4: '6789', providerRef: 'tok_seed_ach_priya' },
+];
+
+/** The demo's cash contest: a real-money bracket with a 5% rake, alongside the free-to-play ones. */
+export const SEED_CASH_CONTEST = 'seed-cash-doubles';
+export const SEED_CASH_ENTRY_USD_CENTS = 2_500n;
+export const SEED_CASH_RAKE_BPS = 500;
+
+export type SeedTreasuryResult = {
+  methods: number;
+  deposits: number;
+  withdrawals: number;
+  declined: number;
+  cashContest: { externalId: string; id: string; state: string } | null;
+};
+
+/**
+ * Money that actually moved, so every treasury screen is reading real rows.
+ *
+ * Deliberately not a tidy set. There is a declined charge, a withdrawal still in flight,
+ * and a settled cash contest whose rake is in the platform fee account, because a demo in
+ * which every payment succeeded proves nothing about the state machine. Every step runs
+ * through the same services the API calls, so the seeded rows are indistinguishable from
+ * rows a partner created, and the invariants are checked over them by CI immediately after.
+ *
+ * Idempotent on the payment's own idempotency key, like everything else here.
+ */
+export async function seedTreasury(db: Db, tenantId: Id<'tnt'>): Promise<SeedTreasuryResult> {
+  const funding = devFundingProvider();
+  const context = { tenantId, funding, actor: SEED_OPERATOR };
+  const result: SeedTreasuryResult = { methods: 0, deposits: 0, withdrawals: 0, declined: 0, cashContest: null };
+
+  const stored: Array<{ userId: Id<'usr'>; methodId: string }> = [];
+  for (const spec of SEED_PAYMENT_METHODS) {
+    const userId = SEED_USER_IDS[spec.userIndex];
+    if (userId === undefined) continue;
+    const existing = await listPaymentMethods(db, tenantId, userId);
+    const already = existing.find((method) => method.providerRef === spec.providerRef);
+    if (already !== undefined) {
+      stored.push({ userId, methodId: already.id });
+      continue;
+    }
+    const method = await addPaymentMethod(db, context, {
+      userId,
+      brand: spec.brand,
+      last4: spec.last4,
+      providerRef: spec.providerRef,
+      ...(spec.expMonth === undefined ? {} : { expMonth: spec.expMonth }),
+      ...(spec.expYear === undefined ? {} : { expYear: spec.expYear }),
+    });
+    stored.push({ userId, methodId: method.id });
+    result.methods += 1;
+  }
+
+  // Three deposits of different sizes over three instrument families.
+  const amounts = [20_000n, 7_500n, 5_000n];
+  for (const [index, entry] of stored.entries()) {
+    const amount = amounts[index] ?? 5_000n;
+    const outcome = await deposit(db, context, {
+      userId: entry.userId,
+      amountUsdCents: amount,
+      paymentMethodId: entry.methodId,
+      idempotencyKey: `seed:deposit:${entry.userId}`,
+      statementDescriptor: 'SIDEOUT COMPETITION',
+    });
+    if (outcome.payment.state === 'captured' || outcome.payment.state === 'settled') result.deposits += 1;
+    // The first one is walked all the way to `settled`, so the demo has a completed one.
+    if (index === 0 && outcome.payment.state === 'captured') {
+      await confirmPayment(db, context, outcome.payment.id);
+    }
+  }
+
+  // One charge the rail refuses, so the failure path is visible rather than described.
+  const first = stored[0];
+  if (first !== undefined) {
+    const declined = await deposit(db, context, {
+      userId: first.userId,
+      amountUsdCents: 666n,
+      paymentMethodId: first.methodId,
+      idempotencyKey: `seed:deposit-declined:${first.userId}`,
+      statementDescriptor: 'SIDEOUT COMPETITION',
+    });
+    if (declined.payment.state === 'failed') result.declined += 1;
+  }
+
+  // One withdrawal, left in `approved`: the claim is gone from the wallet and the cash is
+  // still in flight, which is the state a treasury screen most needs to explain.
+  const second = stored[1];
+  if (second !== undefined) {
+    const out = await requestWithdrawal(db, context, {
+      userId: second.userId,
+      amountUsdCents: 2_500n,
+      paymentMethodId: second.methodId,
+      idempotencyKey: `seed:withdrawal:${second.userId}`,
+    });
+    if (out.payment.state === 'approved' || out.payment.state === 'paid') result.withdrawals += 1;
+  }
+
+  result.cashContest = await seedCashContest(db, tenantId, stored.map((entry) => entry.userId));
+  return result;
+}
+
+/**
+ * A settled contest denominated in `CREDIT`, entered with money that was really deposited,
+ * with the platform's rake taken off the top. This is the row that makes the fee account
+ * non-zero, and the one the "follow a dollar" walkthrough reads.
+ */
+async function seedCashContest(db: Db, tenantId: Id<'tnt'>, players: ReadonlyArray<Id<'usr'>>): Promise<SeedTreasuryResult['cashContest']> {
+  const [existing] = await db.select().from(contests).where(and(eq(contests.tenantId, tenantId), eq(contests.externalId, SEED_CASH_CONTEST)));
+  if (existing !== undefined) return { externalId: SEED_CASH_CONTEST, id: existing.id, state: existing.state };
+  if (players.length < 3) return null;
+
+  return db.transaction(async (tx) => {
+    const { contest } = await createContest(tx, {
+      tenantId,
+      externalId: SEED_CASH_CONTEST,
+      kind: 'tournament',
+      title: 'Sideout seed: Sunday cash doubles',
+      asset: 'CREDIT',
+      entryAmount: SEED_CASH_ENTRY_USD_CENTS,
+      maxParticipants: 16,
+      prizeStructure: { type: 'percentage_split', percentages: [60, 40] },
+      rakeBps: SEED_CASH_RAKE_BPS,
+      idempotencyKey: `seed:create:${SEED_CASH_CONTEST}`,
+      actor: SEED_OPERATOR,
+    });
+    await transition(tx, { tenantId, contestId: contest.id, to: 'open', actor: SEED_OPERATOR });
+    for (const [index, userId] of players.entries()) {
+      await enterContest(tx, { tenantId, contestId: contest.id, userId, seed: index + 1, idempotencyKey: `seed:enter:${SEED_CASH_CONTEST}:${userId}`, actor: SEED_OPERATOR });
+    }
+    for (const step of ['locked', 'in_progress'] as const) {
+      await transition(tx, { tenantId, contestId: contest.id, to: step, actor: SEED_OPERATOR });
+    }
+    await submitScores(tx, {
+      tenantId,
+      contestId: contest.id,
+      scores: players.map((userId, index) => ({ userId, score: 30 - index * 7, attemptFinished: true })),
+      idempotencyKey: `seed:scores:${SEED_CASH_CONTEST}`,
+      actor: SEED_OPERATOR,
+    });
+    // Submitting every finished score already moves the contest to `awaiting_settlement`
+    // (`contests/scores.ts`), so ask before pushing it there a second time.
+    const scored = await getContest(tx, tenantId, contest.id);
+    if (scored.state !== 'awaiting_settlement') {
+      await transition(tx, { tenantId, contestId: contest.id, to: 'awaiting_settlement', actor: SEED_OPERATOR });
+    }
+    const preview = await previewSettlement(tx, { tenantId, contestId: contest.id });
+    const closed = await closeContest(tx, {
+      tenantId,
+      contestId: contest.id,
+      payoutHash: preview.payoutHash,
+      actor: SEED_OPERATOR,
+      idempotencyKey: `seed:close:${SEED_CASH_CONTEST}`,
+    });
+    return { externalId: SEED_CASH_CONTEST, id: closed.contest.id, state: closed.contest.state };
+  });
 }

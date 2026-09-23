@@ -8,6 +8,9 @@ import {
   EMBED_FLOWS,
   LOCATION_SOURCES,
   PARTICIPANT_STATES,
+  PAYMENT_DIRECTIONS,
+  PAYMENT_METHOD_BRANDS,
+  PAYMENT_STATES,
   RESTRICTION_KINDS,
   SETTLEMENT_POLICIES,
   TIE_BREAK_RULES,
@@ -289,3 +292,65 @@ export type ParsedSettlement = z.output<typeof settlementSchema>;
 export type ParsedEmbedToken = z.output<typeof embedTokenSchema>;
 export type ParsedVerificationStart = z.output<typeof verificationStartSchema>;
 export type ParsedDevice = z.output<typeof deviceSchema>;
+
+// ---- Treasury (spec section 13) ------------------------------------------------------
+
+/**
+ * The fiat rail as Sideout reads it. Sideout never moves money itself and holds no column
+ * that could contain a US cent: these are read-only shapes for the treasury screens, parsed
+ * from Purse's answer like every other resource here.
+ */
+export const paymentEventSchema = z.object({
+  id: z.string(),
+  fromState: z.enum(PAYMENT_STATES).nullable(),
+  toState: z.enum(PAYMENT_STATES),
+  actor: z.string(),
+  detail: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  occurredAt: instant,
+});
+
+export const paymentSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  direction: z.enum(PAYMENT_DIRECTIONS),
+  state: z.enum(PAYMENT_STATES),
+  amountUsdCents: money,
+  feeUsdCents: money,
+  asset: z.enum(ASSETS),
+  paymentMethodId: z.string().nullable(),
+  provider: z.string(),
+  journalEntryId: z.string().nullable(),
+  failureCode: z.string().nullable(),
+  statementDescriptor: z.string(),
+  fundedAt: instant.nullable(),
+  completedAt: instant.nullable(),
+  createdAt: instant,
+  events: z.array(paymentEventSchema).optional(),
+});
+
+export const paymentsSchema = z.array(paymentSchema);
+
+export const treasuryPositionSchema = z.object({
+  depositedUsdCents: money,
+  withdrawnUsdCents: money,
+  netCustodyUsdCents: money,
+  ledgerCustodyCredit: money,
+  railFeesUsdCents: money,
+  platformFeeCredit: money,
+  reconciled: z.boolean(),
+});
+
+export const fundingCapabilitiesSchema = z.object({
+  provider: z.string(),
+  brands: z.array(z.string()),
+  minimumDepositUsdCents: money,
+  maximumDepositUsdCents: money,
+  minimumWithdrawalUsdCents: money,
+  withdrawalSettlementHours: z.number(),
+  unsupported: z.array(z.object({ brand: z.enum(PAYMENT_METHOD_BRANDS), reason: z.string() })),
+});
+
+export type ParsedPayment = z.output<typeof paymentSchema>;
+export type ParsedPaymentEvent = z.output<typeof paymentEventSchema>;
+export type ParsedTreasuryPosition = z.output<typeof treasuryPositionSchema>;
+export type ParsedFundingCapabilities = z.output<typeof fundingCapabilitiesSchema>;
